@@ -64,3 +64,33 @@ class SupervisorClient:
 
     def send_feedback(self, event_id: str, feedback: str) -> Optional[Dict[str, Any]]:
         return self._make_request("POST", "/v1/feedback", {"event_id": event_id, "feedback": feedback})
+
+    def get_motivation_status(self) -> Optional[Dict[str, Any]]:
+        return self._make_request("GET", "/v1/motivation/status")
+
+    def get_history(self, days: int = 7) -> Optional[list]:
+        return self._make_request("GET", f"/v1/motivation/history?days={days}")
+
+    def get_achievements(self) -> Optional[list]:
+        return self._make_request("GET", "/v1/motivation/achievements")
+
+    def get_missions(self) -> Optional[list]:
+        return self._make_request("GET", "/v1/missions")
+
+    def create_mission(self, title: str, description: str = "", reward_milli_ap: int = 0, due_date: str = "") -> Optional[Dict[str, Any]]:
+        body = {"title": title, "description": description, "reward_milli_ap": reward_milli_ap}
+        if due_date:
+            body["due_date"] = due_date
+        return self._make_request("POST", "/v1/missions", body)
+
+    def complete_mission(self, mission_id: str) -> Optional[Dict[str, Any]]:
+        return self._make_request("POST", f"/v1/missions/{mission_id}/complete")
+
+    def cancel_mission(self, mission_id: str) -> Optional[Dict[str, Any]]:
+        return self._make_request("POST", f"/v1/missions/{mission_id}/cancel")
+
+    def get_rewards(self) -> Optional[list]:
+        return self._make_request("GET", "/v1/rewards")
+
+    def redeem_reward(self, reward_id: str) -> Optional[Dict[str, Any]]:
+        return self._make_request("POST", f"/v1/rewards/{reward_id}/redeem")

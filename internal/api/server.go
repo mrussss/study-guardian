@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"study-guardian/internal/config"
+	"study-guardian/internal/motivation"
 	"study-guardian/internal/state"
+	"study-guardian/internal/storage"
 )
 
 type StateManager interface {
@@ -28,6 +30,20 @@ type Server struct {
 	stateMgr   StateManager
 	httpServer *http.Server
 	mu         sync.RWMutex
+	motivation MotivationManager
+	aiStatus   func() interface{}
+}
+
+type MotivationManager interface {
+	GetStatus(context.Context, time.Time) (motivation.Status, error)
+	GetHistory(context.Context, int, time.Time) ([]motivation.HistoryDay, error)
+	Achievements(context.Context, time.Time) ([]motivation.AchievementDefinition, error)
+	Missions(context.Context) ([]storage.Mission, error)
+	CreateMission(context.Context, string, string, int64, *string) (storage.Mission, error)
+	CompleteMission(context.Context, string) (storage.Mission, bool, error)
+	CancelMission(context.Context, string) error
+	Rewards(context.Context) ([]storage.Reward, error)
+	RedeemReward(context.Context, string) (storage.Redemption, error)
 }
 
 func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
@@ -44,6 +60,14 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/mode/off", s.withAuth(s.handleModeOff))
 	mux.HandleFunc("/v1/task", s.withAuth(s.handleTask))
 	mux.HandleFunc("/v1/feedback", s.withAuth(s.handleFeedback))
+	mux.HandleFunc("/v1/motivation/status", s.withAuth(s.handleMotivationStatus))
+	mux.HandleFunc("/v1/motivation/history", s.withAuth(s.handleMotivationHistory))
+	mux.HandleFunc("/v1/motivation/achievements", s.withAuth(s.handleMotivationAchievements))
+	mux.HandleFunc("/v1/missions", s.withAuth(s.handleMissions))
+	mux.HandleFunc("/v1/missions/", s.withAuth(s.handleMissionAction))
+	mux.HandleFunc("/v1/rewards", s.withAuth(s.handleRewards))
+	mux.HandleFunc("/v1/rewards/", s.withAuth(s.handleRewardAction))
+	mux.HandleFunc("/v1/ai/status", s.withAuth(s.handleAIStatus))
 
 	addr := fmt.Sprintf("%s:%d", cfg.IPC.SupervisorHost, cfg.IPC.SupervisorPort)
 	s.httpServer = &http.Server{
@@ -55,6 +79,9 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 
 	return s
 }
+
+func (s *Server) SetMotivation(m MotivationManager) { s.motivation = m }
+func (s *Server) SetAIStatus(fn func() interface{}) { s.aiStatus = fn }
 
 func (s *Server) Start() error {
 	addr := s.httpServer.Addr

@@ -161,6 +161,58 @@ func (s *Storage) migrate() error {
 			value TEXT NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS motivation_daily (
+			date TEXT PRIMARY KEY,
+			credited_focus_seconds INTEGER NOT NULL DEFAULT 0,
+			daily_target_seconds INTEGER NOT NULL DEFAULT 7200,
+			checkin_completed BOOLEAN NOT NULL DEFAULT 0,
+			target_completed BOOLEAN NOT NULL DEFAULT 0,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS ap_ledger (
+			id TEXT PRIMARY KEY,
+			source TEXT NOT NULL,
+			reference_id TEXT NOT NULL,
+			delta_milli_ap INTEGER NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			UNIQUE(source, reference_id)
+		);`,
+		`CREATE TABLE IF NOT EXISTS missions (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			reward_milli_ap INTEGER NOT NULL DEFAULT 0,
+			due_date TEXT,
+			status TEXT NOT NULL DEFAULT 'OPEN',
+			created_at TIMESTAMP NOT NULL,
+			completed_at TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS achievements (
+			achievement_id TEXT PRIMARY KEY,
+			unlocked_at TIMESTAMP NOT NULL,
+			metadata_json TEXT NOT NULL DEFAULT '{}'
+		);`,
+		`CREATE TABLE IF NOT EXISTS reward_catalog (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL,
+			cost_milli_ap INTEGER NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			enabled BOOLEAN NOT NULL DEFAULT 1
+		);`,
+		`CREATE TABLE IF NOT EXISTS reward_redemptions (
+			id TEXT PRIMARY KEY,
+			reward_id TEXT NOT NULL,
+			reward_name TEXT NOT NULL,
+			cost_milli_ap INTEGER NOT NULL,
+			redeemed_at TIMESTAMP NOT NULL
+		);`,
+		`INSERT OR IGNORE INTO reward_catalog (id, name, type, cost_milli_ap, description, enabled) VALUES
+			('game-15', '游戏 15 分钟', 'TIME', 250, '给自己一个短暂的游戏奖励', 1),
+			('game-30', '游戏 30 分钟', 'TIME', 500, '给自己一个半小时奖励', 1),
+			('game-60', '游戏 60 分钟', 'TIME', 1000, '给自己一个小时奖励', 1),
+			('milk-tea', '一杯奶茶', 'LIFE', 1000, '现实生活中的小奖励', 1),
+			('movie', '电影 / 小聚会', 'LIFE', 2000, '完成目标后的休闲安排', 1);`,
 	}
 
 	for _, query := range migrations {

@@ -14,6 +14,12 @@ if [ ! -d "${TARGET_DIR}" ]; then
     mkdir -p "${TARGET_DIR}"
 fi
 
+TARGET_DIR="$(realpath -m "${TARGET_DIR}")"
+case "${TARGET_DIR}" in
+    /mnt/d/StudyGuardianDev) ;;
+    *) echo "[Deploy] Refusing unexpected target: ${TARGET_DIR}" >&2; exit 1 ;;
+esac
+
 # 1. Check build artifacts
 if [ ! -f "${REPO_ROOT}/dist/windows/bin/study-supervisor.exe" ]; then
     echo "[Deploy] Build artifacts not found. Running build-windows.sh first..."
@@ -46,26 +52,42 @@ if [ ! -f "${CONFIG_FILE}" ]; then
     cp "${REPO_ROOT}/configs/default.yaml" "${CONFIG_FILE}"
 fi
 
-# 5. Deploy binary
-echo "[Deploy] Updating bin/study-supervisor.exe..."
-cp -f "${REPO_ROOT}/dist/windows/bin/study-supervisor.exe" "${TARGET_DIR}/bin/study-supervisor.exe"
+# 5. Stage all replaceable runtime files before touching the live tree.
+STAGE_DIR="$(mktemp -d "${TARGET_DIR}/.deploy-staging.XXXXXX")"
+cleanup() { rm -rf "${STAGE_DIR}"; }
+trap cleanup EXIT
+mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/pet/src" "${STAGE_DIR}/pet/assets/skins" "${STAGE_DIR}/sensor/screen" "${STAGE_DIR}/scripts"
+cp -f "${REPO_ROOT}/dist/windows/bin/study-supervisor.exe" "${STAGE_DIR}/bin/study-supervisor.exe"
+cp -f "${REPO_ROOT}/dist/windows/bin/config-helper.exe" "${STAGE_DIR}/bin/config-helper.exe"
+cp -r "${REPO_ROOT}/dist/windows/pet/src/." "${STAGE_DIR}/pet/src/"
+cp -f "${REPO_ROOT}/dist/windows/pet/requirements.txt" "${STAGE_DIR}/pet/requirements.txt"
+cp -r "${REPO_ROOT}/dist/windows/pet/assets/skins/." "${STAGE_DIR}/pet/assets/skins/"
+cp -r "${REPO_ROOT}/dist/windows/sensor/screen/." "${STAGE_DIR}/sensor/screen/"
+cp -f "${REPO_ROOT}/dist/windows/sensor/requirements.txt" "${STAGE_DIR}/sensor/requirements.txt"
+cp -f "${REPO_ROOT}/scripts/"*.ps1 "${STAGE_DIR}/scripts/" 2>/dev/null || true
 
-# 6. Deploy Pet (preserve .venv)
-echo "[Deploy] Updating pet runtime files..."
-mkdir -p "${TARGET_DIR}/pet/src"
-cp -r "${REPO_ROOT}/dist/windows/pet/src/"* "${TARGET_DIR}/pet/src/"
-if [ -d "${REPO_ROOT}/dist/windows/pet/assets" ]; then
-    mkdir -p "${TARGET_DIR}/pet/assets"
-    cp -r "${REPO_ROOT}/dist/windows/pet/assets/"* "${TARGET_DIR}/pet/assets/"
-fi
+test -s "${STAGE_DIR}/bin/study-supervisor.exe"
+test -s "${STAGE_DIR}/bin/config-helper.exe"
+test -f "${STAGE_DIR}/pet/src/main.py"
+test -f "${STAGE_DIR}/pet/requirements.txt"
+test -f "${STAGE_DIR}/pet/assets/skins/studyguardian-pixel/manifest.json"
+test -f "${STAGE_DIR}/sensor/screen/server.py"
+test -f "${STAGE_DIR}/sensor/requirements.txt"
 
-# 7. Deploy Sensor (preserve .venv)
-echo "[Deploy] Updating sensor runtime files..."
-mkdir -p "${TARGET_DIR}/sensor/screen"
-cp -r "${REPO_ROOT}/dist/windows/sensor/screen/"* "${TARGET_DIR}/sensor/screen/"
-
-# 8. Deploy Windows PowerShell helper scripts
-cp -f "${REPO_ROOT}/scripts/"*.ps1 "${TARGET_DIR}/scripts/" 2>/dev/null || true
+# 6. Replace only exact program-owned paths. Persistent data and both Python
+# virtual environments are deliberately outside this replacement set.
+echo "[Deploy] Replacing program-owned runtime paths..."
+rm -rf "${TARGET_DIR}/pet/src" "${TARGET_DIR}/pet/assets/skins" "${TARGET_DIR}/sensor/screen"
+mkdir -p "${TARGET_DIR}/pet" "${TARGET_DIR}/pet/assets" "${TARGET_DIR}/sensor"
+mv "${STAGE_DIR}/pet/src" "${TARGET_DIR}/pet/src"
+mv "${STAGE_DIR}/pet/requirements.txt" "${TARGET_DIR}/pet/requirements.txt"
+mv "${STAGE_DIR}/pet/assets/skins" "${TARGET_DIR}/pet/assets/skins"
+mv "${STAGE_DIR}/sensor/screen" "${TARGET_DIR}/sensor/screen"
+mv "${STAGE_DIR}/sensor/requirements.txt" "${TARGET_DIR}/sensor/requirements.txt"
+mv "${STAGE_DIR}/bin/study-supervisor.exe" "${TARGET_DIR}/bin/study-supervisor.exe"
+mv "${STAGE_DIR}/bin/config-helper.exe" "${TARGET_DIR}/bin/config-helper.exe"
+rm -rf "${TARGET_DIR}/scripts"
+mv "${STAGE_DIR}/scripts" "${TARGET_DIR}/scripts"
 
 echo "=========================================================="
 echo "Deployment successful!"

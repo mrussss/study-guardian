@@ -3,10 +3,13 @@ from PyQt6.QtGui import QAction, QIcon
 
 
 class PetContextMenu:
-    def __init__(self, parent, client, on_mode_changed=None):
+    def __init__(self, parent, client, on_mode_changed=None, on_open_study_center=None, skin_registry=None, on_skin_changed=None):
         self.parent = parent
         self.client = client
         self.on_mode_changed = on_mode_changed
+        self.on_open_study_center = on_open_study_center
+        self.skin_registry = skin_registry
+        self.on_skin_changed = on_skin_changed
 
     def show_menu(self, pos, current_status=None):
         menu = QMenu(self.parent)
@@ -54,6 +57,25 @@ class PetContextMenu:
         menu.addAction(status_action)
         menu.addSeparator()
 
+        center_action = QAction("打开学习中心", self.parent)
+        center_action.setEnabled(self.on_open_study_center is not None)
+        if self.on_open_study_center:
+            center_action.triggered.connect(self.on_open_study_center)
+        menu.addAction(center_action)
+
+        skin_menu = menu.addMenu("桌宠皮肤")
+        if self.skin_registry and self.skin_registry.available():
+            for skin_id, skin in sorted(self.skin_registry.available().items()):
+                action = QAction(skin.name, skin_menu)
+                action.setCheckable(True)
+                action.setChecked(skin_id == self.skin_registry.current_id)
+                action.triggered.connect(lambda checked, selected=skin_id: self._handle_skin_change(selected))
+                skin_menu.addAction(action)
+        else:
+            skin_menu.setEnabled(False)
+
+        menu.addSeparator()
+
         # Mode actions
         study_action = QAction("开始学习...", self.parent)
         study_action.triggered.connect(self._handle_start_study)
@@ -80,6 +102,10 @@ class PetContextMenu:
         menu.addAction(quit_action)
 
         menu.exec(pos)
+
+    def _handle_skin_change(self, skin_id):
+        if self.on_skin_changed:
+            self.on_skin_changed(skin_id)
 
     def _handle_start_study(self):
         task, ok = QInputDialog.getText(self.parent, "开始学习", "请输入当前学习任务（例如：Go 语言并发编程）：")

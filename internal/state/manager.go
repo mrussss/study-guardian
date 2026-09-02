@@ -325,14 +325,14 @@ func (m *Manager) UpdateObservation(obs Observation) {
 	m.confidence = obs.Confidence
 }
 
-func (m *Manager) Tick(now time.Time, app, title, domain string, isAFK bool, screenChanged bool, isLocked bool) {
+func (m *Manager) Tick(now time.Time, app, title, domain string, isAFK bool, screenChanged bool, isLocked bool) TickOutcome {
 	var classification ClassificationResult
 	if m.ruleEngine != nil {
 		classification = m.ruleEngine.Classify(app, title, domain, m.task)
 	} else {
 		classification = ClassificationResult{Relation: RelationUnknown, Confidence: 0.5}
 	}
-	m.TickWithClassification(now, app, title, domain, isAFK, screenChanged, isLocked, classification)
+	return m.TickWithClassification(now, app, title, domain, isAFK, screenChanged, isLocked, classification)
 }
 
 func (m *Manager) TickWithClassification(
@@ -342,7 +342,7 @@ func (m *Manager) TickWithClassification(
 	screenChanged bool,
 	isLocked bool,
 	classification ClassificationResult,
-) {
+) TickOutcome {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -353,7 +353,7 @@ func (m *Manager) TickWithClassification(
 	delta := now.Sub(m.lastTickTime)
 	m.lastTickTime = now
 	if delta < 0 {
-		return
+		return TickOutcome{}
 	}
 	if delta > 30*time.Second {
 		delta = 5 * time.Second
@@ -482,6 +482,15 @@ func (m *Manager) TickWithClassification(
 			StartedAt:       m.modeStartTime,
 			DurationSeconds: m.currentModeSeconds,
 		})
+	}
+
+	return TickOutcome{
+		DeltaSeconds:  deltaSec,
+		UserMode:      m.userMode,
+		Interaction:   m.interaction,
+		Relation:      m.relation,
+		ActivityValid: m.activityWatchOK,
+		Locked:        isLocked,
 	}
 }
 

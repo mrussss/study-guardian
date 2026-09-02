@@ -10,3 +10,10 @@
 | `PyQt6` | GPL-3.0 / Commercial | Python GUI 库 | 否（作为环境依赖） | Riverbank Computing | GPL-3.0 |
 | `requests` | Apache-2.0 | Python HTTP 请求库 | 否 | `https://github.com/psf/requests` | Apache-2.0 |
 
+## 本仓库原创素材与发布边界
+
+`pet/assets/skins/studyguardian-pixel` 和 `builtin-minimal` 是本项目 Phase 6 的原创占位像素素材，使用 OpenAI ImageGen 生成于 2026-09-02，manifest 中保留了用途声明。它们不继承上表 `desktop-pet` 的示例资产授权；发布时应保留对应 manifest 和本节说明。
+
+第三方皮肤不是本项目代码许可证的自动组成部分。用户皮肤必须自行提供作者、来源、许可证和允许再分发的证据；来源或许可证不明确的图片只可本地使用，不得打包进公开发行物。
+
+PyQt6 使用 GPL-3.0 / Commercial 双许可证。个人自用和 GPL 发行路径可以使用 GPL 版本；若进行闭源商业分发，需要在发布前完成 Riverbank 的商业许可证核查。

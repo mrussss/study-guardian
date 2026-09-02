@@ -64,7 +64,8 @@ if (-not $petRunning) {
     }
     $petScript = "$PetDir\src\main.py"
     $petAssets = "$PetDir\assets"
-    Start-Process -FilePath $petVenvPy -ArgumentList "`"$petScript`" --token-file `"$supToken`" --assets `"$petAssets`"" -WorkingDirectory "$PetDir\src"
+    $petConfig = "$ConfigDir\pet.json"
+    Start-Process -FilePath $petVenvPy -ArgumentList "`"$petScript`" --token-file `"$supToken`" --assets `"$petAssets`" --pet-config `"$petConfig`"" -WorkingDirectory "$PetDir\src"
 } else {
     Write-Host "[4/4] Study Pet is already running." -ForegroundColor Green
 }

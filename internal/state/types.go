@@ -17,7 +17,7 @@ const (
 	InteractionActive      InteractionState = "ACTIVE"
 	InteractionIdleStatic  InteractionState = "IDLE_STATIC"
 	InteractionIdleDynamic InteractionState = "IDLE_DYNAMIC"
-	InteractionUnknown      InteractionState = "UNKNOWN"
+	InteractionUnknown     InteractionState = "UNKNOWN"
 )
 
 type TaskRelation string
@@ -87,6 +87,18 @@ type ReminderDecisionInput struct {
 	BreakSeconds      int64
 	DistractedSeconds int64
 	IdleStaticSeconds int64
+}
+
+// TickOutcome is the single authoritative time delta produced by Manager.
+// Downstream product features must consume this result instead of creating a
+// second wall-clock timer.
+type TickOutcome struct {
+	DeltaSeconds  int64
+	UserMode      UserMode
+	Interaction   InteractionState
+	Relation      TaskRelation
+	ActivityValid bool
+	Locked        bool
 }
 
 type SystemStatus struct {

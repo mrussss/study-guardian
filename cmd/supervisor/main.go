@@ -16,7 +16,9 @@ import (
 	"study-guardian/internal/activitywatch"
 	"study-guardian/internal/api"
 	"study-guardian/internal/classifier"
+	"study-guardian/internal/classifier/providers"
 	"study-guardian/internal/config"
+	"study-guardian/internal/motivation"
 	"study-guardian/internal/platform/windows"
 	"study-guardian/internal/reminder"
 	"study-guardian/internal/rules"
@@ -68,22 +70,23 @@ func main() {
 	ruleEngine := rules.NewRuleEngine()
 	reminderEng := reminder.NewEngine(cfg)
 
-	// Configure AI Provider
-	var aiProvider classifier.TaskRelationProvider
-	if cfg.AI.Enabled {
-		if cfg.AI.Provider == "openai" || cfg.AI.Provider == "deepseek" || cfg.AI.Provider == "ollama" {
-			aiProvider = classifier.NewOpenAICompatibleProvider(cfg.AI.Endpoint, cfg.AI.APIKey, cfg.AI.Model)
-		} else {
-			aiProvider = classifier.NewFakeProvider()
-		}
+	// Configure AI through the explicit registry. Unknown providers never
+	// silently become FakeProvider; fake is reserved for developer/test mode.
+	aiRegistry := providers.New(cfg)
+	aiProvider := aiRegistry.Provider()
+	if cfg.AI.MigrationWarning != "" {
+		log.Printf("[AI] Warning: %s", cfg.AI.MigrationWarning)
 	}
 
-	classifierService := classifier.NewService(cfg, ruleEngine, privacyGate, aiProvider, store)
+	classifierService := classifier.NewServiceWithProviders(cfg, ruleEngine, privacyGate, aiProvider, aiRegistry.VisionProvider(), store)
+	motivationService := motivation.NewService(cfg, store)
 
 	stateMgr := state.NewPersistentManager(clock, cfg, store, ruleEngine, privacyGate, reminderEng)
 	stateMgr.SetToastNotifier(windows.SendToast)
 
 	server := api.NewServer(cfg, stateMgr)
+	server.SetMotivation(motivationService)
+	server.SetAIStatus(func() interface{} { return aiRegistry.Status() })
 
 	// ActivityWatch & Screen Sensor clients
 	awClient := activitywatch.NewClient(*awURL)
@@ -224,7 +227,8 @@ func main() {
 					}
 				}
 
-				stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes)
+				outcome := stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes)
+				motivationService.RecordTick(outcome)
 			}
 		}
 	}()

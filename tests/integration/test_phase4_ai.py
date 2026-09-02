@@ -99,6 +99,7 @@ ipc:
   auth_token: "{cls.token}"
 ai:
   enabled: true
+  developer_mode: true
   provider: "fake"
   min_confidence: 0.75
 screen:

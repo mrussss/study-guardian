@@ -68,3 +68,16 @@
 - [~] 55. 全量自动化测试回归与 Windows smoke test（自动化与本轮 Pet/Toast smoke 已通过；多显示器热插拔、崩溃自动拉起仍待后续）
 - [x] 56. 中文开发完成总结汇报
 - [x] 57. 准备 docs/FINAL_AUDIT.md 模板与 handoff 数据供独立审计
+
+## Phase 6: 产品化（v0.6）
+- [x] 58. AI Provider V2：文本/视觉分离、国内 profile、JSON fallback、cooldown、状态 API
+- [x] 59. Legacy AI 配置内存迁移与安全写入脚本（`migrate-config.ps1` / `configure-ai.ps1`）
+- [x] 60. Study Forest：有效专注单一 TickOutcome、每日 FP/AP、milli-AP ledger、打卡、连续天数
+- [x] 61. Mission / Achievement / Reward 本地 SQLite 模型、幂等操作与 Supervisor API
+- [x] 62. PyQt 懒加载 Study Center，业务状态以 Supervisor API 为唯一来源
+- [x] 63. Manifest 皮肤系统、用户皮肤目录、持久偏好、像素缩放、celebrate 状态与 fail-soft
+- [x] 64. 原创 Phase 6 占位皮肤素材与代码/素材许可证说明
+- [x] 65. Python requirements 与 venv 重建脚本
+- [x] 66. staging 部署与程序路径精确替换，保护 config/data/logs/run/handoff/venv
+- [x] 67. Phase 6 Go/Python/部署安全回归与 Windows 运行检查
+- [~] 68. 1～3 天日常试运行；锁屏、Sleep/Resume、双显示器热插拔和崩溃 watchdog 延后

@@ -8,7 +8,7 @@
 - Python: Windows Python 3.11; Sensor venv with `mss` and Pillow; Pet venv with PyQt6
 - ActivityWatch: 0.13.2 at `127.0.0.1:5600`
 - Displays: MSS reported virtual desktop plus one physical monitor (`monitor: 0`)
-- Git Commit: see `git log -1` (working tree contains the v0.4 audit changes)
+- Git Commit: see `git log -1` (Phase 6 productization changes are recorded below)
 - Runtime: `D:\StudyGuardianDev`
 
 ## PASS
@@ -32,6 +32,10 @@
 - Pet context menu: right-click opened the native menu with status and mode actions while Supervisor was offline
 - Windows 11 Toast: isolated BREAK test produced `current_reminder.level=TOAST`, reason `BREAK_TOO_LONG_STRONG`; the Windows notification database contains the corresponding `StudyGuardian 提醒 / 休息已满 1 分钟` record and the `StudyGuardian` notification registration timestamp advanced
 - Normal runtime restored after the isolated Toast test; Supervisor, Sensor, ActivityWatch, and Pet were left running for daily trial
+- Phase 6 motivation status, missions, rewards, and AI status APIs returned successfully on the deployed Windows runtime
+- Phase 6 manifest skin directories and both isolated Python requirements files were present after deployment
+- Phase 6 staging deployment passed twice while preserving persistent directories, token, and existing virtual environments
+- Phase 6 Pet process stayed alive with the manifest skin renderer and lazy Study Center modules deployed
 
 ## FAIL
 
@@ -48,6 +52,7 @@
 - Screen sampling supports configurable monitor selection and reports unusable MSS instances as unhealthy.
 - Pet Supervisor polling runs outside the Qt GUI thread.
 - Added unified test runner and per-user startup install/uninstall scripts.
+- Added AI Provider V2 profiles, secure config helper/migration scripts, motivation ledger/API, lazy Study Center, manifest skins, isolated requirements, and staging deployment.
 
 ## Known Limitations
 
@@ -63,3 +68,4 @@
 - Dual physical monitor arrangement and hot unplug/replug
 - Toast banner animation timing and cooldown behavior beyond the triggered notification-center record
 - Automatic child-process crash recovery
+- Visual pixel-skin artwork comparison beyond process startup; the original placeholder skin is loaded from the manifest path and no user skin is installed on this machine.

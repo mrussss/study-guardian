@@ -48,6 +48,7 @@ privacy:
     - "accounts.google.com"
 
 ai:
+  schema_version: 2
   enabled: false
   use_vision_only_when_needed: true
   min_confidence: 0.75
@@ -55,3 +56,29 @@ ai:
   model: ""
   api_key: ""
   endpoint: ""
+  text:
+    provider: "none"
+    model: ""
+    base_url: ""
+    api_key_env: ""
+    api_key_file: ""
+    timeout_seconds: 6
+    json_mode: "auto"
+  vision:
+    enabled: false
+    provider: "none"
+    model: ""
+    base_url: ""
+    api_key_env: ""
+    api_key_file: ""
+    timeout_seconds: 8
+    json_mode: "auto"
+
+motivation:
+  enabled: true
+  daily_target_minutes: 120
+  checkin_threshold_minutes: 30
+  ap_per_focus_hour_milli: 1000
+
+pet:
+  skin: "studyguardian-pixel"

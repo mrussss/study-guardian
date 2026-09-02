@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestOpenAICompatibleProviderRejectsInvalidSchema(t *testing.T) {
@@ -45,5 +46,54 @@ func TestOpenAICompatibleProviderRejectsMissingField(t *testing.T) {
 	_, err := provider.Classify(context.Background(), ClassificationRequest{Task: "Go"})
 	if err == nil {
 		t.Fatal("expected missing reason_short to be rejected")
+	}
+}
+
+func TestOpenAICompatibleProviderFallsBackWhenJSONModeUnsupported(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if calls == 1 {
+			if _, ok := body["response_format"]; !ok {
+				t.Fatal("first request should use response_format")
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"response_format is unsupported"}}`))
+			return
+		}
+		if _, ok := body["response_format"]; ok {
+			t.Error("fallback request must omit response_format")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"choices": []interface{}{map[string]interface{}{"message": map[string]string{"content": `{"relation":"FOCUSED","confidence":0.9,"activity":"go","task_related":true,"reason_short":"task"}`}}}})
+	}))
+	defer server.Close()
+	p := NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "test", JSONMode: "auto", SupportsJSONMode: true, Timeout: time.Second})
+	if _, err := p.Classify(context.Background(), ClassificationRequest{Task: "Go"}); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d, want 2", calls)
+	}
+}
+
+func TestOpenAICompatibleProviderDoesNotRetryUnauthorized(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
+	}))
+	defer server.Close()
+	p := NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "test", JSONMode: "auto", SupportsJSONMode: true, Timeout: time.Second})
+	if _, err := p.Classify(context.Background(), ClassificationRequest{Task: "Go"}); err == nil {
+		t.Fatal("expected unauthorized error")
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d, want 1", calls)
+	}
+	if p.CooldownUntil().Before(time.Now().Add(4 * time.Minute)) {
+		t.Fatal("unauthorized response should create a long cooldown")
 	}
 }

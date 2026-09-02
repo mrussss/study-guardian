@@ -18,7 +18,14 @@ type Service struct {
 	ruleEngine  *rules.RuleEngine
 	privacyGate *rules.PrivacyGate
 	provider    TaskRelationProvider
+	vision      TaskRelationProvider
 	storage     *storage.Storage
+}
+
+func NewServiceWithProviders(cfg *config.Config, ruleEngine *rules.RuleEngine, privacyGate *rules.PrivacyGate, textProvider, visionProvider TaskRelationProvider, store *storage.Storage) *Service {
+	s := NewService(cfg, ruleEngine, privacyGate, textProvider, store)
+	s.vision = visionProvider
+	return s
 }
 
 func NewService(
@@ -68,7 +75,7 @@ func (s *Service) Classify(
 	}
 
 	// 3. Check Classification Cache
-	cacheKey := computeCacheKey(app, title, domain, task, screenHash)
+	cacheKey := computeCacheKey(app, title, domain, task, screenHash, imageBase64 != "")
 	now := time.Now()
 	if s.storage != nil {
 		if rel, conf, reason, found := s.storage.GetClassificationCache(ctx, cacheKey, now); found {
@@ -101,13 +108,17 @@ func (s *Service) Classify(
 	aiCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	resp, err := s.provider.Classify(aiCtx, aiReq)
+	provider := s.provider
+	if aiReq.AnalysisImageBase64 != "" && s.vision != nil {
+		provider = s.vision
+	}
+	resp, err := provider.Classify(aiCtx, aiReq)
 	if err != nil {
-		log.Printf("[Classifier] AI Provider (%s) failed or timed out: %v; falling back to rules", s.provider.Name(), err)
+		log.Printf("[Classifier] AI Provider (%s) failed or timed out: %v; falling back to rules", provider.Name(), err)
 		return ruleRes
 	}
 	if err := validateClassificationResponse(resp); err != nil {
-		log.Printf("[Classifier] AI Provider (%s) returned invalid data: %v; falling back to rules", s.provider.Name(), err)
+		log.Printf("[Classifier] AI Provider (%s) returned invalid data: %v; falling back to rules", provider.Name(), err)
 		return ruleRes
 	}
 
@@ -119,13 +130,21 @@ func (s *Service) Classify(
 	return state.ClassificationResult{
 		Relation:   resp.Relation,
 		Confidence: resp.Confidence,
-		Reason:     fmt.Sprintf("[AI %s] %s: %s", s.provider.Name(), resp.Activity, resp.ReasonShort),
+		Reason:     fmt.Sprintf("[AI %s] %s: %s", provider.Name(), resp.Activity, resp.ReasonShort),
 		IsFromRule: false,
 	}
 }
 
-func computeCacheKey(app, title, domain, task, screenHash string) string {
-	raw := fmt.Sprintf("%s|%s|%s|%s|%s", app, title, domain, task, screenHash)
+func computeCacheKey(app, title, domain, task, screenHash string, vision bool) string {
+	// Text classification is independent of screen pixels; vision is not.
+	if !vision {
+		screenHash = ""
+	}
+	kind := "text"
+	if vision {
+		kind = "vision"
+	}
+	raw := fmt.Sprintf("%s|%s|%s|%s|%s|%s", kind, app, title, domain, task, screenHash)
 	h := sha256.Sum256([]byte(raw))
 	return fmt.Sprintf("%x", h)
 }
