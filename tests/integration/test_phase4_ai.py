@@ -44,7 +44,7 @@ class MockAWHandlerForPhase4(BaseHTTPRequestHandler):
             self.end_headers()
             events = [{
                 "id": 1,
-                "timestamp": "2026-09-02T10:00:00Z",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "duration": 5.0,
                 "data": {"app": self.__class__.current_app, "title": self.__class__.current_title}
             }]
@@ -57,7 +57,7 @@ class MockAWHandlerForPhase4(BaseHTTPRequestHandler):
             self.end_headers()
             events = [{
                 "id": 2,
-                "timestamp": "2026-09-02T10:00:00Z",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "duration": 5.0,
                 "data": {"status": self.__class__.current_status}
             }]
@@ -101,6 +101,8 @@ ai:
   enabled: true
   provider: "fake"
   min_confidence: 0.75
+screen:
+  active_sample_seconds: 1
 privacy:
   sensitive_apps:
     - "bitwarden"
@@ -138,16 +140,28 @@ privacy:
         # 2. Ambiguous title: AI fake provider should classify as FOCUSED
         MockAWHandlerForPhase4.current_app = "chrome.exe"
         MockAWHandlerForPhase4.current_title = "Video Tutorial #101"
-        time.sleep(2.5)
-        st = client.get_status()
+        deadline = time.time() + 8
+        st = None
+        while time.time() < deadline:
+            st = client.get_status()
+            if st and st.get("task_relation") == "FOCUSED":
+                break
+            time.sleep(0.25)
+        self.assertIsNotNone(st)
         self.assertEqual(st["task_relation"], "FOCUSED")
         self.assertGreaterEqual(st["confidence"], 0.75)
 
         # 3. Entertainment title: AI fake provider classifies as DISTRACTED
         MockAWHandlerForPhase4.current_app = "chrome.exe"
         MockAWHandlerForPhase4.current_title = "Top 10 Anime Battles Gameplay"
-        time.sleep(2.5)
-        st = client.get_status()
+        deadline = time.time() + 8
+        st = None
+        while time.time() < deadline:
+            st = client.get_status()
+            if st and st.get("task_relation") == "DISTRACTED":
+                break
+            time.sleep(0.25)
+        self.assertIsNotNone(st)
         self.assertEqual(st["task_relation"], "DISTRACTED")
 
 

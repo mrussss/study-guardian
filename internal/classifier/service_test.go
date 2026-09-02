@@ -13,6 +13,8 @@ import (
 func TestClassificationService(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.DefaultConfig()
+	cfg.AI.Enabled = true
+	cfg.AI.Provider = "fake"
 	ruleEngine := rules.NewRuleEngine()
 	privacyGate := rules.NewPrivacyGate(cfg)
 	store, _ := storage.OpenSQLite(":memory:")

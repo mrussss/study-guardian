@@ -15,6 +15,7 @@ class MockActivityWatchHandler(BaseHTTPRequestHandler):
     current_app = "Code.exe"
     current_title = "main.go - study-guardian"
     current_status = "not-afk"
+    stale = False
 
     def log_message(self, format, *args):
         pass
@@ -50,7 +51,7 @@ class MockActivityWatchHandler(BaseHTTPRequestHandler):
             self.end_headers()
             events = [{
                 "id": 1,
-                "timestamp": "2026-09-02T10:00:00Z",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - (300 if self.__class__.stale else 0))),
                 "duration": 5.0,
                 "data": {
                     "app": self.__class__.current_app,
@@ -66,7 +67,7 @@ class MockActivityWatchHandler(BaseHTTPRequestHandler):
             self.end_headers()
             events = [{
                 "id": 2,
-                "timestamp": "2026-09-02T10:00:00Z",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - (300 if self.__class__.stale else 0))),
                 "duration": 5.0,
                 "data": {
                     "status": self.__class__.current_status
@@ -160,6 +161,19 @@ ipc:
         time.sleep(2.5)
         st = client.get_status()
         self.assertEqual(st["task_relation"], "DISTRACTED")
+
+        # aw-server remains healthy while watcher events become stale.
+        active_before_stale = st["active_seconds"]
+        MockActivityWatchHandler.stale = True
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            st = client.get_status()
+            if st and not st.get("activitywatch_ok"):
+                break
+            time.sleep(0.25)
+        self.assertFalse(st["activitywatch_ok"])
+        self.assertEqual(st["interaction_state"], "UNKNOWN")
+        self.assertLessEqual(st["active_seconds"], active_before_stale + 1)
 
 
 if __name__ == "__main__":

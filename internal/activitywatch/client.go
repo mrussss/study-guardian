@@ -12,13 +12,26 @@ import (
 )
 
 type ActivitySnapshot struct {
-	Timestamp time.Time `json:"timestamp"`
-	App       string    `json:"app"`
-	Title     string    `json:"title"`
-	URL       string    `json:"url"`
-	Domain    string    `json:"domain"`
-	IsAFK     bool      `json:"is_afk"`
-	Duration  float64   `json:"duration"`
+	// Timestamp is sourced from the event supplying current activity. It is
+	// deliberately not time.Now(): callers use it to detect stale watcher data.
+	Timestamp            time.Time `json:"timestamp"`
+	WindowEventTimestamp time.Time `json:"window_event_timestamp"`
+	AFKEventTimestamp    time.Time `json:"afk_event_timestamp"`
+	WebEventTimestamp    time.Time `json:"web_event_timestamp"`
+	App                  string    `json:"app"`
+	Title                string    `json:"title"`
+	URL                  string    `json:"url"`
+	Domain               string    `json:"domain"`
+	IsAFK                bool      `json:"is_afk"`
+	Duration             float64   `json:"duration"`
+}
+
+func (s *ActivitySnapshot) IsFresh(now time.Time, maxAge time.Duration) bool {
+	if s == nil || s.Timestamp.IsZero() {
+		return false
+	}
+	age := now.Sub(s.Timestamp)
+	return age >= 0 && age <= maxAge
 }
 
 type ActivitySource interface {
@@ -49,6 +62,18 @@ type Event struct {
 	Timestamp string                 `json:"timestamp"`
 	Duration  float64                `json:"duration"`
 	Data      map[string]interface{} `json:"data"`
+}
+
+func parseEventTimestamp(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, fmt.Errorf("empty ActivityWatch event timestamp")
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid ActivityWatch event timestamp %q", raw)
 }
 
 func NewClient(baseURL string) *Client {
@@ -141,16 +166,18 @@ func (c *Client) GetLatestActivity(ctx context.Context) (*ActivitySnapshot, erro
 	webB := c.webBucket
 	c.mu.RUnlock()
 
-	snapshot := &ActivitySnapshot{
-		Timestamp: time.Now(),
-		IsAFK:     false,
-	}
+	snapshot := &ActivitySnapshot{IsAFK: false}
 
 	// 1. Fetch latest AFK event
 	if afkB != "" {
 		events, err := c.fetchLatestEvents(ctx, afkB, 1)
 		if err == nil && len(events) > 0 {
 			ev := events[0]
+			eventTime, parseErr := parseEventTimestamp(ev.Timestamp)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			snapshot.AFKEventTimestamp = eventTime
 			if status, ok := ev.Data["status"].(string); ok {
 				snapshot.IsAFK = (status == "afk")
 			}
@@ -162,6 +189,12 @@ func (c *Client) GetLatestActivity(ctx context.Context) (*ActivitySnapshot, erro
 		events, err := c.fetchLatestEvents(ctx, winB, 1)
 		if err == nil && len(events) > 0 {
 			ev := events[0]
+			eventTime, parseErr := parseEventTimestamp(ev.Timestamp)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			snapshot.WindowEventTimestamp = eventTime
+			snapshot.Timestamp = eventTime
 			snapshot.Duration = ev.Duration
 			if app, ok := ev.Data["app"].(string); ok {
 				snapshot.App = app
@@ -181,6 +214,14 @@ func (c *Client) GetLatestActivity(ctx context.Context) (*ActivitySnapshot, erro
 		events, err := c.fetchLatestEvents(ctx, webB, 1)
 		if err == nil && len(events) > 0 {
 			ev := events[0]
+			eventTime, parseErr := parseEventTimestamp(ev.Timestamp)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			snapshot.WebEventTimestamp = eventTime
+			if snapshot.Timestamp.IsZero() {
+				snapshot.Timestamp = eventTime
+			}
 			if u, ok := ev.Data["url"].(string); ok && u != "" {
 				snapshot.URL = u
 				snapshot.Domain = extractDomain(u)

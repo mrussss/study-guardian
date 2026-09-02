@@ -176,6 +176,9 @@ func (s *Storage) SaveSession(ctx context.Context, session SessionRecord) error 
 	query := `INSERT INTO sessions (id, mode, task, started_at, ended_at, duration_seconds, end_reason)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
+			mode = excluded.mode,
+			task = excluded.task,
+			started_at = excluded.started_at,
 			ended_at = excluded.ended_at,
 			duration_seconds = excluded.duration_seconds,
 			end_reason = excluded.end_reason;`
@@ -254,4 +257,33 @@ func (s *Storage) LoadLastSession(ctx context.Context) (SessionRecord, error) {
 	var rec SessionRecord
 	err := row.Scan(&rec.ID, &rec.Mode, &rec.Task, &rec.StartedAt, &rec.EndedAt, &rec.DurationSeconds, &rec.EndReason)
 	return rec, err
+}
+
+// LoadOpenSession returns the most recently persisted session that was not
+// closed. It is intentionally separate from LoadLastSession: a normal
+// restart must recover only an interrupted session, never a previously
+// completed mode.
+func (s *Storage) LoadOpenSession(ctx context.Context) (SessionRecord, error) {
+	query := `SELECT id, mode, task, started_at, ended_at, duration_seconds, end_reason
+		FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1;`
+	row := s.db.QueryRowContext(ctx, query)
+	var rec SessionRecord
+	err := row.Scan(&rec.ID, &rec.Mode, &rec.Task, &rec.StartedAt, &rec.EndedAt, &rec.DurationSeconds, &rec.EndReason)
+	return rec, err
+}
+
+// CloseOpenSessions marks every interrupted session closed. Older versions
+// could leave more than one open row after repeated restarts, so recovery must
+// clean up the full set rather than just the newest row.
+func (s *Storage) CloseOpenSessions(ctx context.Context, endedAt time.Time, reason string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET ended_at = ?, end_reason = ? WHERE ended_at IS NULL`, endedAt, reason)
+	return err
+}
+
+func (s *Storage) CountOpenSessions(ctx context.Context) (int, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL`)
+	var count int
+	err := row.Scan(&count)
+	return count, err
 }

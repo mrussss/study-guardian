@@ -107,7 +107,7 @@ func main() {
 		var lastScreenChanged bool
 		var lastScreenHash string
 		var lastCaptureTime time.Time
-		var lastClassRes state.ClassificationResult
+		lastClassRes := state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "No observation yet"}
 
 		for {
 			select {
@@ -133,7 +133,7 @@ func main() {
 					snap, err := awClient.GetLatestActivity(tickerCtx)
 					if err == nil && snap != nil {
 						// Issue 4 Fix: Drop stale events (older than 2 minutes)
-						if time.Since(snap.Timestamp) > 2*time.Minute {
+						if !snap.IsFresh(t, 2*time.Minute) {
 							isStale = true
 						} else {
 							app = snap.App
@@ -150,6 +150,9 @@ func main() {
 					domain = ""
 					isAFK = false // AW Offline/Stale forces Unknown Interaction
 				}
+				// aw-server health alone does not prove watcher freshness. A stale
+				// window event must stop active-time accumulation and force UNKNOWN.
+				stateMgr.SetHealth(awOK && !isStale, sensorOK)
 
 				isLocked := windows.IsLocked()
 				if isLocked {
@@ -174,11 +177,17 @@ func main() {
 					priv = privacyGate.Evaluate(app, title, domain)
 				}
 
-				if shouldSample {
+				if !awOK || isStale {
+					// Without a fresh ActivityWatch event there is no current
+					// activity to classify. Keep the system UNKNOWN and avoid
+					// unnecessary screenshots or AI calls.
+					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "ActivityWatch unavailable or stale"}
+					lastScreenChanged = false
+				} else if shouldSample {
 					if sensorOK && cfg.Screen.Enabled && priv == state.PrivacyNormal {
-						includeImg := cfg.AI.Enabled && cfg.AI.UseVisionOnlyWhenNeeded
+						includeImg := cfg.AI.Enabled && cfg.AI.UseVisionOnlyWhenNeeded && sysStatus.UserMode == state.UserModeStudy
 						capResp, err := sensorClient.Capture(tickerCtx, sensor.CaptureRequest{
-							Monitor:              1,
+							Monitor:              cfg.Screen.Monitor,
 							IncludeAnalysisImage: includeImg,
 							MaxWidth:             960,
 						})
@@ -194,12 +203,18 @@ func main() {
 					}
 					lastCaptureTime = t
 
-					// Perform classification only when we sample
-					currentTask := stateMgr.GetCurrentTask()
-					lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), imageBase64)
+					// BREAK is time-only: do not judge entertainment or invoke AI.
+					if sysStatus.UserMode == state.UserModeBreak {
+						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "BREAK mode"}
+					} else {
+						currentTask := stateMgr.GetCurrentTask()
+						lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), imageBase64)
+					}
 				} else if sysStatus.UserMode == state.UserModeOff {
 					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "System is OFF"}
 					lastScreenChanged = false
+				} else if sysStatus.UserMode == state.UserModeBreak {
+					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "BREAK mode"}
 				} else {
 					// Between samples, just run rule engine (very cheap) to keep reaction fast if window changes
 					// But we don't do AI or Capture.
@@ -221,6 +236,7 @@ func main() {
 
 	log.Printf("[Supervisor] Shutting down...")
 	cancelTicker()
+	stateMgr.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

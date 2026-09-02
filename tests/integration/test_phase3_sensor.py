@@ -47,7 +47,7 @@ class MockAWHandlerForPhase3(BaseHTTPRequestHandler):
             self.end_headers()
             events = [{
                 "id": 1,
-                "timestamp": "2026-09-02T10:00:00Z",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "duration": 5.0,
                 "data": {"app": self.__class__.current_app, "title": self.__class__.current_title}
             }]
@@ -60,7 +60,7 @@ class MockAWHandlerForPhase3(BaseHTTPRequestHandler):
             self.end_headers()
             events = [{
                 "id": 2,
-                "timestamp": "2026-09-02T10:00:00Z",
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "duration": 5.0,
                 "data": {"status": self.__class__.current_status}
             }]
@@ -83,7 +83,7 @@ class MockScreenSensorHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"status":"ok","service":"screen-sensor"}')
+            self.wfile.write(b'{"status":"ok","service":"screen-sensor","mss_available":true}')
             return
         self.send_response(404)
         self.end_headers()
@@ -146,6 +146,7 @@ ipc:
   auth_token: "{cls.token}"
 screen:
   enabled: true
+  unknown_sample_seconds: 1
 privacy:
   sensitive_apps:
     - "keepass"

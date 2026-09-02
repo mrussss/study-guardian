@@ -19,6 +19,7 @@ reminder:
 screen:
   enabled: true
   store_raw: false
+  monitor: 0 # 0 = virtual desktop/all monitors; 1..N = physical monitor
   active_sample_seconds: 15
   unknown_sample_seconds: 5
   break_sample_seconds: 60
@@ -47,10 +48,10 @@ privacy:
     - "accounts.google.com"
 
 ai:
-  enabled: true
+  enabled: false
   use_vision_only_when_needed: true
   min_confidence: 0.75
-  provider: "fake" # "fake" by default until user configures API key
+  provider: "none" # enable and configure a real provider explicitly
   model: ""
   api_key: ""
   endpoint: ""

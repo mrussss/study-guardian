@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -33,6 +34,32 @@ type ClassificationResponse struct {
 type TaskRelationProvider interface {
 	Classify(ctx context.Context, req ClassificationRequest) (*ClassificationResponse, error)
 	Name() string
+}
+
+const (
+	maxActivityLength = 200
+	maxReasonLength   = 240
+)
+
+func validateClassificationResponse(resp *ClassificationResponse) error {
+	if resp == nil {
+		return errors.New("AI provider returned nil classification")
+	}
+	switch resp.Relation {
+	case state.RelationFocused, state.RelationDistracted, state.RelationUnknown:
+	default:
+		return fmt.Errorf("invalid classification relation %q", resp.Relation)
+	}
+	if math.IsNaN(resp.Confidence) || math.IsInf(resp.Confidence, 0) || resp.Confidence < 0 || resp.Confidence > 1 {
+		return fmt.Errorf("classification confidence must be between 0 and 1, got %v", resp.Confidence)
+	}
+	if strings.TrimSpace(resp.Activity) == "" || len([]rune(resp.Activity)) > maxActivityLength {
+		return fmt.Errorf("classification activity must be non-empty and at most %d characters", maxActivityLength)
+	}
+	if strings.TrimSpace(resp.ReasonShort) == "" || len([]rune(resp.ReasonShort)) > maxReasonLength {
+		return fmt.Errorf("classification reason_short must be non-empty and at most %d characters", maxReasonLength)
+	}
+	return nil
 }
 
 // FakeProvider for offline testing and fallback
@@ -219,18 +246,26 @@ Respond ONLY with a valid JSON object with the following schema:
 		return nil, errors.New("empty response content from AI provider")
 	}
 
-	var classResp ClassificationResponse
 	contentStr := chatResp.Choices[0].Message.Content
-	if err := json.Unmarshal([]byte(contentStr), &classResp); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(contentStr), &fields); err != nil {
 		return nil, fmt.Errorf("failed to parse structured JSON classification from AI: %w", err)
 	}
-
-	// Validate enum values
-	switch classResp.Relation {
-	case state.RelationFocused, state.RelationDistracted, state.RelationUnknown:
-		// Valid
-	default:
-		classResp.Relation = state.RelationUnknown
+	for _, field := range []string{"relation", "confidence", "activity", "task_related", "reason_short"} {
+		if _, ok := fields[field]; !ok {
+			return nil, fmt.Errorf("AI classification is missing required field %q", field)
+		}
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("failed to normalize AI classification: %w", err)
+	}
+	var classResp ClassificationResponse
+	if err := json.Unmarshal(encoded, &classResp); err != nil {
+		return nil, fmt.Errorf("invalid AI classification field type: %w", err)
+	}
+	if err := validateClassificationResponse(&classResp); err != nil {
+		return nil, err
 	}
 
 	return &classResp, nil

@@ -30,6 +30,9 @@ class TestLocalhostTriadPoC(unittest.TestCase):
         # Create temporary config
         cls.config_path = "/tmp/studyguardian-test-config.yaml"
         cls.token_path = "/tmp/studyguardian-test-auth.token"
+        cls.db_path = "/tmp/studyguardian-test.db"
+        if os.path.exists(cls.db_path):
+            os.remove(cls.db_path)
         with open(cls.token_path, "w") as f:
             f.write(cls.token + "\n")
 
@@ -45,7 +48,7 @@ ipc:
 
         # Start supervisor
         cls.supervisor_proc = subprocess.Popen(
-            ["/tmp/study-supervisor-test", "-config", cls.config_path, "-token", cls.token_path],
+            ["/tmp/study-supervisor-test", "-config", cls.config_path, "-token", cls.token_path, "-db", cls.db_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
@@ -59,6 +62,8 @@ ipc:
         if hasattr(cls, 'sensor_server') and cls.sensor_server:
             cls.sensor_server.shutdown()
             cls.sensor_server.server_close()
+        if hasattr(cls, 'db_path') and os.path.exists(cls.db_path):
+            os.remove(cls.db_path)
 
     def test_localhost_communication(self):
         pet_client = SupervisorClient(base_url="http://127.0.0.1:17381", auth_token=self.token)

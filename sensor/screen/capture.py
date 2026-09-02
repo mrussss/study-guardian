@@ -33,6 +33,10 @@ class ScreenCapturer:
             except Exception:
                 self.sct = None
 
+    def is_available(self) -> bool:
+        """Return whether a real MSS capture object is usable."""
+        return bool(HAS_CAPTURE_DEPS and self.sct is not None)
+
     def compute_dhash(self, image: 'Image.Image', hash_size: int = 8) -> str:
         """Compute difference hash (dHash) of an image."""
         resized = image.convert('L').resize((hash_size + 1, hash_size), Image.Resampling.BILINEAR)
@@ -53,7 +57,7 @@ class ScreenCapturer:
                 decimal_val |= 1 << idx
         return f"{decimal_val:016x}"
 
-    def capture(self, monitor_idx: int = 1, include_analysis_image: bool = False, max_width: int = 960) -> Dict[str, Any]:
+    def capture(self, monitor_idx: int = 0, include_analysis_image: bool = False, max_width: int = 960) -> Dict[str, Any]:
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         
         if not HAS_CAPTURE_DEPS or self.sct is None:

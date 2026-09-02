@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestActivityWatchClient(t *testing.T) {
@@ -99,6 +100,18 @@ func TestActivityWatchClient(t *testing.T) {
 	}
 	if snap.Domain != "pkg.go.dev" {
 		t.Fatalf("expected domain pkg.go.dev from web watcher, got %s", snap.Domain)
+	}
+	if snap.Timestamp.IsZero() || snap.Timestamp.Format(time.RFC3339) != "2026-09-02T10:00:00Z" {
+		t.Fatalf("expected timestamp from real ActivityWatch event, got %v", snap.Timestamp)
+	}
+	if snap.WindowEventTimestamp.IsZero() || snap.AFKEventTimestamp.IsZero() || snap.WebEventTimestamp.IsZero() {
+		t.Fatalf("expected per-watcher timestamps, got %+v", snap)
+	}
+	if snap.IsFresh(time.Date(2026, 9, 2, 10, 1, 0, 0, time.UTC), 2*time.Minute) == false {
+		t.Fatal("expected recent ActivityWatch event to be fresh")
+	}
+	if snap.IsFresh(time.Date(2026, 9, 2, 10, 5, 0, 0, time.UTC), 2*time.Minute) {
+		t.Fatal("expected old ActivityWatch event to be stale")
 	}
 }
 

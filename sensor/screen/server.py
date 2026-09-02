@@ -7,7 +7,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from typing import Optional
 
-from capture import ScreenCapturer, HAS_CAPTURE_DEPS
+from capture import ScreenCapturer
 
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -49,7 +49,7 @@ class SensorHandler(BaseHTTPRequestHandler):
             resp = {
                 "status": "ok",
                 "service": "screen-sensor",
-                "mss_available": HAS_CAPTURE_DEPS,
+                "mss_available": self.capturer.is_available(),
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
@@ -74,11 +74,11 @@ class SensorHandler(BaseHTTPRequestHandler):
                 except Exception:
                     body = {}
 
-            monitor_idx = body.get("monitor", 1)
+            monitor_idx = body.get("monitor", 0)
             if monitor_idx == "primary":
-                monitor_idx = 1
+                monitor_idx = 0
             elif not isinstance(monitor_idx, int):
-                monitor_idx = 1
+                monitor_idx = 0
 
             include_analysis = bool(body.get("include_analysis_image", False))
             max_width = int(body.get("max_width", 960))

@@ -106,6 +106,10 @@ func (s *Service) Classify(
 		log.Printf("[Classifier] AI Provider (%s) failed or timed out: %v; falling back to rules", s.provider.Name(), err)
 		return ruleRes
 	}
+	if err := validateClassificationResponse(resp); err != nil {
+		log.Printf("[Classifier] AI Provider (%s) returned invalid data: %v; falling back to rules", s.provider.Name(), err)
+		return ruleRes
+	}
 
 	// 6. Save in cache
 	if s.storage != nil && resp.Confidence >= 0.70 {

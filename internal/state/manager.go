@@ -5,11 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"study-guardian/internal/config"
 	"study-guardian/internal/storage"
 )
+
+var sessionSequence atomic.Uint64
+
+func newSessionID(now time.Time) string {
+	return fmt.Sprintf("sess-%d-%d", now.UnixNano(), sessionSequence.Add(1))
+}
 
 type RuleClassifier interface {
 	Classify(app, title, domain, task string) ClassificationResult
@@ -24,31 +31,31 @@ type ReminderEvaluator interface {
 }
 
 type Manager struct {
-	mu            sync.RWMutex
-	clock         Clock
-	cfg           *config.Config
-	storage       *storage.Storage
-	ruleEngine    RuleClassifier
-	privacyGate   PrivacyEvaluator
-	reminderEng   ReminderEvaluator
+	mu          sync.RWMutex
+	clock       Clock
+	cfg         *config.Config
+	storage     *storage.Storage
+	ruleEngine  RuleClassifier
+	privacyGate PrivacyEvaluator
+	reminderEng ReminderEvaluator
 
 	currentDate   string
 	userMode      UserMode
 	task          string
 	currentSessID string
 
-	interaction   InteractionState
-	relation      TaskRelation
-	privacy       PrivacyState
-	confidence    float64
+	interaction InteractionState
+	relation    TaskRelation
+	privacy     PrivacyState
+	confidence  float64
 
-	studySeconds      int64
-	breakSeconds      int64
-	standbySeconds    int64
-	offSeconds        int64
-	activeSeconds     int64
-	distractedSeconds int64
-	idleStaticSeconds int64
+	studySeconds       int64
+	breakSeconds       int64
+	standbySeconds     int64
+	offSeconds         int64
+	activeSeconds      int64
+	distractedSeconds  int64
+	idleStaticSeconds  int64
 	currentModeSeconds int64
 
 	modeStartTime  time.Time
@@ -108,22 +115,34 @@ func NewPersistentManager(
 			m.activeSeconds = act
 		}
 
-		// 2. Load Last Session if it was today
-		if lastSess, err := store.LoadLastSession(ctx); err == nil {
-			if lastSess.StartedAt.Format("2006-01-02") == dateStr {
-				m.userMode = UserMode(lastSess.Mode)
-				m.task = lastSess.Task
+		// 2. Recover only an interrupted open session. A completed session must
+		// never change the user's mode after a restart.
+		openSess, openErr := store.LoadOpenSession(ctx)
+		if openErr == nil {
+			if openSess.StartedAt.Format("2006-01-02") == dateStr {
+				switch UserMode(openSess.Mode) {
+				case UserModeStandby, UserModeStudy, UserModeBreak, UserModeOff:
+					m.userMode = UserMode(openSess.Mode)
+					m.task = openSess.Task
+					m.currentModeSeconds = openSess.DurationSeconds
+				}
 			}
+			// Close the interrupted record using its last persisted duration. Do
+			// not derive duration from wall-clock time, which includes downtime,
+			// sleep and lock-screen time.
 		}
-		m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
+		_ = store.CloseOpenSessions(ctx, now, "RESTART_RECOVERY")
+		m.modeStartTime = now
+		m.currentSessID = newSessionID(now)
 		_ = store.SaveSession(ctx, storage.SessionRecord{
-			ID:        m.currentSessID,
-			Mode:      string(m.userMode),
-			Task:      m.task,
-			StartedAt: now,
+			ID:              m.currentSessID,
+			Mode:            string(m.userMode),
+			Task:            m.task,
+			StartedAt:       now,
+			DurationSeconds: m.currentModeSeconds,
 		})
 	} else {
-		m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
+		m.currentSessID = newSessionID(now)
 	}
 
 	return m
@@ -131,6 +150,17 @@ func NewPersistentManager(
 
 func NewManager(clock Clock) *Manager {
 	return NewPersistentManager(clock, config.DefaultConfig(), nil, nil, nil, nil)
+}
+
+// Close persists the current session as cleanly ended. Interrupted sessions
+// are handled by the constructor on the next start.
+func (m *Manager) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.storage != nil && m.currentSessID != "" {
+		now := m.clock.Now()
+		m.closeCurrentSessionLocked(now, "SHUTDOWN")
+	}
 }
 
 func (m *Manager) SetToastNotifier(fn func(title, msg string) error) {
@@ -184,7 +214,7 @@ func (m *Manager) SetModeStudy(task string) error {
 	m.idleStaticSeconds = 0
 	m.currentModeSeconds = 0
 	m.currentReminder = nil
-	m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
+	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
@@ -216,7 +246,7 @@ func (m *Manager) SetModeBreak() error {
 	m.idleStaticSeconds = 0
 	m.currentModeSeconds = 0
 	m.currentReminder = nil
-	m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
+	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
@@ -244,7 +274,7 @@ func (m *Manager) SetModeOff() error {
 	m.idleStaticSeconds = 0
 	m.currentModeSeconds = 0
 	m.currentReminder = nil
-	m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
+	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
@@ -339,9 +369,8 @@ func (m *Manager) TickWithClassification(
 		m.lastActivityAt = &now
 	}
 
-	// 4. Update Mode duration
-	// Issue 5 Fix: Do not accumulate break seconds if the screen is locked
-	if !(m.userMode == UserModeBreak && isLocked) {
+	// 4. Update Mode duration. A lock screen is not user time in any mode.
+	if !isLocked {
 		m.currentModeSeconds += deltaSec
 		switch m.userMode {
 		case UserModeStandby:
@@ -379,9 +408,16 @@ func (m *Manager) TickWithClassification(
 		}
 	}
 
-	// 7. Task Relation Evaluation (from classification result)
-	m.relation = classification.Relation
-	m.confidence = classification.Confidence
+	// 7. Task Relation Evaluation (from classification result). Lock screen
+	// observations must not inherit a stale DISTRACTED result.
+	if isLocked {
+		m.interaction = InteractionUnknown
+		m.relation = RelationUnknown
+		m.confidence = 1.0
+	} else {
+		m.relation = classification.Relation
+		m.confidence = classification.Confidence
+	}
 
 	if m.relation == RelationDistracted {
 		m.distractedSeconds += deltaSec
@@ -415,7 +451,7 @@ func (m *Manager) TickWithClassification(
 					Level:         string(rem.Level),
 					Message:       rem.Message,
 					Reason:        rem.Reason,
-					CooldownUntil: now.Add(10 * time.Minute),
+					CooldownUntil: now.Add(time.Duration(m.cfg.Reminder.CooldownMinutes) * time.Minute),
 				})
 			}
 			if m.toastNotifier != nil {
@@ -439,6 +475,13 @@ func (m *Manager) TickWithClassification(
 
 		_ = m.storage.UpdateDailyState(context.Background(), m.currentDate,
 			m.standbySeconds, m.studySeconds, m.breakSeconds, m.offSeconds, m.activeSeconds, now)
+		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
+			ID:              m.currentSessID,
+			Mode:            string(m.userMode),
+			Task:            m.task,
+			StartedAt:       m.modeStartTime,
+			DurationSeconds: m.currentModeSeconds,
+		})
 	}
 }
 
@@ -461,7 +504,7 @@ func (m *Manager) checkMidnightResetLocked(now time.Time) {
 		m.currentModeSeconds = 0
 		m.currentReminder = nil
 		m.modeStartTime = now
-		m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
+		m.currentSessID = newSessionID(now)
 
 		if m.storage != nil {
 			_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
@@ -476,14 +519,13 @@ func (m *Manager) checkMidnightResetLocked(now time.Time) {
 
 func (m *Manager) closeCurrentSessionLocked(now time.Time, reason string) {
 	if m.currentSessID != "" && m.storage != nil {
-		dur := int64(now.Sub(m.modeStartTime).Seconds())
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
 			ID:              m.currentSessID,
 			Mode:            string(m.userMode),
 			Task:            m.task,
 			StartedAt:       m.modeStartTime,
 			EndedAt:         &now,
-			DurationSeconds: dur,
+			DurationSeconds: m.currentModeSeconds,
 			EndReason:       reason,
 		})
 	}

@@ -1,12 +1,22 @@
 package state
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"study-guardian/internal/config"
 	"study-guardian/internal/storage"
 )
+
+type captureReminderEvaluator struct {
+	last ReminderDecisionInput
+}
+
+func (r *captureReminderEvaluator) Evaluate(input ReminderDecisionInput) *ReminderEvent {
+	r.last = input
+	return nil
+}
 
 type mockRuleClassifier struct{}
 
@@ -131,5 +141,104 @@ func TestManagerDistractionReminderTrigger(t *testing.T) {
 	}
 	if st.CurrentReminder == nil || st.CurrentReminder.Level != ReminderLevelBubble {
 		t.Fatalf("expected Bubble reminder after 500s distraction, got %+v", st.CurrentReminder)
+	}
+}
+
+func TestManagerRestartRecoversOnlyInterruptedSession(t *testing.T) {
+	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.Local)
+	dbPath := t.TempDir() + "/studyguardian.db"
+	cfg := config.DefaultConfig()
+	clock := NewFakeClock(now)
+	store1, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr1 := NewPersistentManager(clock, cfg, store1, mockRuleClassifier{}, mockPrivacyEvaluator{}, &captureReminderEvaluator{})
+	if err := mgr1.SetModeOff(); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(12 * time.Second)
+	clock.Set(now)
+	mgr1.Tick(now, "", "", "", true, false, false)
+	// Simulate a process kill: close the database without a clean manager close.
+	_ = store1.Close()
+
+	store2, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+	mgr2 := NewPersistentManager(clock, cfg, store2, mockRuleClassifier{}, mockPrivacyEvaluator{}, &captureReminderEvaluator{})
+	if got := mgr2.GetStatus().UserMode; got != UserModeOff {
+		t.Fatalf("expected same-day OFF recovery, got %s", got)
+	}
+	openCount, err := store2.CountOpenSessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if openCount != 1 {
+		t.Fatalf("expected exactly one open session after recovery, got %d", openCount)
+	}
+
+	mgr2.Close()
+	_ = store2.Close()
+	store3, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store3.Close()
+	mgr3 := NewPersistentManager(clock, cfg, store3, mockRuleClassifier{}, mockPrivacyEvaluator{}, &captureReminderEvaluator{})
+	if got := mgr3.GetStatus().UserMode; got != UserModeStandby {
+		t.Fatalf("expected cleanly completed OFF not to be restored, got %s", got)
+	}
+}
+
+func TestManagerLockAndLongGapDoNotAddUserTime(t *testing.T) {
+	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	mgr := NewPersistentManager(clock, config.DefaultConfig(), nil, mockRuleClassifier{}, mockPrivacyEvaluator{}, nil)
+	_ = mgr.SetModeStudy("Go")
+
+	now = now.Add(10 * time.Second)
+	clock.Set(now)
+	mgr.Tick(now, "code.exe", "main.go", "", false, true, false)
+	beforeLock := mgr.GetStatus().StudySeconds
+
+	now = now.Add(20 * time.Second)
+	clock.Set(now)
+	mgr.Tick(now, "", "", "", true, false, true)
+	locked := mgr.GetStatus()
+	if locked.StudySeconds != beforeLock || locked.InteractionState != InteractionUnknown || locked.TaskRelation != RelationUnknown {
+		t.Fatalf("lock screen must pause time and clear observation, before=%d after=%+v", beforeLock, locked)
+	}
+
+	now = now.Add(2 * time.Hour)
+	clock.Set(now)
+	mgr.Tick(now, "code.exe", "main.go", "", false, true, false)
+	afterResume := mgr.GetStatus()
+	if afterResume.StudySeconds != beforeLock+5 {
+		t.Fatalf("long resume gap should be clamped to one recovery tick, got %d want %d", afterResume.StudySeconds, beforeLock+5)
+	}
+}
+
+func TestBreakReminderUsesCurrentBreakSessionDuration(t *testing.T) {
+	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	reminders := &captureReminderEvaluator{}
+	mgr := NewPersistentManager(clock, config.DefaultConfig(), nil, mockRuleClassifier{}, mockPrivacyEvaluator{}, reminders)
+	_ = mgr.SetModeBreak()
+	now = now.Add(15 * time.Second)
+	clock.Set(now)
+	mgr.Tick(now, "", "", "", true, false, false)
+	_ = mgr.SetModeStudy("Go")
+	now = now.Add(1 * time.Second)
+	clock.Set(now)
+	mgr.Tick(now, "code.exe", "main.go", "", false, true, false)
+	_ = mgr.SetModeBreak()
+	now = now.Add(5 * time.Second)
+	clock.Set(now)
+	mgr.Tick(now, "", "", "", true, false, false)
+	if reminders.last.BreakSeconds != 5 {
+		t.Fatalf("expected current BREAK duration 5, got %d", reminders.last.BreakSeconds)
 	}
 }

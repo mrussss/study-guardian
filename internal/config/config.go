@@ -45,11 +45,14 @@ type ReminderConfig struct {
 }
 
 type ScreenConfig struct {
-	Enabled              bool `yaml:"enabled"`
-	StoreRaw             bool `yaml:"store_raw"`
-	ActiveSampleSeconds  int  `yaml:"active_sample_seconds"`
-	UnknownSampleSeconds int  `yaml:"unknown_sample_seconds"`
-	BreakSampleSeconds   int  `yaml:"break_sample_seconds"`
+	Enabled  bool `yaml:"enabled"`
+	StoreRaw bool `yaml:"store_raw"`
+	// Monitor 0 means the virtual desktop (all monitors); 1..N selects a
+	// physical monitor.
+	Monitor              int `yaml:"monitor"`
+	ActiveSampleSeconds  int `yaml:"active_sample_seconds"`
+	UnknownSampleSeconds int `yaml:"unknown_sample_seconds"`
+	BreakSampleSeconds   int `yaml:"break_sample_seconds"`
 }
 
 type IPCConfig struct {
@@ -98,6 +101,7 @@ func DefaultConfig() *Config {
 		Screen: ScreenConfig{
 			Enabled:              true,
 			StoreRaw:             false,
+			Monitor:              0,
 			ActiveSampleSeconds:  15,
 			UnknownSampleSeconds: 5,
 			BreakSampleSeconds:   60,
@@ -118,10 +122,10 @@ func DefaultConfig() *Config {
 			},
 		},
 		AI: AIConfig{
-			Enabled:                 true,
+			Enabled:                 false,
 			UseVisionOnlyWhenNeeded: true,
 			MinConfidence:           0.75,
-			Provider:                "fake",
+			Provider:                "none",
 		},
 	}
 }
