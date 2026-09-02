@@ -1,7 +1,7 @@
 import argparse
 import os
 import sys
-from PyQt6.QtCore import QTimer, QPoint
+from PyQt6.QtCore import QTimer, QPoint, QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 
@@ -11,8 +11,25 @@ from bubble import SpeechBubble
 from menu import PetContextMenu
 
 
-class StudyPetApp:
+class StatusWorker(QObject):
+    """Perform Supervisor HTTP polling away from the Qt GUI event loop."""
+
+    poll_requested = pyqtSignal()
+    status_ready = pyqtSignal(object)
+
+    def __init__(self, client: SupervisorClient):
+        super().__init__()
+        self.client = client
+        self.poll_requested.connect(self.poll)
+
+    @pyqtSlot()
+    def poll(self):
+        self.status_ready.emit(self.client.get_status())
+
+
+class StudyPetApp(QObject):
     def __init__(self, host: str, port: int, token: str, asset_dir: str):
+        super().__init__()
         self.client = SupervisorClient(base_url=f"http://{host}:{port}", auth_token=token)
         self.asset_dir = asset_dir
 
@@ -22,7 +39,7 @@ class StudyPetApp:
         # Create widgets
         self.pet_widget = PetWidget(asset_dir=asset_dir, on_click=self._on_pet_clicked)
         self.bubble = SpeechBubble(on_feedback=self._on_feedback)
-        self.context_menu = PetContextMenu(parent=self.pet_widget, client=self.client, on_mode_changed=self._poll_status)
+        self.context_menu = PetContextMenu(parent=self.pet_widget, client=self.client, on_mode_changed=self._request_status)
 
         # Tray Icon
         self._setup_tray()
@@ -34,11 +51,22 @@ class StudyPetApp:
 
         # Polling timer
         self.poll_timer = QTimer()
-        self.poll_timer.timeout.connect(self._poll_status)
+        self.poll_timer.timeout.connect(self._request_status)
         self.poll_timer.start(1500)
 
-        # Initial fetch
-        self._poll_status()
+        self.poll_in_flight = False
+        self.worker_thread = QThread()
+        self.status_worker = StatusWorker(self.client)
+        self.status_worker.moveToThread(self.worker_thread)
+        self.status_worker.status_ready.connect(self._handle_status)
+        self.worker_thread.finished.connect(self.status_worker.deleteLater)
+        self.worker_thread.start()
+        self._request_status()
+
+    def _request_status(self):
+        if not self.poll_in_flight:
+            self.poll_in_flight = True
+            self.status_worker.poll_requested.emit()
 
     def _setup_tray(self):
         self.tray_icon = QSystemTrayIcon()
@@ -74,8 +102,9 @@ class StudyPetApp:
     def _on_feedback(self, event_id: str, feedback: str):
         self.client.send_feedback(event_id, feedback)
 
-    def _poll_status(self):
-        status = self.client.get_status()
+    @pyqtSlot(object)
+    def _handle_status(self, status):
+        self.poll_in_flight = False
         self.last_status = status
 
         if not status:
@@ -116,6 +145,11 @@ class StudyPetApp:
                 target_pt = self.pet_widget.geometry().center()
                 self.bubble.show_message(msg, event_id=rem_id, duration_ms=10000, target_pos=target_pt)
 
+    def shutdown(self):
+        self.poll_timer.stop()
+        self.worker_thread.quit()
+        self.worker_thread.wait(1500)
+
 
 def main():
     parser = argparse.ArgumentParser(description="StudyGuardian Pet UI Shell")
@@ -142,6 +176,7 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     pet_app = StudyPetApp(host=args.host, port=args.port, token=token, asset_dir=asset_dir)
+    app.aboutToQuit.connect(pet_app.shutdown)
     sys.exit(app.exec())
 
 

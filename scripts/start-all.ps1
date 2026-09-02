@@ -26,35 +26,48 @@ if (-not $awProcess) {
     Write-Host "[1/4] ActivityWatch is already running." -ForegroundColor Green
 }
 
-# 2. Start Screen Sensor
-Write-Host "[2/4] Starting Screen Sensor (:17322)..." -ForegroundColor Yellow
-$sensorVenvPy = "$SensorDir\.venv\Scripts\python.exe"
-if (-not (Test-Path $sensorVenvPy)) {
-    $sensorVenvPy = "python.exe"
+# 2. Start Screen Sensor (idempotently)
+if (@(Get-NetTCPConnection -State Listen -LocalPort 17322 -ErrorAction SilentlyContinue).Count -eq 0) {
+    Write-Host "[2/4] Starting Screen Sensor (:17322)..." -ForegroundColor Yellow
+    $sensorVenvPy = "$SensorDir\.venv\Scripts\python.exe"
+    if (-not (Test-Path $sensorVenvPy)) {
+        $sensorVenvPy = "python.exe"
+    }
+    $sensorScript = "$SensorDir\screen\server.py"
+    $sensorTokenFile = "$ConfigDir\auth.token"
+    Start-Process -FilePath $sensorVenvPy -ArgumentList "`"$sensorScript`" --token-file `"$sensorTokenFile`"" -WorkingDirectory "$SensorDir\screen" -WindowStyle Hidden
+} else {
+    Write-Host "[2/4] Screen Sensor is already running." -ForegroundColor Green
 }
-$sensorScript = "$SensorDir\screen\server.py"
-$sensorTokenFile = "$ConfigDir\auth.token"
-Start-Process -FilePath $sensorVenvPy -ArgumentList "`"$sensorScript`" --token-file `"$sensorTokenFile`"" -WorkingDirectory "$SensorDir\screen" -WindowStyle Hidden
 
-# 3. Start Supervisor
-Write-Host "[3/4] Starting Supervisor (:17321)..." -ForegroundColor Yellow
+# 3. Start Supervisor (idempotently)
 $supExe = "$BinDir\study-supervisor.exe"
 $supConfig = "$ConfigDir\config.yaml"
 $supToken = "$ConfigDir\auth.token"
 $supDB = "$RootDir\data\studyguardian.db"
-Start-Process -FilePath $supExe -ArgumentList "-config `"$supConfig`" -token `"$supToken`" -db `"$supDB`"" -WorkingDirectory "$RootDir" -WindowStyle Hidden
+if (@(Get-NetTCPConnection -State Listen -LocalPort 17321 -ErrorAction SilentlyContinue).Count -eq 0) {
+    Write-Host "[3/4] Starting Supervisor (:17321)..." -ForegroundColor Yellow
+    Start-Process -FilePath $supExe -ArgumentList "-config `"$supConfig`" -token `"$supToken`" -db `"$supDB`"" -WorkingDirectory "$RootDir" -WindowStyle Hidden
+} else {
+    Write-Host "[3/4] Supervisor is already running." -ForegroundColor Green
+}
 
 Start-Sleep -Seconds 2
 
-# 4. Start Pet UI Shell
-Write-Host "[4/4] Starting Study Pet UI..." -ForegroundColor Yellow
-$petVenvPy = "$PetDir\.venv\Scripts\python.exe"
-if (-not (Test-Path $petVenvPy)) {
-    $petVenvPy = "python.exe"
+# 4. Start Pet UI Shell if it is not already running
+$petRunning = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $PID -and $_.Name -eq "python.exe" -and $_.CommandLine -like "*pet\src\main.py*" }).Count -gt 0
+if (-not $petRunning) {
+    Write-Host "[4/4] Starting Study Pet UI..." -ForegroundColor Yellow
+    $petVenvPy = "$PetDir\.venv\Scripts\python.exe"
+    if (-not (Test-Path $petVenvPy)) {
+        $petVenvPy = "python.exe"
+    }
+    $petScript = "$PetDir\src\main.py"
+    $petAssets = "$PetDir\assets"
+    Start-Process -FilePath $petVenvPy -ArgumentList "`"$petScript`" --token-file `"$supToken`" --assets `"$petAssets`"" -WorkingDirectory "$PetDir\src"
+} else {
+    Write-Host "[4/4] Study Pet is already running." -ForegroundColor Green
 }
-$petScript = "$PetDir\src\main.py"
-$petAssets = "$PetDir\assets"
-Start-Process -FilePath $petVenvPy -ArgumentList "`"$petScript`" --token-file `"$supToken`" --assets `"$petAssets`"" -WorkingDirectory "$PetDir\src"
 
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host "  StudyGuardian is now running in background!" -ForegroundColor Green
