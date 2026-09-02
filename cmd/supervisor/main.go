@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"study-guardian/internal/api"
 	"study-guardian/internal/classifier"
 	"study-guardian/internal/config"
+	"study-guardian/internal/platform/windows"
 	"study-guardian/internal/reminder"
 	"study-guardian/internal/rules"
 	"study-guardian/internal/sensor"
@@ -30,19 +32,29 @@ func main() {
 	awURL := flag.String("aw-url", "http://127.0.0.1:5600", "ActivityWatch base URL")
 	flag.Parse()
 
-	log.Printf("[Supervisor] Starting StudyGuardian Supervisor...")
-
-	cfg, err := config.LoadConfig(*configPath, *tokenPath)
-	if err != nil {
-		log.Fatalf("[Supervisor] Error loading config: %v", err)
-	}
-
 	// Resolve database path
 	targetDB := *dbPath
 	if targetDB == "" {
 		targetDB = "data/studyguardian.db"
 	}
 	_ = os.MkdirAll(filepath.Dir(targetDB), 0755)
+
+	// Set up rotating logger in logs directory next to data
+	logPath := filepath.Join(filepath.Dir(targetDB), "..", "logs", "supervisor.log")
+	logFile, err := windows.SetupLogger(logPath)
+	if err == nil {
+		defer logFile.Close()
+		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+	} else {
+		log.Printf("Warning: Failed to setup rotating logger at %s: %v", logPath, err)
+	}
+
+	log.Printf("[Supervisor] Starting StudyGuardian Supervisor...")
+
+	cfg, err := config.LoadConfig(*configPath, *tokenPath)
+	if err != nil {
+		log.Fatalf("[Supervisor] Error loading config: %v", err)
+	}
 
 	store, err := storage.OpenSQLite(targetDB)
 	if err != nil {
@@ -69,6 +81,8 @@ func main() {
 	classifierService := classifier.NewService(cfg, ruleEngine, privacyGate, aiProvider, store)
 
 	stateMgr := state.NewPersistentManager(clock, cfg, store, ruleEngine, privacyGate, reminderEng)
+	stateMgr.SetToastNotifier(windows.SendToast)
+
 	server := api.NewServer(cfg, stateMgr)
 
 	// ActivityWatch & Screen Sensor clients

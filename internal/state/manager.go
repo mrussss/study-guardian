@@ -58,6 +58,8 @@ type Manager struct {
 	screenSensorOK  bool
 	currentReminder *ReminderEvent
 	feedbacks       []FeedbackRecord
+
+	toastNotifier func(title, msg string) error
 }
 
 func NewPersistentManager(
@@ -108,6 +110,12 @@ func NewPersistentManager(
 
 func NewManager(clock Clock) *Manager {
 	return NewPersistentManager(clock, config.DefaultConfig(), nil, nil, nil, nil)
+}
+
+func (m *Manager) SetToastNotifier(fn func(title, msg string) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.toastNotifier = fn
 }
 
 func (m *Manager) GetStatus() SystemStatus {
@@ -377,6 +385,9 @@ func (m *Manager) TickWithClassification(
 					Reason:        rem.Reason,
 					CooldownUntil: now.Add(10 * time.Minute),
 				})
+			}
+			if m.toastNotifier != nil {
+				_ = m.toastNotifier("StudyGuardian 提醒", rem.Message)
 			}
 		}
 	}
