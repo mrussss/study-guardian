@@ -97,3 +97,31 @@ func TestOpenAICompatibleProviderDoesNotRetryUnauthorized(t *testing.T) {
 		t.Fatal("unauthorized response should create a long cooldown")
 	}
 }
+
+func TestOpenAICompatibleProviderOmitsTemperatureUnlessConfigured(t *testing.T) {
+	seen := make(chan map[string]interface{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		seen <- body
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"choices": []interface{}{map[string]interface{}{"message": map[string]string{"content": `{"relation":"FOCUSED","confidence":0.9,"activity":"go","task_related":true,"reason_short":"task"}`}}}})
+	}))
+	defer server.Close()
+
+	defaultProvider := NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "test", Timeout: time.Second})
+	if _, err := defaultProvider.Classify(context.Background(), ClassificationRequest{Task: "Go"}); err != nil {
+		t.Fatal(err)
+	}
+	if body := <-seen; body["temperature"] != nil {
+		t.Fatal("temperature must be omitted by default")
+	}
+
+	temperature := 0.2
+	explicitProvider := NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "test", Timeout: time.Second, Temperature: &temperature})
+	if _, err := explicitProvider.Classify(context.Background(), ClassificationRequest{Task: "Go"}); err != nil {
+		t.Fatal(err)
+	}
+	if body := <-seen; body["temperature"] != temperature {
+		t.Fatalf("temperature=%v, want %v", body["temperature"], temperature)
+	}
+}

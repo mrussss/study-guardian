@@ -23,7 +23,7 @@ var profiles = map[string]Profile{
 	"openai":            {ID: "openai", DefaultBaseURL: "https://api.openai.com/v1", DefaultAPIKeyEnv: "OPENAI_API_KEY", SupportsJSONMode: true},
 	"openai-compatible": {ID: "openai-compatible", SupportsJSONMode: false},
 	"deepseek":          {ID: "deepseek", DefaultBaseURL: "https://api.deepseek.com", DefaultAPIKeyEnv: "DEEPSEEK_API_KEY", SupportsJSONMode: true},
-	"qwen":              {ID: "qwen", DefaultAPIKeyEnv: "DASHSCOPE_API_KEY", SupportsJSONMode: true},
+	"qwen":              {ID: "qwen", DefaultBaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", DefaultAPIKeyEnv: "DASHSCOPE_API_KEY", SupportsJSONMode: true},
 	"kimi":              {ID: "kimi", DefaultBaseURL: "https://api.moonshot.cn/v1", DefaultAPIKeyEnv: "MOONSHOT_API_KEY", SupportsJSONMode: true},
 	"zhipu":             {ID: "zhipu", DefaultBaseURL: "https://open.bigmodel.cn/api/paas/v4", DefaultAPIKeyEnv: "ZAI_API_KEY", SupportsJSONMode: true},
 	"siliconflow":       {ID: "siliconflow", DefaultBaseURL: "https://api.siliconflow.cn/v1", DefaultAPIKeyEnv: "SILICONFLOW_API_KEY", SupportsJSONMode: false},
@@ -57,51 +57,64 @@ type Status struct {
 }
 
 type Registry struct {
-	cfg         *config.Config
-	provider    classifier.TaskRelationProvider
-	vision      classifier.TaskRelationProvider
-	status      Status
-	lastSuccess *time.Time
-	cooldown    func() time.Time
+	cfg           *config.Config
+	provider      classifier.TaskRelationProvider
+	vision        classifier.TaskRelationProvider
+	status        Status
+	lastSuccess   *time.Time
+	cooldown      func() time.Time
+	lastError     func() string
+	lastSuccessAt func() time.Time
 }
 
 func New(cfg *config.Config) *Registry {
 	text := cfg.AI.Text
-	p, ok := ProfileFor(text.Provider)
 	st := Status{Enabled: cfg.AI.Enabled, TextProvider: text.Provider, TextModel: text.Model, VisionEnabled: cfg.AI.Vision.Enabled, Warning: cfg.AI.MigrationWarning}
-	if !ok {
+	r := &Registry{cfg: cfg, status: st}
+	if !cfg.AI.Enabled {
+		return r
+	}
+
+	if p, ok := ProfileFor(text.Provider); ok && text.Provider != "none" {
+		if text.Provider == "fake" {
+			if cfg.AI.DeveloperMode {
+				st.TextConfigured = true
+				r.provider = classifier.NewFakeProvider()
+			} else {
+				st.Enabled = false
+				st.Warning = "fake provider disabled outside developer_mode; rules only"
+			}
+		} else {
+			key := resolveKey(text, p.DefaultAPIKeyEnv)
+			// Legacy api_key is read only for compatibility; migration scripts never
+			// create this field and new configs should use env/file references.
+			if key == "" {
+				key = strings.TrimSpace(cfg.AI.APIKey)
+			}
+			endpoint := text.BaseURL
+			if endpoint == "" {
+				endpoint = p.DefaultBaseURL
+			}
+			if endpoint == "" && text.Provider != "ollama" {
+				st.Warning = "provider base_url is required"
+			} else {
+				st.TextConfigured = key != "" || text.Provider == "ollama" || localEndpoint(endpoint)
+				if st.TextConfigured {
+					r.provider = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: endpoint, APIKey: key, Model: text.Model, JSONMode: text.JSONMode, SupportsJSONMode: p.SupportsJSONMode, Timeout: time.Duration(text.TimeoutSeconds) * time.Second, Temperature: text.Temperature})
+				} else {
+					st.Warning = "API key is not configured; rules only"
+				}
+			}
+		}
+	} else if text.Provider != "" && text.Provider != "none" {
 		st.Warning = "unknown AI provider; rules only"
-		return &Registry{cfg: cfg, status: st}
 	}
-	if text.Provider == "none" || !cfg.AI.Enabled {
-		return &Registry{cfg: cfg, status: st}
+	if provider, ok := r.provider.(*classifier.OpenAICompatibleProvider); ok {
+		r.cooldown = provider.CooldownUntil
+		r.lastError = provider.LastError
+		r.lastSuccessAt = provider.LastSuccessAt
 	}
-	if text.Provider == "fake" && !cfg.AI.DeveloperMode {
-		st.Enabled = false
-		st.Warning = "fake provider disabled outside developer_mode; rules only"
-		return &Registry{cfg: cfg, status: st}
-	}
-	if text.Provider == "fake" {
-		st.TextConfigured = true
-		return &Registry{cfg: cfg, provider: classifier.NewFakeProvider(), status: st}
-	}
-	key := resolveKey(text, p.DefaultAPIKeyEnv)
-	if key == "" {
-		// Legacy api_key is read only for compatibility; migration scripts never
-		// create this field and new configs should use env/file references.
-		key = strings.TrimSpace(cfg.AI.APIKey)
-	}
-	endpoint := text.BaseURL
-	if endpoint == "" {
-		endpoint = p.DefaultBaseURL
-	}
-	if endpoint == "" && text.Provider != "ollama" {
-		st.Warning = "provider base_url is required"
-		return &Registry{cfg: cfg, status: st}
-	}
-	provider := classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: endpoint, APIKey: key, Model: text.Model, JSONMode: text.JSONMode, SupportsJSONMode: p.SupportsJSONMode, Timeout: time.Duration(text.TimeoutSeconds) * time.Second})
-	st.TextConfigured = key != "" || text.Provider == "ollama" || strings.Contains(endpoint, "127.0.0.1")
-	r := &Registry{cfg: cfg, provider: provider, status: st, cooldown: provider.CooldownUntil}
+
 	vision := cfg.AI.Vision
 	if cfg.AI.Vision.Enabled && vision.Provider != "" && vision.Provider != "none" {
 		if vp, exists := ProfileFor(vision.Provider); exists {
@@ -111,10 +124,11 @@ func New(cfg *config.Config) *Registry {
 			}
 			visionKey := resolveKey(vision, vp.DefaultAPIKeyEnv)
 			if visionKey != "" || vision.Provider == "ollama" || localEndpoint(visionEndpoint) {
-				r.vision = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: visionEndpoint, APIKey: visionKey, Model: vision.Model, JSONMode: vision.JSONMode, SupportsJSONMode: vp.SupportsJSONMode, Timeout: time.Duration(vision.TimeoutSeconds) * time.Second})
+				r.vision = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: visionEndpoint, APIKey: visionKey, Model: vision.Model, JSONMode: vision.JSONMode, SupportsJSONMode: vp.SupportsJSONMode, Timeout: time.Duration(vision.TimeoutSeconds) * time.Second, Temperature: vision.Temperature})
 			}
 		}
 	}
+	r.status = st
 	return r
 }
 
@@ -157,6 +171,14 @@ func (r *Registry) Status() Status {
 	if r.lastSuccess != nil {
 		t := *r.lastSuccess
 		st.LastSuccessAt = &t
+	}
+	if r.lastError != nil {
+		st.LastError = r.lastError()
+	}
+	if r.lastSuccessAt != nil {
+		if t := r.lastSuccessAt(); !t.IsZero() {
+			st.LastSuccessAt = &t
+		}
 	}
 	return st
 }

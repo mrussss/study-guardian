@@ -5,6 +5,7 @@ param(
     [string]$Provider = "",
     [string]$Model = "",
     [string]$BaseUrl = "",
+    [string]$WorkspaceId = "",
     [string]$ApiKeyEnv = "",
     [string]$ApiKeyFile = "",
     [switch]$Disable
@@ -17,6 +18,9 @@ if (-not $Provider) { $Provider = Read-Host "Provider (none/openai/deepseek/qwen
 if ($Disable) { $Provider = "none" }
 if (-not $Provider) { throw "Provider is required" }
 if (-not $Model -and $Provider -ne "none") { $Model = Read-Host "Model" }
+if ($Provider -eq "qwen" -and $WorkspaceId -and -not $BaseUrl) {
+    $BaseUrl = "https://$WorkspaceId.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+}
 if (-not $BaseUrl -and $Provider -eq "openai-compatible") { $BaseUrl = Read-Host "Base URL" }
 
 $backup = "$ConfigPath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
@@ -37,6 +41,12 @@ if ($Provider -ne "none" -and $Provider -ne "ollama" -and -not $ApiKeyEnv -and -
         $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
         if ($plain) {
             [IO.File]::WriteAllText($secretPath, $plain + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+            try {
+                & icacls.exe $secretPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "icacls returned $LASTEXITCODE" }
+            } catch {
+                Write-Warning "Could not restrict secret ACL; inspect permissions manually: $secretPath"
+            }
             $arguments += @("-api-key-file", $secretPath)
         }
     } finally {

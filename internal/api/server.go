@@ -36,6 +36,8 @@ type Server struct {
 
 type MotivationManager interface {
 	GetStatus(context.Context, time.Time) (motivation.Status, error)
+	GetSettings(context.Context, time.Time) (motivation.Settings, error)
+	SetDailyTarget(context.Context, int, time.Time) (motivation.Settings, error)
 	GetHistory(context.Context, int, time.Time) ([]motivation.HistoryDay, error)
 	Achievements(context.Context, time.Time) ([]motivation.AchievementDefinition, error)
 	Missions(context.Context) ([]storage.Mission, error)
@@ -44,6 +46,7 @@ type MotivationManager interface {
 	CancelMission(context.Context, string) error
 	Rewards(context.Context) ([]storage.Reward, error)
 	RedeemReward(context.Context, string) (storage.Redemption, error)
+	Events(context.Context, int64, int) ([]storage.UIEvent, error)
 }
 
 func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
@@ -61,12 +64,14 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/task", s.withAuth(s.handleTask))
 	mux.HandleFunc("/v1/feedback", s.withAuth(s.handleFeedback))
 	mux.HandleFunc("/v1/motivation/status", s.withAuth(s.handleMotivationStatus))
+	mux.HandleFunc("/v1/motivation/settings", s.withAuth(s.handleMotivationSettings))
 	mux.HandleFunc("/v1/motivation/history", s.withAuth(s.handleMotivationHistory))
 	mux.HandleFunc("/v1/motivation/achievements", s.withAuth(s.handleMotivationAchievements))
 	mux.HandleFunc("/v1/missions", s.withAuth(s.handleMissions))
 	mux.HandleFunc("/v1/missions/", s.withAuth(s.handleMissionAction))
 	mux.HandleFunc("/v1/rewards", s.withAuth(s.handleRewards))
 	mux.HandleFunc("/v1/rewards/", s.withAuth(s.handleRewardAction))
+	mux.HandleFunc("/v1/events", s.withAuth(s.handleEvents))
 	mux.HandleFunc("/v1/ai/status", s.withAuth(s.handleAIStatus))
 
 	addr := fmt.Sprintf("%s:%d", cfg.IPC.SupervisorHost, cfg.IPC.SupervisorPort)

@@ -1,6 +1,10 @@
 package providers
 
-import "testing"
+import (
+	"testing"
+
+	"study-guardian/internal/config"
+)
 
 func TestRequiredProviderProfiles(t *testing.T) {
 	cases := map[string]string{
@@ -20,5 +24,21 @@ func TestRequiredProviderProfiles(t *testing.T) {
 	}
 	if _, ok := ProfileFor("not-a-provider"); ok {
 		t.Fatal("unknown provider must not be accepted")
+	}
+}
+
+func TestVisionProviderCanBeConfiguredIndependently(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.AI.Enabled = true
+	cfg.AI.Text.Provider = "none"
+	cfg.AI.Vision.Enabled = true
+	cfg.AI.Vision.Provider = "ollama"
+	cfg.AI.Vision.Model = "llava"
+	r := New(cfg)
+	if r.Provider() != nil {
+		t.Fatal("text provider should remain disabled")
+	}
+	if r.VisionProvider() == nil {
+		t.Fatal("vision provider should be configurable independently")
 	}
 }

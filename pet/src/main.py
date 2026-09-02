@@ -18,17 +18,25 @@ class StatusWorker(QObject):
 
     poll_requested = pyqtSignal()
     status_ready = pyqtSignal(object)
+    events_ack = pyqtSignal(int)
 
     def __init__(self, client: SupervisorClient):
         super().__init__()
         self.client = client
+        self.event_cursor = 0
         self.poll_requested.connect(self.poll)
+        self.events_ack.connect(self.ack_events)
 
     @pyqtSlot()
     def poll(self):
         status = self.client.get_status()
         motivation = self.client.get_motivation_status() if status else None
-        self.status_ready.emit({"status": status, "motivation": motivation})
+        events = self.client.get_events(self.event_cursor, 20) if status else []
+        self.status_ready.emit({"status": status, "motivation": motivation, "events": events or []})
+
+    @pyqtSlot(int)
+    def ack_events(self, event_id: int):
+        self.event_cursor = max(self.event_cursor, event_id)
 
 
 class StudyPetApp(QObject):
@@ -67,6 +75,7 @@ class StudyPetApp(QObject):
         self.poll_in_flight = False
         self.worker_thread = QThread()
         self.status_worker = StatusWorker(self.client)
+        self.status_worker.event_cursor = self.skin_registry.event_cursor()
         self.status_worker.moveToThread(self.worker_thread)
         self.status_worker.status_ready.connect(self._handle_status)
         self.worker_thread.finished.connect(self.status_worker.deleteLater)
@@ -148,6 +157,17 @@ class StudyPetApp(QObject):
 
         if motivation and motivation.get("last_event"):
             self._celebrate(motivation["last_event"])
+
+        events = payload.get("events", []) if isinstance(payload, dict) else []
+        max_event_id = self.skin_registry.event_cursor()
+        for event in events:
+            event_id = int(event.get("id", 0) or 0)
+            max_event_id = max(max_event_id, event_id)
+            if event.get("event_type") in {"CHECKIN_COMPLETED", "DAILY_TARGET_COMPLETED", "ACHIEVEMENT_UNLOCKED", "MISSION_COMPLETED", "REWARD_REDEEMED"}:
+                self._celebrate({"type": event.get("event_type"), "message": event.get("message", "做得很好！"), "created_at": event.get("created_at", event_id)})
+        if max_event_id > self.skin_registry.event_cursor():
+            self.skin_registry.set_event_cursor(max_event_id)
+            self.status_worker.events_ack.emit(max_event_id)
 
         mode = status.get("user_mode", "STANDBY")
         task = status.get("task", "")

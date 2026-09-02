@@ -169,6 +169,11 @@ func (s *Storage) migrate() error {
 			target_completed BOOLEAN NOT NULL DEFAULT 0,
 			updated_at TIMESTAMP NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS motivation_settings (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			daily_target_seconds INTEGER NOT NULL DEFAULT 7200,
+			updated_at TIMESTAMP NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS ap_ledger (
 			id TEXT PRIMARY KEY,
 			source TEXT NOT NULL,
@@ -206,6 +211,13 @@ func (s *Storage) migrate() error {
 			reward_name TEXT NOT NULL,
 			cost_milli_ap INTEGER NOT NULL,
 			redeemed_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS ui_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_type TEXT NOT NULL,
+			message TEXT NOT NULL,
+			metadata_json TEXT NOT NULL DEFAULT '{}',
+			created_at TIMESTAMP NOT NULL
 		);`,
 		`INSERT OR IGNORE INTO reward_catalog (id, name, type, cost_milli_ap, description, enabled) VALUES
 			('game-15', '游戏 15 分钟', 'TIME', 250, '给自己一个短暂的游戏奖励', 1),

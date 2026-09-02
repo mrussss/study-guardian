@@ -64,6 +64,7 @@ ai:
     api_key_file: ""
     timeout_seconds: 6
     json_mode: "auto"
+    temperature: null
   vision:
     enabled: false
     provider: "none"
@@ -73,12 +74,11 @@ ai:
     api_key_file: ""
     timeout_seconds: 8
     json_mode: "auto"
+    temperature: null
 
 motivation:
   enabled: true
-  daily_target_minutes: 120
+  default_daily_target_minutes: 120
   checkin_threshold_minutes: 30
+  idle_static_credit_grace_seconds: 300
   ap_per_focus_hour_milli: 1000
-
-pet:
-  skin: "studyguardian-pixel"

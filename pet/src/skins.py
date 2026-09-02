@@ -86,13 +86,42 @@ class SkinRegistry:
         try:
             os.makedirs(os.path.dirname(self.preference_path), exist_ok=True)
             fd, temp_path = tempfile.mkstemp(prefix="pet-", suffix=".json", dir=os.path.dirname(self.preference_path))
+            preferences = self._read_preferences()
+            preferences["skin"] = skin_id
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"skin": skin_id}, f, ensure_ascii=False, indent=2)
+                json.dump(preferences, f, ensure_ascii=False, indent=2)
                 f.write("\n")
             os.replace(temp_path, self.preference_path)
         except OSError as exc:
             logger.warning("Could not persist skin preference: %s", exc)
         return True
+
+    def _read_preferences(self) -> dict:
+        try:
+            with open(self.preference_path, "r", encoding="utf-8") as f:
+                value = json.load(f)
+                return value if isinstance(value, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def event_cursor(self) -> int:
+        try:
+            return max(0, int(self._read_preferences().get("last_event_id", 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    def set_event_cursor(self, event_id: int) -> None:
+        preferences = self._read_preferences()
+        preferences["last_event_id"] = max(self.event_cursor(), int(event_id))
+        try:
+            os.makedirs(os.path.dirname(self.preference_path), exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(prefix="pet-", suffix=".json", dir=os.path.dirname(self.preference_path))
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(preferences, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+            os.replace(temp_path, self.preference_path)
+        except OSError as exc:
+            logger.warning("Could not persist event cursor: %s", exc)
 
     def current(self) -> Optional[Skin]:
         return self.skins.get(self.current_id)

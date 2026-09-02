@@ -96,6 +96,7 @@ type ProviderOptions struct {
 	JSONMode         string
 	SupportsJSONMode bool
 	Timeout          time.Duration
+	Temperature      *float64
 }
 type OpenAICompatibleProvider struct {
 	Endpoint            string
@@ -103,10 +104,13 @@ type OpenAICompatibleProvider struct {
 	Model               string
 	JSONMode            string
 	SupportsJSONMode    bool
+	Temperature         *float64
 	httpClient          *http.Client
 	mu                  sync.Mutex
 	cooldownUntil       time.Time
 	consecutiveFailures int
+	lastError           string
+	lastSuccessAt       time.Time
 }
 
 func NewOpenAICompatibleProvider(endpoint, apiKey, model string) *OpenAICompatibleProvider {
@@ -125,13 +129,23 @@ func NewOpenAICompatibleProviderWithOptions(o ProviderOptions) *OpenAICompatible
 	if o.Timeout <= 0 {
 		o.Timeout = 6 * time.Second
 	}
-	return &OpenAICompatibleProvider{Endpoint: strings.TrimRight(o.Endpoint, "/"), APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, httpClient: &http.Client{Timeout: o.Timeout}}
+	return &OpenAICompatibleProvider{Endpoint: strings.TrimRight(o.Endpoint, "/"), APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Temperature: o.Temperature, httpClient: &http.Client{Timeout: o.Timeout}}
 }
 func (p *OpenAICompatibleProvider) Name() string { return "openai-compatible (" + p.Model + ")" }
 func (p *OpenAICompatibleProvider) CooldownUntil() time.Time {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.cooldownUntil
+}
+func (p *OpenAICompatibleProvider) LastError() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastError
+}
+func (p *OpenAICompatibleProvider) LastSuccessAt() time.Time {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastSuccessAt
 }
 
 type chatMessage struct {
@@ -142,7 +156,7 @@ type chatCompletionRequest struct {
 	Model          string        `json:"model"`
 	Messages       []chatMessage `json:"messages"`
 	ResponseFormat *respFormat   `json:"response_format,omitempty"`
-	Temperature    float64       `json:"temperature"`
+	Temperature    *float64      `json:"temperature,omitempty"`
 }
 type respFormat struct {
 	Type string `json:"type"`
@@ -190,7 +204,7 @@ func (p *OpenAICompatibleProvider) Classify(ctx context.Context, req Classificat
 	return parseClassification(raw)
 }
 func (p *OpenAICompatibleProvider) doRequest(ctx context.Context, messages []chatMessage, withFormat bool) ([]byte, error) {
-	payload := chatCompletionRequest{Model: p.Model, Messages: messages, Temperature: .1}
+	payload := chatCompletionRequest{Model: p.Model, Messages: messages, Temperature: p.Temperature}
 	if withFormat {
 		payload.ResponseFormat = &respFormat{Type: "json_object"}
 	}
@@ -281,12 +295,19 @@ func (p *OpenAICompatibleProvider) recordFailure(err error) {
 		}
 	}
 	p.cooldownUntil = time.Now().Add(delay)
+	if errors.As(err, &e) {
+		p.lastError = fmt.Sprintf("HTTP %d", e.status)
+	} else {
+		p.lastError = "provider request failed"
+	}
 }
 func (p *OpenAICompatibleProvider) recordSuccess() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.consecutiveFailures = 0
 	p.cooldownUntil = time.Time{}
+	p.lastError = ""
+	p.lastSuccessAt = time.Now()
 }
 func minInt(a, b int) int {
 	if a < b {

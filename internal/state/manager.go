@@ -485,12 +485,13 @@ func (m *Manager) TickWithClassification(
 	}
 
 	return TickOutcome{
-		DeltaSeconds:  deltaSec,
-		UserMode:      m.userMode,
-		Interaction:   m.interaction,
-		Relation:      m.relation,
-		ActivityValid: m.activityWatchOK,
-		Locked:        isLocked,
+		DeltaSeconds:      deltaSec,
+		UserMode:          m.userMode,
+		Interaction:       m.interaction,
+		Relation:          m.relation,
+		ActivityValid:     m.activityWatchOK,
+		Locked:            isLocked,
+		IdleStaticSeconds: m.idleStaticSeconds,
 	}
 }
 

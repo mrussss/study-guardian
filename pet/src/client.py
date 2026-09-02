@@ -68,6 +68,12 @@ class SupervisorClient:
     def get_motivation_status(self) -> Optional[Dict[str, Any]]:
         return self._make_request("GET", "/v1/motivation/status")
 
+    def get_motivation_settings(self) -> Optional[Dict[str, Any]]:
+        return self._make_request("GET", "/v1/motivation/settings")
+
+    def set_daily_target(self, minutes: int) -> Optional[Dict[str, Any]]:
+        return self._make_request("PUT", "/v1/motivation/settings", {"daily_target_minutes": minutes})
+
     def get_history(self, days: int = 7) -> Optional[list]:
         return self._make_request("GET", f"/v1/motivation/history?days={days}")
 
@@ -94,3 +100,6 @@ class SupervisorClient:
 
     def redeem_reward(self, reward_id: str) -> Optional[Dict[str, Any]]:
         return self._make_request("POST", f"/v1/rewards/{reward_id}/redeem")
+
+    def get_events(self, after_id: int = 0, limit: int = 20) -> Optional[list]:
+        return self._make_request("GET", f"/v1/events?after_id={after_id}&limit={limit}")

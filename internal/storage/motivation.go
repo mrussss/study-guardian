@@ -45,6 +45,13 @@ type Achievement struct {
 	UnlockedAt   time.Time `json:"unlocked_at"`
 	MetadataJSON string    `json:"metadata_json"`
 }
+type UIEvent struct {
+	ID           int64     `json:"id"`
+	EventType    string    `json:"event_type"`
+	Message      string    `json:"message"`
+	MetadataJSON string    `json:"metadata_json"`
+	CreatedAt    time.Time `json:"created_at"`
+}
 
 func (s *Storage) RecordCreditedFocus(ctx context.Context, date string, delta, targetSeconds, checkinSeconds int64, now time.Time) (bool, bool, error) {
 	if delta <= 0 {
@@ -86,6 +93,55 @@ func (s *Storage) GetMotivationDaily(ctx context.Context, date string) (Motivati
 	err := s.db.QueryRowContext(ctx, `SELECT date,credited_focus_seconds,daily_target_seconds,checkin_completed,target_completed,updated_at FROM motivation_daily WHERE date=?`, date).Scan(&d.Date, &d.CreditedFocusSeconds, &d.DailyTargetSeconds, &d.CheckinCompleted, &d.TargetCompleted, &d.UpdatedAt)
 	return d, err
 }
+
+func (s *Storage) GetMotivationTarget(ctx context.Context, defaultSeconds int64, now time.Time) (int64, error) {
+	if defaultSeconds <= 0 {
+		defaultSeconds = 7200
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO motivation_settings(id,daily_target_seconds,updated_at) VALUES(1,?,?)`, defaultSeconds, now)
+	if err != nil {
+		return 0, err
+	}
+	var target int64
+	err = s.db.QueryRowContext(ctx, `SELECT daily_target_seconds FROM motivation_settings WHERE id=1`).Scan(&target)
+	return target, err
+}
+
+func (s *Storage) SetMotivationTarget(ctx context.Context, targetSeconds int64, date string, now time.Time) error {
+	if targetSeconds <= 0 {
+		return fmt.Errorf("daily target must be positive")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO motivation_settings(id,daily_target_seconds,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET daily_target_seconds=excluded.daily_target_seconds,updated_at=excluded.updated_at`, targetSeconds, now); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE motivation_daily SET daily_target_seconds=?, target_completed=(credited_focus_seconds>=?), updated_at=? WHERE date=?`, targetSeconds, targetSeconds, now, date); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Storage) APSummaryForDate(ctx context.Context, date string, apPerFocusHourMilli int64) (earned, spent int64, err error) {
+	if apPerFocusHourMilli <= 0 {
+		apPerFocusHourMilli = 1000
+	}
+	var focus int64
+	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(credited_focus_seconds,0) FROM motivation_daily WHERE date=?`, date).Scan(&focus); err == sql.ErrNoRows {
+		err = nil
+	} else if err != nil {
+		return 0, 0, err
+	}
+	var positive, negative int64
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN delta_milli_ap>0 THEN delta_milli_ap ELSE 0 END),0), COALESCE(SUM(CASE WHEN delta_milli_ap<0 THEN -delta_milli_ap ELSE 0 END),0) FROM ap_ledger WHERE date(created_at)=?`, date).Scan(&positive, &negative)
+	if err != nil {
+		return 0, 0, err
+	}
+	return focus*apPerFocusHourMilli/3600 + positive, negative, nil
+}
 func (s *Storage) ListMotivationDaily(ctx context.Context, fromDate string) ([]MotivationDaily, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT date,credited_focus_seconds,daily_target_seconds,checkin_completed,target_completed,updated_at FROM motivation_daily WHERE date>=? ORDER BY date DESC`, fromDate)
 	if err != nil {
@@ -111,6 +167,46 @@ func (s *Storage) SumAPLedger(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(delta_milli_ap),0) FROM ap_ledger`).Scan(&n)
 	return n, err
+}
+
+func (s *Storage) RecordUIEvent(ctx context.Context, eventType, message, metadata string, now time.Time) (UIEvent, error) {
+	if metadata == "" {
+		metadata = "{}"
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO ui_events(event_type,message,metadata_json,created_at) VALUES(?,?,?,?)`, eventType, message, metadata, now)
+	if err != nil {
+		return UIEvent{}, err
+	}
+	id, err := res.LastInsertId()
+	return UIEvent{ID: id, EventType: eventType, Message: message, MetadataJSON: metadata, CreatedAt: now}, err
+}
+
+func (s *Storage) ListUIEvents(ctx context.Context, afterID int64, limit int) ([]UIEvent, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,event_type,message,metadata_json,created_at FROM ui_events WHERE id>? ORDER BY id LIMIT ?`, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]UIEvent, 0)
+	for rows.Next() {
+		var e UIEvent
+		if err := rows.Scan(&e.ID, &e.EventType, &e.Message, &e.MetadataJSON, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Storage) PruneUIEvents(ctx context.Context, before time.Time, maxRows int) error {
+	if maxRows <= 0 {
+		maxRows = 1000
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM ui_events WHERE created_at<? OR id NOT IN (SELECT id FROM ui_events ORDER BY id DESC LIMIT ?)`, before, maxRows)
+	return err
 }
 func (s *Storage) CheckinDates(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT date FROM motivation_daily WHERE checkin_completed=1 ORDER BY date DESC`)

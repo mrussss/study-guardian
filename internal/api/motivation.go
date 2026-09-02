@@ -43,6 +43,37 @@ func (s *Server) handleMotivationHistory(w http.ResponseWriter, r *http.Request)
 	}
 	jsonOK(w, v)
 }
+func (s *Server) handleMotivationSettings(w http.ResponseWriter, r *http.Request) {
+	if s.motivation == nil {
+		serviceUnavailable(w)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		v, err := s.motivation.GetSettings(context.Background(), time.Now())
+		if err != nil {
+			jsonError(w, err, http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, v)
+	case http.MethodPut:
+		var req struct {
+			DailyTargetMinutes int `json:"daily_target_minutes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, fmt.Errorf("invalid request json"), http.StatusBadRequest)
+			return
+		}
+		v, err := s.motivation.SetDailyTarget(context.Background(), req.DailyTargetMinutes, time.Now())
+		if err != nil {
+			jsonError(w, err, http.StatusBadRequest)
+			return
+		}
+		jsonOK(w, v)
+	default:
+		methodNotAllowed(w)
+	}
+}
 func (s *Server) handleMotivationAchievements(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -160,6 +191,24 @@ func (s *Server) handleRewardAction(w http.ResponseWriter, r *http.Request) {
 	v, err := s.motivation.RedeemReward(context.Background(), parts[2])
 	if err != nil {
 		jsonError(w, err, 400)
+		return
+	}
+	jsonOK(w, v)
+}
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if s.motivation == nil {
+		serviceUnavailable(w)
+		return
+	}
+	afterID, _ := strconv.ParseInt(r.URL.Query().Get("after_id"), 10, 64)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	v, err := s.motivation.Events(context.Background(), afterID, limit)
+	if err != nil {
+		jsonError(w, err, http.StatusInternalServerError)
 		return
 	}
 	jsonOK(w, v)

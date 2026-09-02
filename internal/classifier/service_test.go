@@ -54,3 +54,20 @@ func TestClassificationService(t *testing.T) {
 		t.Fatalf("expected fallback UNKNOWN when AI fails, got %s", res.Relation)
 	}
 }
+
+func TestClassificationCacheKeySeparatesProviderAndVision(t *testing.T) {
+	textA := computeCacheKey("deepseek (chat)", "chrome.exe", "Lecture", "example.com", "Go", "screen-a", false)
+	textB := computeCacheKey("deepseek (chat)", "chrome.exe", "Lecture", "example.com", "Go", "screen-b", false)
+	if textA != textB {
+		t.Fatal("text cache key must ignore screen hash")
+	}
+	visionA := computeCacheKey("deepseek (chat)", "chrome.exe", "Lecture", "example.com", "Go", "screen-a", true)
+	visionB := computeCacheKey("deepseek (chat)", "chrome.exe", "Lecture", "example.com", "Go", "screen-b", true)
+	if visionA == visionB {
+		t.Fatal("vision cache key must include screen hash")
+	}
+	otherProvider := computeCacheKey("qwen (qwen-plus)", "chrome.exe", "Lecture", "example.com", "Go", "screen-a", false)
+	if textA == otherProvider {
+		t.Fatal("cache key must include provider/model identity")
+	}
+}

@@ -21,7 +21,6 @@ type Config struct {
 	Privacy    PrivacyConfig    `yaml:"privacy"`
 	AI         AIConfig         `yaml:"ai"`
 	Motivation MotivationConfig `yaml:"motivation"`
-	Pet        PetConfig        `yaml:"pet"`
 }
 
 type StandbyConfig struct {
@@ -88,25 +87,24 @@ type AIConfig struct {
 }
 
 type AIEndpointConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	Provider       string `yaml:"provider"`
-	Model          string `yaml:"model"`
-	BaseURL        string `yaml:"base_url"`
-	APIKeyEnv      string `yaml:"api_key_env"`
-	APIKeyFile     string `yaml:"api_key_file"`
-	TimeoutSeconds int    `yaml:"timeout_seconds"`
-	JSONMode       string `yaml:"json_mode"`
+	Enabled        bool     `yaml:"enabled"`
+	Provider       string   `yaml:"provider"`
+	Model          string   `yaml:"model"`
+	BaseURL        string   `yaml:"base_url"`
+	APIKeyEnv      string   `yaml:"api_key_env"`
+	APIKeyFile     string   `yaml:"api_key_file"`
+	TimeoutSeconds int      `yaml:"timeout_seconds"`
+	JSONMode       string   `yaml:"json_mode"`
+	Temperature    *float64 `yaml:"temperature"`
 }
 
 type MotivationConfig struct {
-	Enabled                 bool  `yaml:"enabled"`
-	DailyTargetMinutes      int   `yaml:"daily_target_minutes"`
-	CheckinThresholdMinutes int   `yaml:"checkin_threshold_minutes"`
-	APPerFocusHourMilli     int64 `yaml:"ap_per_focus_hour_milli"`
-}
-
-type PetConfig struct {
-	Skin string `yaml:"skin"`
+	Enabled                      bool  `yaml:"enabled"`
+	DefaultDailyTargetMinutes    int   `yaml:"default_daily_target_minutes"`
+	DailyTargetMinutes           int   `yaml:"daily_target_minutes"` // legacy alias
+	CheckinThresholdMinutes      int   `yaml:"checkin_threshold_minutes"`
+	IdleStaticCreditGraceSeconds int   `yaml:"idle_static_credit_grace_seconds"`
+	APPerFocusHourMilli          int64 `yaml:"ap_per_focus_hour_milli"`
 }
 
 func DefaultConfig() *Config {
@@ -159,8 +157,7 @@ func DefaultConfig() *Config {
 			MinConfidence:           0.75,
 			Provider:                "none",
 		},
-		Motivation: MotivationConfig{Enabled: true, DailyTargetMinutes: 120, CheckinThresholdMinutes: 30, APPerFocusHourMilli: 1000},
-		Pet:        PetConfig{Skin: "studyguardian-pixel"},
+		Motivation: MotivationConfig{Enabled: true, DefaultDailyTargetMinutes: 120, CheckinThresholdMinutes: 30, IdleStaticCreditGraceSeconds: 300, APPerFocusHourMilli: 1000},
 	}
 }
 
@@ -177,6 +174,7 @@ func LoadConfig(configPath string, tokenPath string) (*Config, error) {
 		}
 	}
 	NormalizeAIConfig(cfg, legacyAI)
+	NormalizeMotivationConfig(cfg)
 
 	// Ensure token exists or load from tokenPath
 	if tokenPath != "" {
@@ -190,6 +188,24 @@ func LoadConfig(configPath string, tokenPath string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func NormalizeMotivationConfig(cfg *Config) {
+	if cfg.Motivation.DefaultDailyTargetMinutes <= 0 {
+		cfg.Motivation.DefaultDailyTargetMinutes = cfg.Motivation.DailyTargetMinutes
+	}
+	if cfg.Motivation.DefaultDailyTargetMinutes <= 0 {
+		cfg.Motivation.DefaultDailyTargetMinutes = 120
+	}
+	if cfg.Motivation.CheckinThresholdMinutes <= 0 {
+		cfg.Motivation.CheckinThresholdMinutes = 30
+	}
+	if cfg.Motivation.IdleStaticCreditGraceSeconds < 0 {
+		cfg.Motivation.IdleStaticCreditGraceSeconds = 0
+	}
+	if cfg.Motivation.APPerFocusHourMilli <= 0 {
+		cfg.Motivation.APPerFocusHourMilli = 1000
+	}
 }
 
 // NormalizeAIConfig upgrades the legacy flat ai block in memory. It never

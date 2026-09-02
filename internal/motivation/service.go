@@ -13,20 +13,26 @@ import (
 )
 
 type Event struct {
+	ID        int64     `json:"id"`
 	Type      string    `json:"type"`
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
 }
 type Status struct {
-	TodayFocusMinutes  int64   `json:"today_focus_minutes"`
-	TotalFocusMinutes  int64   `json:"total_focus_minutes"`
-	TodayAPMilli       int64   `json:"today_ap_milli"`
-	TotalAPMilli       int64   `json:"total_ap_milli"`
-	CheckinCompleted   bool    `json:"checkin_completed"`
-	DailyTargetMinutes int     `json:"daily_target_minutes"`
-	TargetProgress     float64 `json:"target_progress"`
-	StreakDays         int     `json:"streak_days"`
-	LastEvent          *Event  `json:"last_event,omitempty"`
+	TodayCreditedFocusMinutes int64   `json:"today_credited_focus_minutes"`
+	TotalCreditedFocusMinutes int64   `json:"total_credited_focus_minutes"`
+	TodayEarnedAPMilli        int64   `json:"today_earned_ap_milli"`
+	TodaySpentAPMilli         int64   `json:"today_spent_ap_milli"`
+	BalanceAPMilli            int64   `json:"balance_ap_milli"`
+	CheckinCompleted          bool    `json:"checkin_completed"`
+	DailyTargetMinutes        int     `json:"daily_target_minutes"`
+	TargetProgress            float64 `json:"target_progress"`
+	StreakDays                int     `json:"streak_days"`
+	LastEvent                 *Event  `json:"last_event,omitempty"`
+}
+type Settings struct {
+	DailyTargetMinutes int       `json:"daily_target_minutes"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 type HistoryDay struct {
 	Date             string `json:"date"`
@@ -62,12 +68,26 @@ func (s *Service) enabled() bool {
 	return s != nil && s.cfg != nil && s.cfg.Motivation.Enabled && s.store != nil
 }
 func (s *Service) RecordTick(out state.TickOutcome) {
-	if !s.enabled() || out.DeltaSeconds <= 0 || out.UserMode != state.UserModeStudy || out.Locked || !out.ActivityValid || (out.Interaction != state.InteractionActive && out.Interaction != state.InteractionIdleDynamic) || out.Relation == state.RelationDistracted {
+	if !s.enabled() || out.DeltaSeconds <= 0 || out.UserMode != state.UserModeStudy || out.Locked || !out.ActivityValid || out.Relation == state.RelationDistracted {
+		return
+	}
+	if out.Interaction == state.InteractionUnknown {
+		return
+	}
+	if out.Interaction == state.InteractionIdleStatic {
+		grace := int64(s.cfg.Motivation.IdleStaticCreditGraceSeconds)
+		if out.Relation != state.RelationFocused || grace <= 0 || out.IdleStaticSeconds > grace {
+			return
+		}
+	} else if out.Interaction != state.InteractionActive && out.Interaction != state.InteractionIdleDynamic {
 		return
 	}
 	now := time.Now()
 	date := now.Format("2006-01-02")
-	target := int64(s.cfg.Motivation.DailyTargetMinutes * 60)
+	target, err := s.store.GetMotivationTarget(context.Background(), int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
+	if err != nil {
+		return
+	}
 	checkin := int64(s.cfg.Motivation.CheckinThresholdMinutes * 60)
 	newCheckin, newTarget, err := s.store.RecordCreditedFocus(context.Background(), date, out.DeltaSeconds, target, checkin, now)
 	if err != nil {
@@ -82,9 +102,16 @@ func (s *Service) RecordTick(out state.TickOutcome) {
 	s.evaluateAchievements(now)
 }
 func (s *Service) emit(kind, msg string, now time.Time) {
+	var id int64
+	if s.store != nil {
+		if event, err := s.store.RecordUIEvent(context.Background(), kind, msg, "{}", now); err == nil {
+			id = event.ID
+			_ = s.store.PruneUIEvents(context.Background(), now.AddDate(0, 0, -90), 1000)
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.lastEvent = &Event{Type: kind, Message: msg, CreatedAt: now}
+	s.lastEvent = &Event{ID: id, Type: kind, Message: msg, CreatedAt: now}
 }
 func (s *Service) consumeEvent() *Event {
 	s.mu.Lock()
@@ -98,12 +125,17 @@ func (s *Service) consumeEvent() *Event {
 
 func (s *Service) GetStatus(ctx context.Context, now time.Time) (Status, error) {
 	if !s.enabled() {
-		return Status{DailyTargetMinutes: s.cfg.Motivation.DailyTargetMinutes}, nil
+		return Status{DailyTargetMinutes: s.cfg.Motivation.DefaultDailyTargetMinutes}, nil
 	}
 	date := now.Format("2006-01-02")
+	defaultTarget := int64(s.cfg.Motivation.DefaultDailyTargetMinutes * 60)
+	target, err := s.store.GetMotivationTarget(ctx, defaultTarget, now)
+	if err != nil {
+		return Status{}, err
+	}
 	d, err := s.store.GetMotivationDaily(ctx, date)
 	if err != nil {
-		d = storage.MotivationDaily{Date: date, DailyTargetSeconds: int64(s.cfg.Motivation.DailyTargetMinutes * 60)}
+		d = storage.MotivationDaily{Date: date, DailyTargetSeconds: target}
 	}
 	total, err := s.store.TotalCreditedFocus(ctx)
 	if err != nil {
@@ -113,9 +145,12 @@ func (s *Service) GetStatus(ctx context.Context, now time.Time) (Status, error) 
 	if err != nil {
 		return Status{}, err
 	}
-	target := d.DailyTargetSeconds
+	if d.DailyTargetSeconds <= 0 {
+		d.DailyTargetSeconds = target
+	}
+	target = d.DailyTargetSeconds
 	if target <= 0 {
-		target = int64(s.cfg.Motivation.DailyTargetMinutes * 60)
+		target = int64(s.cfg.Motivation.DefaultDailyTargetMinutes * 60)
 	}
 	progress := 0.0
 	if target > 0 {
@@ -128,7 +163,34 @@ func (s *Service) GetStatus(ctx context.Context, now time.Time) (Status, error) 
 	if rate <= 0 {
 		rate = 1000
 	}
-	return Status{TodayFocusMinutes: d.CreditedFocusSeconds / 60, TotalFocusMinutes: total / 60, TodayAPMilli: d.CreditedFocusSeconds * rate / 3600, TotalAPMilli: max64(0, total*rate/3600+ledger), CheckinCompleted: d.CheckinCompleted, DailyTargetMinutes: int(target / 60), TargetProgress: progress, StreakDays: s.streak(ctx, date), LastEvent: s.consumeEvent()}, nil
+	todayEarned, todaySpent, err := s.store.APSummaryForDate(ctx, date, rate)
+	if err != nil {
+		return Status{}, err
+	}
+	return Status{TodayCreditedFocusMinutes: d.CreditedFocusSeconds / 60, TotalCreditedFocusMinutes: total / 60, TodayEarnedAPMilli: todayEarned, TodaySpentAPMilli: todaySpent, BalanceAPMilli: max64(0, total*rate/3600+ledger), CheckinCompleted: d.CheckinCompleted, DailyTargetMinutes: int(target / 60), TargetProgress: progress, StreakDays: s.streak(ctx, date), LastEvent: s.consumeEvent()}, nil
+}
+
+func (s *Service) GetSettings(ctx context.Context, now time.Time) (Settings, error) {
+	defaultSeconds := int64(s.cfg.Motivation.DefaultDailyTargetMinutes * 60)
+	target, err := s.store.GetMotivationTarget(ctx, defaultSeconds, now)
+	if err != nil {
+		return Settings{}, err
+	}
+	return Settings{DailyTargetMinutes: int(target / 60), UpdatedAt: now}, nil
+}
+
+func (s *Service) SetDailyTarget(ctx context.Context, minutes int, now time.Time) (Settings, error) {
+	if minutes < 1 || minutes > 1440 {
+		return Settings{}, fmt.Errorf("daily target must be between 1 and 1440 minutes")
+	}
+	if err := s.store.SetMotivationTarget(ctx, int64(minutes*60), now.Format("2006-01-02"), now); err != nil {
+		return Settings{}, err
+	}
+	return s.GetSettings(ctx, now)
+}
+
+func (s *Service) Events(ctx context.Context, afterID int64, limit int) ([]storage.UIEvent, error) {
+	return s.store.ListUIEvents(ctx, afterID, limit)
 }
 func (s *Service) GetHistory(ctx context.Context, days int, now time.Time) ([]HistoryDay, error) {
 	if days <= 0 || days > 90 {
@@ -144,15 +206,19 @@ func (s *Service) GetHistory(ctx context.Context, days int, now time.Time) ([]Hi
 		byDate[d.Date] = d
 	}
 	out := make([]HistoryDay, 0, days)
+	defaultTarget, err := s.store.GetMotivationTarget(ctx, int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
+	if err != nil {
+		return nil, err
+	}
 	for i := 0; i < days; i++ {
 		t := now.AddDate(0, 0, -i)
 		key := t.Format("2006-01-02")
 		d := byDate[key]
-		target := d.DailyTargetSeconds
-		if target == 0 {
-			target = int64(s.cfg.Motivation.DailyTargetMinutes * 60)
+		dayTarget := d.DailyTargetSeconds
+		if dayTarget == 0 {
+			dayTarget = defaultTarget
 		}
-		out = append(out, HistoryDay{Date: key, FocusMinutes: d.CreditedFocusSeconds / 60, TargetMinutes: target / 60, CheckinCompleted: d.CheckinCompleted, TargetCompleted: d.TargetCompleted})
+		out = append(out, HistoryDay{Date: key, FocusMinutes: d.CreditedFocusSeconds / 60, TargetMinutes: dayTarget / 60, CheckinCompleted: d.CheckinCompleted, TargetCompleted: d.TargetCompleted})
 	}
 	return out, nil
 }
@@ -195,7 +261,7 @@ func (s *Service) evaluateAchievements(now time.Time) {
 	for _, d := range history {
 		week += d.FocusMinutes
 	}
-	dailyTarget := int64(s.cfg.Motivation.DailyTargetMinutes * 60)
+	dailyTarget, _ := s.store.GetMotivationTarget(ctx, int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
 	if dailyTarget <= 0 {
 		dailyTarget = 7200
 	}
@@ -227,7 +293,7 @@ func (s *Service) Achievements(ctx context.Context, now time.Time) ([]Achievemen
 	for _, d := range history {
 		week += d.FocusMinutes
 	}
-	dailyTarget := int64(s.cfg.Motivation.DailyTargetMinutes * 60)
+	dailyTarget, _ := s.store.GetMotivationTarget(ctx, int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
 	if dailyTarget <= 0 {
 		dailyTarget = 7200
 	}

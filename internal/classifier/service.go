@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"study-guardian/internal/config"
@@ -74,8 +75,18 @@ func (s *Service) Classify(
 		}
 	}
 
+	requestedVision := imageBase64 != "" && s.cfg.AI.UseVisionOnlyWhenNeeded && s.vision != nil
+	provider := s.provider
+	if requestedVision {
+		provider = s.vision
+	}
+	providerName := "none"
+	if provider != nil {
+		providerName = provider.Name()
+	}
+
 	// 3. Check Classification Cache
-	cacheKey := computeCacheKey(app, title, domain, task, screenHash, imageBase64 != "")
+	cacheKey := computeCacheKey(providerName, app, title, domain, task, screenHash, requestedVision)
 	now := time.Now()
 	if s.storage != nil {
 		if rel, conf, reason, found := s.storage.GetClassificationCache(ctx, cacheKey, now); found {
@@ -101,17 +112,13 @@ func (s *Service) Classify(
 		Domain:   domain,
 		UserMode: userMode,
 	}
-	if s.cfg.AI.UseVisionOnlyWhenNeeded && imageBase64 != "" {
+	if requestedVision {
 		aiReq.AnalysisImageBase64 = imageBase64
 	}
 
 	aiCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	provider := s.provider
-	if aiReq.AnalysisImageBase64 != "" && s.vision != nil {
-		provider = s.vision
-	}
 	resp, err := provider.Classify(aiCtx, aiReq)
 	if err != nil {
 		log.Printf("[Classifier] AI Provider (%s) failed or timed out: %v; falling back to rules", provider.Name(), err)
@@ -135,7 +142,7 @@ func (s *Service) Classify(
 	}
 }
 
-func computeCacheKey(app, title, domain, task, screenHash string, vision bool) string {
+func computeCacheKey(provider, app, title, domain, task, screenHash string, vision bool) string {
 	// Text classification is independent of screen pixels; vision is not.
 	if !vision {
 		screenHash = ""
@@ -144,7 +151,8 @@ func computeCacheKey(app, title, domain, task, screenHash string, vision bool) s
 	if vision {
 		kind = "vision"
 	}
-	raw := fmt.Sprintf("%s|%s|%s|%s|%s|%s", kind, app, title, domain, task, screenHash)
+	normalize := func(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
+	raw := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", kind, normalize(provider), normalize(app), normalize(title), normalize(domain), normalize(task), normalize(screenHash))
 	h := sha256.Sum256([]byte(raw))
 	return fmt.Sprintf("%x", h)
 }

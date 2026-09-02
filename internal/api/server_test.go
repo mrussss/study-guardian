@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,9 @@ import (
 	"time"
 
 	"study-guardian/internal/config"
+	"study-guardian/internal/motivation"
 	"study-guardian/internal/state"
+	"study-guardian/internal/storage"
 )
 
 func setupTestServer() (*config.Config, *state.Manager, *http.ServeMux) {
@@ -125,5 +128,64 @@ func TestModeTransitionsViaAPI(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&status)
 	if status.UserMode != state.UserModeOff {
 		t.Fatalf("expected OFF mode, got %+v", status)
+	}
+}
+
+func TestMotivationSettingsAndEventsAPI(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.IPC.AuthToken = "secret-token-123"
+	clock := state.NewFakeClock(time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC))
+	stateMgr := state.NewManager(clock)
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service := motivation.NewService(cfg, store)
+	if _, err := store.RecordUIEvent(context.Background(), "TEST", "cursor test", "{}", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	server := NewServer(cfg, stateMgr)
+	server.SetMotivation(service)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/motivation/settings", server.withAuth(server.handleMotivationSettings))
+	mux.HandleFunc("/v1/events", server.withAuth(server.handleEvents))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/motivation/settings", nil)
+	req.Header.Set("Authorization", "Bearer secret-token-123")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("settings GET status=%d body=%s", w.Code, w.Body.String())
+	}
+	var settings motivation.Settings
+	if err := json.NewDecoder(w.Body).Decode(&settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.DailyTargetMinutes != 120 {
+		t.Fatalf("initial target=%d, want 120", settings.DailyTargetMinutes)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/v1/motivation/settings", bytes.NewBufferString(`{"daily_target_minutes":90}`))
+	req.Header.Set("Authorization", "Bearer secret-token-123")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("settings PUT status=%d body=%s", w.Code, w.Body.String())
+	}
+	if err := json.NewDecoder(w.Body).Decode(&settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings.DailyTargetMinutes != 90 {
+		t.Fatalf("updated target=%d, want 90", settings.DailyTargetMinutes)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/events?after_id=0&limit=20", nil)
+	req.Header.Set("Authorization", "Bearer secret-token-123")
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte(`"event_type":"TEST"`)) {
+		t.Fatalf("events response status=%d body=%s", w.Code, w.Body.String())
 	}
 }
