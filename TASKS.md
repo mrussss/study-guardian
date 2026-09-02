@@ -91,3 +91,6 @@
 - [x] 74. Runtime：requirements/dependency audit、venv.new 安全回滚、staging 精确替换
 - [ ] 75. Final Visual Asset Pending：最终桌宠美术资产仍待确定；当前仅使用原创 placeholder
 - [~] 76. v0.7 Windows E2E 与 1～3 天日常试运行（锁屏/Sleep/Resume 按用户决定延期）
+- [x] 77. 复审修正：TickOutcome.Now 单一时钟、COMEBACK 连续专注、DAILY_120 固定阈值
+- [x] 78. 复审修正：Rules → Text AI → Vision fallback、按端点 timeout、model 配置校验
+- [x] 79. 复审修正：Deploy 停进程、ephemeral rollback、health smoke、真实文件统计口径

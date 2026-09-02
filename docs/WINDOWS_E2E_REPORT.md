@@ -52,6 +52,11 @@
 - Safe venv rebuild now installs and smoke-checks `.venv.new` before swapping, and restores `.venv.backup` if a post-swap smoke check fails.
 - Deploy safety passed across two deployments with persistent canaries and no stale files under the exact ephemeral replacement paths.
 - Built-in skins are source-controlled; user skins remain under `config/pet-skins`; `Final Visual Asset Pending` remains explicit for the placeholder art.
+- `TickOutcome.Now` is now populated by State Manager and Motivation rejects a zero timestamp; FakeClock tests confirm credited focus is stored on the outcome date rather than the machine wall-clock date.
+- `DAILY_120` remains a fixed 7,200-second achievement threshold regardless of the editable daily target; `COMEBACK` uses persisted post-distraction continuous credited focus and does not reuse lifetime focus.
+- Supervisor now captures a non-image screen sample first, runs Rules/Text classification, and requests an analysis image only for a configured Vision fallback after UNKNOWN/low-confidence text results. The selected endpoint timeout is preserved (default Text 6 seconds / Vision 8 seconds).
+- Provider registry marks a real endpoint unconfigured when its model is missing and reports a clear model warning before any request.
+- Deploy now invokes the runtime stop script before replacing files, retains a recoverable backup of exact ephemeral paths until health smoke passes, and restores those paths on replacement/smoke failure.
 
 ## v0.7 Runtime Measurements
 
@@ -63,13 +68,14 @@ Captured on 2026-09-02 after the v0.7 deployment. Working Set is a live process 
 | Sensor venv disk | 40,230,413 bytes / 1,764 files |
 | Pet direct package count | 3 |
 | Sensor direct package count | 2 |
-| Pet Working Set (venv launcher + interpreter) | 108,859,392 bytes |
-| Sensor Working Set (venv launcher + interpreter) | 34,856,960 bytes |
-| Supervisor Working Set | 20,504,576 bytes |
-| Runtime program files excluding persistent data and venvs | 6,878 |
+| Pet Working Set (venv launcher + interpreter) | 112,087,040 bytes |
+| Sensor Working Set (venv launcher + interpreter) | 34,906,112 bytes |
+| Supervisor Working Set | 21,929,984 bytes |
+| Runtime tree files excluding persistent data and venvs | 6,916 |
+| StudyGuardian program-owned files (`bin/pet/scripts/sensor`, excluding bundled ActivityWatch and legacy `poc`) | 67 |
 | Startup smoke observation | all four components reported started; healthz PASS after 5 seconds |
 
-The Pet launcher/interpreter pair and Sensor launcher/interpreter pair are expected on this Windows Python setup; they are not duplicate business services.
+The Pet launcher/interpreter pair and Sensor launcher/interpreter pair are expected on this Windows Python setup; they are not duplicate business services. The runtime-tree count includes 1,421 bundled ActivityWatch files and 5,428 legacy `poc` files; the 67-file program-owned count is the relevant StudyGuardian deployment footprint.
 
 ## FAIL
 

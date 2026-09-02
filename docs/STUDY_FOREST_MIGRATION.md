@@ -27,4 +27,6 @@ FP 是 `credited_focus_seconds / 60`；Focus AP 由累计有效专注确定性�
 
 状态 API 使用 `today_credited_focus_minutes`、`total_credited_focus_minutes`、`today_earned_ap_milli`、`today_spent_ap_milli`、`balance_ap_milli`、`checkin_completed`、`daily_target_minutes`、`target_progress`、`streak_days` 等 canonical 字段，避免把 raw study time 当作奖励时间。
 
+成就阈值与用户设置分离：`DAILY_120` 永远要求单日 120 分钟有效专注，即使用户把每日目标改成 60 分钟；`COMEBACK` 只统计最近一次分心之后连续累积的有效专注，旧的累计专注不会直接触发。该连续状态持久化在 `motivation_comeback_state`，跨进程重启仍保持一致。`TickOutcome.Now` 由 State Manager 写入，Motivation 不再自行取得第二个 wall-clock 时间。
+
 Study Center 只是这些 API 的懒加载 UI，不拥有第二份业务状态。

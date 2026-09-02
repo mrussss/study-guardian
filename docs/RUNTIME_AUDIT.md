@@ -32,15 +32,28 @@ Supervisor、Sensor、ActivityWatch、AI 任一依赖离线时，桌宠仍可拖
 | KEEP | `modernc.org/sqlite`、`gopkg.in/yaml.v3` | Supervisor 直接 Go 依赖 |
 | REMOVE / NOT RUNTIME | `requests`、`pywin32` | 当前源码无真实 Runtime import，不进入 requirements |
 | DOC_ONLY | desktop-pet 上游记录 | 仅保留来源与代码许可证说明，不复制其未知来源图片 |
-| RUNTIME_LEGACY | 旧 Runtime screenshot、旧 PoC source、旧重复 dist | 只在本机审计；不由新 Deploy 复制回 Git |
+| RUNTIME_LEGACY | 旧 Runtime screenshot、`D:\StudyGuardianDev\poc` 旧 PoC source、旧重复 dist | 只在本机审计；不由新 Deploy 复制回 Git |
 
 ## 测量记录
 
 测量原则：磁盘大小、包数量、进程 Working Set、启动时间分别记录；不能用磁盘大小推断 RAM 节省。最终 Windows 数值随每台机器的 Python/驱动和运行状态变化，当前验收记录见 `docs/WINDOWS_E2E_REPORT.md`。
 
+2026-09-02 v0.7 复测结果：Runtime tree 在排除 `config/data/logs/run/handoff` 与 `pet\.venv/sensor\.venv` 后为 **6,916 个文件 / 532,984,071 bytes**。其中 bundled ActivityWatch 为 1,421 个文件，旧 `poc` 为 5,428 个文件；真正 StudyGuardian program-owned 的 `bin/pet/scripts/sensor` 合计 **67 个文件**。因此此前的 6,878 不能作为排除 venv 后的口径，且本机旧 PoC 仍需单独视为 legacy。
+
+同次测量：Pet venv 为 5,073 个文件 / 241,260,482 bytes；Sensor venv 为 1,764 个文件 / 40,230,413 bytes；Pet direct package count 3；Sensor direct package count 2；Pet Working Set 112,087,040 bytes；Sensor Working Set 34,906,112 bytes；Supervisor Working Set 21,929,984 bytes。
+
 推荐复测命令：
 
 ```powershell
+$root = 'D:\StudyGuardianDev'
+$excluded = @('config','data','logs','run','handoff')
+$program = Get-ChildItem -Recurse -File $root | Where-Object {
+    $relative = $_.FullName.Substring($root.Length).TrimStart('\').Split('\')
+    ($excluded -notcontains $relative[0]) -and
+    -not ($relative[0] -eq 'pet' -and $relative.Length -gt 1 -and $relative[1] -eq '.venv') -and
+    -not ($relative[0] -eq 'sensor' -and $relative.Length -gt 1 -and $relative[1] -eq '.venv')
+}
+$program | Measure-Object Length -Sum
 Get-ChildItem -Recurse D:\StudyGuardianDev\pet -File | Measure-Object Length -Sum
 Get-ChildItem -Recurse D:\StudyGuardianDev\sensor -File | Measure-Object Length -Sum
 Get-Process -Name study-supervisor | Select-Object Name,WorkingSet64
