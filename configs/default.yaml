@@ -1,0 +1,56 @@
+standby:
+  first_study_active_minutes: 60
+  repeat_reminder_minutes: 30
+
+study:
+  distraction_warn_minutes: 8
+  distraction_strong_minutes: 15
+  idle_static_warn_minutes: 20
+  idle_static_strong_minutes: 30
+
+break:
+  warn_minutes: 20
+  strong_minutes: 30
+  repeat_minutes: 15
+
+reminder:
+  cooldown_minutes: 10
+
+screen:
+  enabled: true
+  store_raw: false
+  active_sample_seconds: 15
+  unknown_sample_seconds: 5
+  break_sample_seconds: 60
+
+ipc:
+  supervisor_host: "127.0.0.1"
+  supervisor_port: 17321
+  sensor_host: "127.0.0.1"
+  sensor_port: 17322
+  auth_token: ""
+
+privacy:
+  sensitive_apps:
+    - "keepass"
+    - "1password"
+    - "bitwarden"
+    - "credential"
+    - "authenticator"
+    - "wechatpay"
+    - "alipay"
+  sensitive_domains:
+    - "bank"
+    - "login"
+    - "auth"
+    - "checkout"
+    - "accounts.google.com"
+
+ai:
+  enabled: true
+  use_vision_only_when_needed: true
+  min_confidence: 0.75
+  provider: "fake" # "fake" by default until user configures API key
+  model: ""
+  api_key: ""
+  endpoint: ""

@@ -1,0 +1,70 @@
+# TASKS.md — StudyGuardian 任务跟踪表
+
+## Phase 0: 补齐剩余 PoC 与开发骨架
+- [x] 01. 读取文档与现有环境，确认 D:\StudyGuardianDev 当前目录与已验证 PoC
+- [x] 02. 创建 / 整理 WSL repo、AGENTS.md、TASKS.md、.gitignore、scripts 骨架
+- [x] 03. Supervisor 最小 :17321 /healthz
+- [x] 04. Sensor 最小 :17322 /healthz + capture stub
+- [x] 05. Pet 最小 Supervisor client
+- [x] 06. 验证 Pet → Supervisor → Sensor localhost 通信
+- [x] 07. 覆盖 disconnected / invalid token / timeout fail-soft 测试
+- [x] 08. build-windows.sh
+- [x] 09. deploy-windows.sh
+- [x] 10. 连续两次 deploy，验证 D:\StudyGuardianDev\config / data / logs / run / handoff 不被破坏
+- [x] 11. Phase 0 自动测试 / Windows smoke test
+- [x] 12. commit + push 各独立小块
+- [x] 13. 打 tag: phase0-passed 并 push
+
+## Phase 1: 确定性核心
+- [ ] 14. Clock abstraction (RealClock / FakeClock)
+- [ ] 15. SQLite migration skeleton (modernc.org/sqlite, CGO-free)
+- [ ] 16. UserMode state machine + transition tests
+- [ ] 17. 跨日 / restart / sleep / lock 时间规则与会话管理
+- [ ] 18. Supervisor /v1/status 与 mode API (/v1/mode/study, /v1/mode/break, /v1/mode/off, /v1/task, /v1/feedback)
+- [ ] 19. FakeActivitySource / FakeScreenSource 驱动单测与集成测试
+- [ ] 20. Pet 精简为 UI Shell (去除独立业务逻辑，保留透明置顶、动画、托盘、气泡与菜单)
+- [ ] 21. Pet ↔ Supervisor 正式 API 通信与轮询
+- [ ] 22. Reminder Engine + cooldown
+- [ ] 23. BREAK timeout 处理
+- [ ] 24. Phase 1 Windows E2E 验证
+
+## Phase 2: ActivityWatch 正式监督
+- [ ] 25. ActivityWatch bucket 动态发现 (window / afk buckets)
+- [ ] 26. ActivityWatchSource 真实适配层与 HTTP 客户端
+- [ ] 27. Window / title / URL / AFK 有界查询与数据解析
+- [ ] 28. Active Time 累计计算 (基于 AFK 状态)
+- [ ] 29. 基础 TaskRelation 规则引擎 (白名单/黑名单/学习任务关键词匹配)
+- [ ] 30. ActivityWatch offline fail-soft 处理
+- [ ] 31. Phase 2 单元测试与集成测试
+- [ ] 32. Phase 2 Windows 验证
+
+## Phase 3: Screen Sensor 正式接入
+- [ ] 33. mss 正式 capture 实现与双端口服务
+- [ ] 34. monitor / virtual desktop 处理
+- [ ] 35. pHash / dHash 屏幕变化检测
+- [ ] 36. Privacy Gate 截图前门禁校验 (sensitive apps / domains)
+- [ ] 37. InteractionState 综合判定 (ACTIVE / IDLE_STATIC / IDLE_DYNAMIC / UNKNOWN)
+- [ ] 38. Sensor timeout / crash fallback fail-soft
+- [ ] 39. Phase 3 自动测试与 Windows 实测
+
+## Phase 4: AI Classification
+- [ ] 40. TaskRelationProvider 接口定义与模型适配
+- [ ] 41. VisionProvider 接口与低分辨率/裁剪支持
+- [ ] 42. 结构化 JSON Schema 输出校验
+- [ ] 43. 本地规则优先 / AI fallback 机制
+- [ ] 44. Classification cache (app/title/domain/task/hash)
+- [ ] 45. AI timeout / invalid response fallback
+- [ ] 46. 敏感窗口禁止 Vision 门禁与元数据过滤
+- [ ] 47. Provider unavailable fail-soft 保证系统正常运行
+
+## Phase 5: 交互优化与发布交付
+- [ ] 48. Pet 动画 / 气泡 / feedback UX 完善
+- [ ] 49. Windows 本地通知集成 (Toast)
+- [ ] 50. Startup / resume / crash recovery
+- [ ] 51. 日志轮转 (Rotating logs)
+- [ ] 52. 稳定性检查清单与测试工具
+- [ ] 53. Release packaging 骨架
+- [ ] 54. 整理 ARCHITECTURE.md, PRIVACY.md, TEST_PLAN.md, OPEN_SOURCE.md
+- [ ] 55. 全量自动化测试回归与 Windows smoke test
+- [ ] 56. 中文开发完成总结汇报
+- [ ] 57. 准备 docs/FINAL_AUDIT.md 模板与 handoff 数据供独立审计

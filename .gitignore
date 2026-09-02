@@ -1,0 +1,46 @@
+# Binaries and build artifacts
+dist/
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local data & credentials
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.token
+auth.token
+*.log
+logs/
+data/
+run/
+handoff/
+
+# Temporary / screenshots
+*.png
+*.jpg
+*.jpeg
+scratch/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
