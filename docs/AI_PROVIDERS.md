@@ -17,12 +17,15 @@ ai:
     api_key_env: DEEPSEEK_API_KEY
     timeout_seconds: 6
     json_mode: auto
+    temperature: null
   vision:
     enabled: false
     provider: none
 ```
 
-内置 profile：`openai`、`openai-compatible`、`deepseek`、`qwen`、`kimi`、`zhipu`、`siliconflow`、`doubao`、`ollama`、`none`。密钥解析顺序是 endpoint 的 `api_key_env`、profile 默认环境变量、`api_key_file`；日志和错误不会输出密钥。
+内置 profile：`openai`、`openai-compatible`、`deepseek`、`qwen`、`kimi`、`zhipu`、`siliconflow`、`doubao`、`ollama`、`none`。Qwen 开箱默认使用共享地址 `https://dashscope.aliyuncs.com/compatible-mode/v1`，密钥环境变量为 `DASHSCOPE_API_KEY`。密钥解析顺序是 endpoint 的 `api_key_env`、profile 默认环境变量、`api_key_file`；日志和错误不会输出密钥。
+
+文本和视觉 provider 是两个独立实例。视觉分类只有在配置了 `vision.enabled`、视觉 provider 和模型，并且调用方提供经过隐私门禁处理的图片时才启用；不能仅凭 provider 名称推断支持视觉。`temperature` 是可选指针：默认请求完全省略该字段，只有用户明确配置时才发送。
 
 Windows 上可运行 `scripts/configure-ai.ps1`。脚本先生成带时间戳的备份，再通过 `bin/config-helper.exe` 更新 YAML；不使用字符串替换，也不会覆盖无关配置。`scripts/migrate-config.ps1` 只负责把旧版扁平字段映射为 V2。
 

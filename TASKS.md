@@ -81,3 +81,13 @@
 - [x] 66. staging 部署与程序路径精确替换，保护 config/data/logs/run/handoff/venv
 - [x] 67. Phase 6 Go/Python/部署安全回归与 Windows 运行检查
 - [~] 68. 1～3 天日常试运行已启动（2026-09-02，D:\StudyGuardianDev 保持运行）；锁屏、Sleep/Resume、双显示器热插拔和崩溃 watchdog 延后
+
+## Phase 6 v0.7 复审修正
+- [x] 69. Credited Focus：单一 TickOutcome、静态阅读 grace、Raw Study Time 与奖励时间分离
+- [x] 70. motivation_settings、canonical status、事件表与 after_id cursor API
+- [x] 71. Study Center 全部 HTTP 移出 Qt GUI Thread，并覆盖离线/超时 fail-soft
+- [x] 72. AI：Qwen 共享默认地址、可选 temperature、文本/视觉独立 provider 与缓存 key
+- [x] 73. Pet：pet.json 唯一偏好真源、事件 cursor 持久化、重复事件防护
+- [x] 74. Runtime：requirements/dependency audit、venv.new 安全回滚、staging 精确替换
+- [ ] 75. Final Visual Asset Pending：最终桌宠美术资产仍待确定；当前仅使用原创 placeholder
+- [~] 76. v0.7 Windows E2E 与 1～3 天日常试运行（锁屏/Sleep/Resume 按用户决定延期）

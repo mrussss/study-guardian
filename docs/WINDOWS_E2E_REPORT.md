@@ -8,7 +8,7 @@
 - Python: Windows Python 3.11; Sensor venv with `mss` and Pillow; Pet venv with PyQt6
 - ActivityWatch: 0.13.2 at `127.0.0.1:5600`
 - Displays: MSS reported virtual desktop plus one physical monitor (`monitor: 0`)
-- Git Commit: `2caf7c0` (`feat(product): deliver phase 6 study guardian productization`)
+- Git Commit: `87a7a41` (`fix(ai): allow independent vision fallback`)
 - Runtime: `D:\StudyGuardianDev`
 
 ## PASS
@@ -38,6 +38,39 @@
 - Phase 6 Pet process stayed alive with the manifest skin renderer and lazy Study Center modules deployed
 - Daily trial started after the final deployment on 2026-09-02; runtime was left running for the requested 1–3 day observation window
 
+## Phase 6 v0.7 复审补充
+
+- WSL source of truth remains `~/projects/study-guardian`; Windows runtime remains `D:\StudyGuardianDev`.
+- Credited Focus boundary tests passed: ACTIVE and IDLE_DYNAMIC credit; IDLE_STATIC + FOCUSED credits only within the 300-second grace; IDLE_STATIC + UNKNOWN and over-grace static reading do not credit; DISTRACTED and UNKNOWN interaction do not credit.
+- Motivation settings persistence passed in SQLite and API tests; changing the target updates the current day's target while YAML remains only the initial default.
+- Canonical status fields now distinguish credited focus, today's earned/spent milli-AP, deterministic balance and daily target progress.
+- `GET /v1/events?after_id=<cursor>&limit=20` and Pet `config/pet.json.last_event_id` cursor behavior are covered by storage/service tests; important events are consumed in ID order and not replayed after acknowledgement.
+- Study Center operations use a `QThread` worker for all Supervisor HTTP calls, including refresh and mutations; timeout/500 results are rendered as an error state and do not block window navigation or close.
+- OpenAI-compatible request tests passed: default requests omit `temperature`; explicit configuration sends it; JSON fallback is restricted to explicit HTTP 400/422 compatibility errors; provider/model and text/vision kind are part of cache identity.
+- Qwen profile uses the shared DashScope Beijing compatibility endpoint by default. Unknown providers remain rules-only and Fake remains developer-only.
+- `pip check` passed for the deployed Pet and Sensor environments; direct requirements contain only the runtime dependencies audited in `docs/RUNTIME_AUDIT.md`.
+- Safe venv rebuild now installs and smoke-checks `.venv.new` before swapping, and restores `.venv.backup` if a post-swap smoke check fails.
+- Deploy safety passed across two deployments with persistent canaries and no stale files under the exact ephemeral replacement paths.
+- Built-in skins are source-controlled; user skins remain under `config/pet-skins`; `Final Visual Asset Pending` remains explicit for the placeholder art.
+
+## v0.7 Runtime Measurements
+
+Captured on 2026-09-02 after the v0.7 deployment. Working Set is a live process measurement, not a disk-size estimate.
+
+| Measurement | Result |
+|---|---:|
+| Pet venv disk | 241,260,482 bytes / 5,073 files |
+| Sensor venv disk | 40,230,413 bytes / 1,764 files |
+| Pet direct package count | 3 |
+| Sensor direct package count | 2 |
+| Pet Working Set (venv launcher + interpreter) | 108,859,392 bytes |
+| Sensor Working Set (venv launcher + interpreter) | 34,856,960 bytes |
+| Supervisor Working Set | 20,504,576 bytes |
+| Runtime program files excluding persistent data and venvs | 6,878 |
+| Startup smoke observation | all four components reported started; healthz PASS after 5 seconds |
+
+The Pet launcher/interpreter pair and Sensor launcher/interpreter pair are expected on this Windows Python setup; they are not duplicate business services.
+
 ## FAIL
 
 - None observed in the automated or executed Windows checks above.
@@ -61,6 +94,7 @@
 - Crash auto-restart/watchdog is not implemented; `start-all.ps1` is a reliable one-shot/idempotent launcher only.
 - Per the current acceptance decision, Windows lock-screen and Sleep/Hibernate/Resume remain explicitly deferred and are not blockers for this 1–3 day daily trial. Core lock/long-gap rules pass with deterministic clocks.
 - The existing user config intentionally enables `provider: fake`; the repository default is now `enabled: false, provider: none`.
+- Final visual artwork is still pending; placeholder skin assets are not presented as final product art.
 
 ## Not Tested
 
