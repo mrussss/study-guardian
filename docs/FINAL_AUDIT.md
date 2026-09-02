@@ -1,5 +1,16 @@
 # StudyGuardian 独立全量审计交接文档 (FINAL AUDIT)
 
+> v0.4 审计说明：下方原有 v0.3 记录是历史交接材料，不代表本轮 Windows 真机项目全部 PASS。当前逐项结果以 `docs/WINDOWS_E2E_REPORT.md` 和本节为准。
+
+## v0.4 当前审计结论
+
+- Source of Truth：WSL `~/projects/study-guardian`，符合要求。
+- 自动测试：Go、Python 单元、Phase 0～4 集成和部署安全均通过。
+- 已执行 Windows 真机：ActivityWatch fresh/stale、MSS 实际截图、localhost 鉴权、STUDY/OFF 重启恢复、两次部署、Pet 进程启动。
+- 尚未完成真机项目：Secure Desktop 锁屏、Sleep/Resume、双物理显示器热插拔、Toast 可视确认、子进程自动崩溃拉起。
+- 当前建议：NO，先完成上述高风险真机项目后再进入长期日常试运行。
+- 详细证据：`docs/WINDOWS_E2E_REPORT.md`。
+
 ## 1. 审计基线与元信息
 
 - **项目名称**：StudyGuardian

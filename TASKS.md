@@ -19,14 +19,14 @@
 - [x] 14. Clock abstraction (RealClock / FakeClock)
 - [x] 15. SQLite migration skeleton (modernc.org/sqlite, CGO-free)
 - [x] 16. UserMode state machine + transition tests
-- [x] 17. 跨日 / restart / sleep / lock 时间规则与会话管理
+- [~] 17. 跨日 / restart / sleep / lock 时间规则与会话管理（自动测试通过；Windows lock/sleep 真测待完成）
 - [x] 18. Supervisor /v1/status 与 mode API (/v1/mode/study, /v1/mode/break, /v1/mode/off, /v1/task, /v1/feedback)
 - [x] 19. FakeActivitySource / FakeScreenSource 驱动单测与集成测试
 - [x] 20. Pet 精简为 UI Shell (去除独立业务逻辑，保留透明置顶、动画、托盘、气泡与菜单)
 - [x] 21. Pet ↔ Supervisor 正式 API 通信与轮询
 - [x] 22. Reminder Engine + cooldown
 - [x] 23. BREAK timeout 处理
-- [x] 24. Phase 1 Windows E2E 验证
+- [~] 24. Phase 1 Windows E2E 验证（部分通过；lock/sleep 待完成）
 
 ## Phase 2: ActivityWatch 正式监督
 - [x] 25. ActivityWatch bucket 动态发现 (window / afk buckets)
@@ -36,7 +36,7 @@
 - [x] 29. 基础 TaskRelation 规则引擎 (白名单/黑名单/学习任务关键词匹配)
 - [x] 30. ActivityWatch offline fail-soft 处理
 - [x] 31. Phase 2 单元测试与集成测试
-- [x] 32. Phase 2 Windows 验证
+- [~] 32. Phase 2 Windows 验证（ActivityWatch fresh/stale 已通过；完整矩阵待完成）
 
 ## Phase 3: Screen Sensor 正式接入
 - [x] 33. mss 正式 capture 实现与双端口服务
@@ -45,7 +45,7 @@
 - [x] 36. Privacy Gate 截图前门禁校验 (sensitive apps / domains)
 - [x] 37. InteractionState 综合判定 (ACTIVE / IDLE_STATIC / IDLE_DYNAMIC / UNKNOWN)
 - [x] 38. Sensor timeout / crash fallback fail-soft
-- [x] 39. Phase 3 自动测试与 Windows 实测
+- [~] 39. Phase 3 自动测试与 Windows 实测（MSS/真实捕获已通过；多显示器热插拔待完成）
 
 ## Phase 4: AI Classification
 - [x] 40. TaskRelationProvider 接口定义与模型适配
@@ -60,11 +60,11 @@
 ## Phase 5: 交互优化与发布交付
 - [x] 48. Pet 动画 / 气泡 / feedback UX 完善
 - [x] 49. Windows 本地通知集成 (Toast)
-- [x] 50. Startup / resume / crash recovery
+- [~] 50. Startup / resume / crash recovery（启动脚本已实现；resume 与 crash 自动拉起待完成）
 - [x] 51. 日志轮转 (Rotating logs)
 - [x] 52. 稳定性检查清单与测试工具
 - [x] 53. Release packaging 骨架
 - [x] 54. 整理 ARCHITECTURE.md, PRIVACY.md, TEST_PLAN.md, OPEN_SOURCE.md
-- [x] 55. 全量自动化测试回归与 Windows smoke test
+- [~] 55. 全量自动化测试回归与 Windows smoke test（自动化通过；Windows 完整矩阵待完成）
 - [x] 56. 中文开发完成总结汇报
 - [x] 57. 准备 docs/FINAL_AUDIT.md 模板与 handoff 数据供独立审计
