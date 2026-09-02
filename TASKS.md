@@ -80,4 +80,4 @@
 - [x] 65. Python requirements 与 venv 重建脚本
 - [x] 66. staging 部署与程序路径精确替换，保护 config/data/logs/run/handoff/venv
 - [x] 67. Phase 6 Go/Python/部署安全回归与 Windows 运行检查
-- [~] 68. 1～3 天日常试运行；锁屏、Sleep/Resume、双显示器热插拔和崩溃 watchdog 延后
+- [~] 68. 1～3 天日常试运行已启动（2026-09-02，D:\StudyGuardianDev 保持运行）；锁屏、Sleep/Resume、双显示器热插拔和崩溃 watchdog 延后

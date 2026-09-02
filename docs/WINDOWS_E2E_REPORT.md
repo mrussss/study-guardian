@@ -8,7 +8,7 @@
 - Python: Windows Python 3.11; Sensor venv with `mss` and Pillow; Pet venv with PyQt6
 - ActivityWatch: 0.13.2 at `127.0.0.1:5600`
 - Displays: MSS reported virtual desktop plus one physical monitor (`monitor: 0`)
-- Git Commit: see `git log -1` (Phase 6 productization changes are recorded below)
+- Git Commit: `2caf7c0` (`feat(product): deliver phase 6 study guardian productization`)
 - Runtime: `D:\StudyGuardianDev`
 
 ## PASS
@@ -36,6 +36,7 @@
 - Phase 6 manifest skin directories and both isolated Python requirements files were present after deployment
 - Phase 6 staging deployment passed twice while preserving persistent directories, token, and existing virtual environments
 - Phase 6 Pet process stayed alive with the manifest skin renderer and lazy Study Center modules deployed
+- Daily trial started after the final deployment on 2026-09-02; runtime was left running for the requested 1–3 day observation window
 
 ## FAIL
 
