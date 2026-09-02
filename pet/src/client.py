@@ -14,7 +14,7 @@ class SupervisorClient:
         self.last_error: Optional[str] = None
         self.is_connected: bool = False
 
-    def _make_request(self, method: str, path: str, data: Optional[Dict[str, Any]] = None, timeout: float = 2.0) -> Optional[Dict[str, Any]]:
+    def _make_request(self, method: str, path: str, data: Optional[Dict[str, Any]] = None, timeout: float = 0.5) -> Optional[Dict[str, Any]]:
         url = f"{self.base_url}{path}"
         headers = {"Content-Type": "application/json"}
         if self.auth_token:

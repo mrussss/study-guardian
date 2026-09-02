@@ -49,7 +49,7 @@ ipc:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        time.sleep(0.5)
+        time.sleep(2.5)
 
     @classmethod
     def tearDownClass(cls):

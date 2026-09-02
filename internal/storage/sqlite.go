@@ -240,3 +240,18 @@ func (s *Storage) SetClassificationCache(ctx context.Context, key, relation stri
 	_, err := s.db.ExecContext(ctx, query, key, relation, confidence, reason, createdAt, expiresAt)
 	return err
 }
+
+func (s *Storage) LoadDailyState(ctx context.Context, date string) (standby, study, breakSec, off, active int64, err error) {
+	query := `SELECT standby_seconds, study_seconds, break_seconds, off_seconds, active_seconds FROM daily_state WHERE date = ?;`
+	row := s.db.QueryRowContext(ctx, query, date)
+	err = row.Scan(&standby, &study, &breakSec, &off, &active)
+	return
+}
+
+func (s *Storage) LoadLastSession(ctx context.Context) (SessionRecord, error) {
+	query := `SELECT id, mode, task, started_at, ended_at, duration_seconds, end_reason FROM sessions ORDER BY started_at DESC LIMIT 1;`
+	row := s.db.QueryRowContext(ctx, query)
+	var rec SessionRecord
+	err := row.Scan(&rec.ID, &rec.Mode, &rec.Task, &rec.StartedAt, &rec.EndedAt, &rec.DurationSeconds, &rec.EndReason)
+	return rec, err
+}

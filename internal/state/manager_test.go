@@ -74,7 +74,7 @@ func TestManagerTickAndMidnightReset(t *testing.T) {
 	}
 
 	// Tick 5 seconds of active study
-	mgr.Tick(now, "code.exe", "main.go", "", false, true)
+	mgr.Tick(now, "code.exe", "main.go", "", false, true, false)
 	st := mgr.GetStatus()
 	if st.InteractionState != InteractionActive || st.TaskRelation != RelationFocused {
 		t.Fatalf("expected ACTIVE & FOCUSED, got %s & %s", st.InteractionState, st.TaskRelation)
@@ -83,7 +83,7 @@ func TestManagerTickAndMidnightReset(t *testing.T) {
 	// Advance time across midnight (to 00:05:00 next day)
 	nextDay := time.Date(2026, 9, 3, 0, 5, 0, 0, time.Local)
 	clock.Set(nextDay)
-	mgr.Tick(nextDay, "code.exe", "main.go", "", false, true)
+	mgr.Tick(nextDay, "code.exe", "main.go", "", false, true, false)
 
 	st = mgr.GetStatus()
 	// Should reset to STANDBY
@@ -122,7 +122,7 @@ func TestManagerDistractionReminderTrigger(t *testing.T) {
 	for i := 1; i <= 100; i++ {
 		now = now.Add(5 * time.Second)
 		clock.Set(now)
-		mgr.Tick(now, "steam.exe", "Steam Store", "", false, true)
+		mgr.Tick(now, "steam.exe", "Steam Store", "", false, true, false)
 	}
 
 	st := mgr.GetStatus()

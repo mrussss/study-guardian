@@ -49,6 +49,7 @@ type Manager struct {
 	activeSeconds     int64
 	distractedSeconds int64
 	idleStaticSeconds int64
+	currentModeSeconds int64
 
 	modeStartTime  time.Time
 	lastTickTime   time.Time
@@ -94,15 +95,35 @@ func NewPersistentManager(
 		lastActivityAt:  &now,
 		activityWatchOK: true,
 		screenSensorOK:  true,
-		currentSessID:   fmt.Sprintf("sess-%d", now.Unix()),
 	}
 
-	if m.storage != nil {
-		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
+	// 1. Load Daily State
+	if store != nil {
+		ctx := context.Background()
+		if stand, std, brk, off, act, err := store.LoadDailyState(ctx, dateStr); err == nil {
+			m.standbySeconds = stand
+			m.studySeconds = std
+			m.breakSeconds = brk
+			m.offSeconds = off
+			m.activeSeconds = act
+		}
+
+		// 2. Load Last Session if it was today
+		if lastSess, err := store.LoadLastSession(ctx); err == nil {
+			if lastSess.StartedAt.Format("2006-01-02") == dateStr {
+				m.userMode = UserMode(lastSess.Mode)
+				m.task = lastSess.Task
+			}
+		}
+		m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
+		_ = store.SaveSession(ctx, storage.SessionRecord{
 			ID:        m.currentSessID,
-			Mode:      string(UserModeStandby),
+			Mode:      string(m.userMode),
+			Task:      m.task,
 			StartedAt: now,
 		})
+	} else {
+		m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
 	}
 
 	return m
@@ -161,6 +182,7 @@ func (m *Manager) SetModeStudy(task string) error {
 	m.modeStartTime = now
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
+	m.currentModeSeconds = 0
 	m.currentReminder = nil
 	m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
 
@@ -192,6 +214,7 @@ func (m *Manager) SetModeBreak() error {
 	m.modeStartTime = now
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
+	m.currentModeSeconds = 0
 	m.currentReminder = nil
 	m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
 
@@ -219,6 +242,7 @@ func (m *Manager) SetModeOff() error {
 	m.modeStartTime = now
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
+	m.currentModeSeconds = 0
 	m.currentReminder = nil
 	m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())
 
@@ -271,14 +295,14 @@ func (m *Manager) UpdateObservation(obs Observation) {
 	m.confidence = obs.Confidence
 }
 
-func (m *Manager) Tick(now time.Time, app, title, domain string, isAFK bool, screenChanged bool) {
+func (m *Manager) Tick(now time.Time, app, title, domain string, isAFK bool, screenChanged bool, isLocked bool) {
 	var classification ClassificationResult
 	if m.ruleEngine != nil {
 		classification = m.ruleEngine.Classify(app, title, domain, m.task)
 	} else {
 		classification = ClassificationResult{Relation: RelationUnknown, Confidence: 0.5}
 	}
-	m.TickWithClassification(now, app, title, domain, isAFK, screenChanged, classification)
+	m.TickWithClassification(now, app, title, domain, isAFK, screenChanged, isLocked, classification)
 }
 
 func (m *Manager) TickWithClassification(
@@ -286,6 +310,7 @@ func (m *Manager) TickWithClassification(
 	app, title, domain string,
 	isAFK bool,
 	screenChanged bool,
+	isLocked bool,
 	classification ClassificationResult,
 ) {
 	m.mu.Lock()
@@ -309,21 +334,25 @@ func (m *Manager) TickWithClassification(
 	}
 
 	// 3. Update Activity time
-	if !isAFK {
+	if !isAFK && m.activityWatchOK { // Fix: Must not accumulate if AW is dead
 		m.activeSeconds += deltaSec
 		m.lastActivityAt = &now
 	}
 
 	// 4. Update Mode duration
-	switch m.userMode {
-	case UserModeStandby:
-		m.standbySeconds += deltaSec
-	case UserModeStudy:
-		m.studySeconds += deltaSec
-	case UserModeBreak:
-		m.breakSeconds += deltaSec
-	case UserModeOff:
-		m.offSeconds += deltaSec
+	// Issue 5 Fix: Do not accumulate break seconds if the screen is locked
+	if !(m.userMode == UserModeBreak && isLocked) {
+		m.currentModeSeconds += deltaSec
+		switch m.userMode {
+		case UserModeStandby:
+			m.standbySeconds += deltaSec
+		case UserModeStudy:
+			m.studySeconds += deltaSec
+		case UserModeBreak:
+			m.breakSeconds += deltaSec
+		case UserModeOff:
+			m.offSeconds += deltaSec
+		}
 	}
 
 	// 5. Privacy Gate Evaluation (local rules first)
@@ -334,7 +363,10 @@ func (m *Manager) TickWithClassification(
 	}
 
 	// 6. Interaction State Evaluation
-	if !isAFK {
+	if !m.activityWatchOK {
+		m.interaction = InteractionUnknown
+		m.idleStaticSeconds = 0
+	} else if !isAFK {
 		m.interaction = InteractionActive
 		m.idleStaticSeconds = 0
 	} else {
@@ -369,7 +401,7 @@ func (m *Manager) TickWithClassification(
 			Confidence:        m.confidence,
 			ActiveSeconds:     m.activeSeconds,
 			StudySeconds:      m.studySeconds,
-			BreakSeconds:      m.breakSeconds,
+			BreakSeconds:      m.currentModeSeconds, // use current session instead of daily total for reminders
 			DistractedSeconds: m.distractedSeconds,
 			IdleStaticSeconds: m.idleStaticSeconds,
 		})
@@ -426,6 +458,7 @@ func (m *Manager) checkMidnightResetLocked(now time.Time) {
 		m.activeSeconds = 0
 		m.distractedSeconds = 0
 		m.idleStaticSeconds = 0
+		m.currentModeSeconds = 0
 		m.currentReminder = nil
 		m.modeStartTime = now
 		m.currentSessID = fmt.Sprintf("sess-%d", now.Unix())

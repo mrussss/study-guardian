@@ -40,6 +40,7 @@ func NewService(
 func (s *Service) Classify(
 	ctx context.Context,
 	app, title, domain, task, screenHash string,
+	userMode string,
 	imageBase64 string,
 ) state.ClassificationResult {
 	// 1. Local deterministic rules first!
@@ -91,7 +92,7 @@ func (s *Service) Classify(
 		App:      app,
 		Title:    title,
 		Domain:   domain,
-		UserMode: string(state.UserModeStudy),
+		UserMode: userMode,
 	}
 	if s.cfg.AI.UseVisionOnlyWhenNeeded && imageBase64 != "" {
 		aiReq.AnalysisImageBase64 = imageBase64
