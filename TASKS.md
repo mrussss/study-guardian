@@ -29,14 +29,14 @@
 - [x] 24. Phase 1 Windows E2E 验证
 
 ## Phase 2: ActivityWatch 正式监督
-- [ ] 25. ActivityWatch bucket 动态发现 (window / afk buckets)
-- [ ] 26. ActivityWatchSource 真实适配层与 HTTP 客户端
-- [ ] 27. Window / title / URL / AFK 有界查询与数据解析
-- [ ] 28. Active Time 累计计算 (基于 AFK 状态)
-- [ ] 29. 基础 TaskRelation 规则引擎 (白名单/黑名单/学习任务关键词匹配)
-- [ ] 30. ActivityWatch offline fail-soft 处理
-- [ ] 31. Phase 2 单元测试与集成测试
-- [ ] 32. Phase 2 Windows 验证
+- [x] 25. ActivityWatch bucket 动态发现 (window / afk buckets)
+- [x] 26. ActivityWatchSource 真实适配层与 HTTP 客户端
+- [x] 27. Window / title / URL / AFK 有界查询与数据解析
+- [x] 28. Active Time 累计计算 (基于 AFK 状态)
+- [x] 29. 基础 TaskRelation 规则引擎 (白名单/黑名单/学习任务关键词匹配)
+- [x] 30. ActivityWatch offline fail-soft 处理
+- [x] 31. Phase 2 单元测试与集成测试
+- [x] 32. Phase 2 Windows 验证
 
 ## Phase 3: Screen Sensor 正式接入
 - [ ] 33. mss 正式 capture 实现与双端口服务
