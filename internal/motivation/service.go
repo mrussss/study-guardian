@@ -57,42 +57,50 @@ var definitions = []struct{ id, name, description string }{
 type Service struct {
 	cfg       *config.Config
 	store     *storage.Storage
+	clock     state.Clock
 	mu        sync.Mutex
 	lastEvent *Event
 }
 
 func NewService(cfg *config.Config, store *storage.Storage) *Service {
-	return &Service{cfg: cfg, store: store}
+	return NewServiceWithClock(cfg, store, state.RealClock{})
+}
+
+func NewServiceWithClock(cfg *config.Config, store *storage.Storage, clock state.Clock) *Service {
+	if clock == nil {
+		clock = state.RealClock{}
+	}
+	return &Service{cfg: cfg, store: store, clock: clock}
 }
 func (s *Service) enabled() bool {
 	return s != nil && s.cfg != nil && s.cfg.Motivation.Enabled && s.store != nil
 }
 func (s *Service) RecordTick(out state.TickOutcome) {
-	if !s.enabled() || out.DeltaSeconds <= 0 || out.UserMode != state.UserModeStudy || out.Locked || !out.ActivityValid || out.Relation == state.RelationDistracted {
+	if !s.enabled() || out.Now.IsZero() || out.DeltaSeconds <= 0 {
 		return
 	}
-	if out.Interaction == state.InteractionUnknown {
+	ctx := context.Background()
+	if out.UserMode == state.UserModeStudy && out.Relation == state.RelationDistracted {
+		_ = s.store.MarkComebackDistraction(ctx, out.Now)
 		return
 	}
-	if out.Interaction == state.InteractionIdleStatic {
-		grace := int64(s.cfg.Motivation.IdleStaticCreditGraceSeconds)
-		if out.Relation != state.RelationFocused || grace <= 0 || out.IdleStaticSeconds > grace {
-			return
-		}
-	} else if out.Interaction != state.InteractionActive && out.Interaction != state.InteractionIdleDynamic {
+	if out.UserMode != state.UserModeStudy || out.Locked || !out.ActivityValid || !creditEligible(out, s.cfg.Motivation.IdleStaticCreditGraceSeconds) {
+		_ = s.store.ResetComebackFocus(ctx, out.Now)
 		return
 	}
-	now := time.Now()
+
+	now := out.Now
 	date := now.Format("2006-01-02")
-	target, err := s.store.GetMotivationTarget(context.Background(), int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
+	target, err := s.store.GetMotivationTarget(ctx, int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
 	if err != nil {
 		return
 	}
 	checkin := int64(s.cfg.Motivation.CheckinThresholdMinutes * 60)
-	newCheckin, newTarget, err := s.store.RecordCreditedFocus(context.Background(), date, out.DeltaSeconds, target, checkin, now)
+	newCheckin, newTarget, err := s.store.RecordCreditedFocus(ctx, date, out.DeltaSeconds, target, checkin, now)
 	if err != nil {
 		return
 	}
+	_, _ = s.store.AddComebackFocus(ctx, out.DeltaSeconds, now)
 	if newCheckin {
 		s.emit("CHECKIN_COMPLETED", "完成今日打卡，继续保持专注", now)
 	}
@@ -100,6 +108,17 @@ func (s *Service) RecordTick(out state.TickOutcome) {
 		s.emit("DAILY_TARGET_COMPLETED", "今日有效专注目标完成", now)
 	}
 	s.evaluateAchievements(now)
+}
+
+func creditEligible(out state.TickOutcome, graceSeconds int) bool {
+	switch out.Interaction {
+	case state.InteractionActive, state.InteractionIdleDynamic:
+		return true
+	case state.InteractionIdleStatic:
+		return out.Relation == state.RelationFocused && graceSeconds > 0 && out.IdleStaticSeconds <= int64(graceSeconds)
+	default:
+		return false
+	}
 }
 func (s *Service) emit(kind, msg string, now time.Time) {
 	var id int64
@@ -255,17 +274,13 @@ func (s *Service) evaluateAchievements(now time.Time) {
 	daily, _ := s.store.GetMotivationDaily(ctx, now.Format("2006-01-02"))
 	streak := s.streak(ctx, now.Format("2006-01-02"))
 	missions, _ := s.store.MissionCount(ctx)
-	distractedBefore, _ := s.store.HasDistractionBefore(ctx, now)
 	history, _ := s.GetHistory(ctx, 7, now)
 	week := int64(0)
 	for _, d := range history {
 		week += d.FocusMinutes
 	}
-	dailyTarget, _ := s.store.GetMotivationTarget(ctx, int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
-	if dailyTarget <= 0 {
-		dailyTarget = 7200
-	}
-	checks := map[string]bool{"FIRST_30": total >= 1800, "DAILY_120": daily.CreditedFocusSeconds >= dailyTarget, "STREAK_3": streak >= 3, "STREAK_7": streak >= 7, "STREAK_30": streak >= 30, "WEEK_600": week >= 600, "MISSION_10": missions >= 10, "COMEBACK": distractedBefore && total >= 1800}
+	comebackFocus, _ := s.store.ComebackFocusSeconds(ctx)
+	checks := map[string]bool{"FIRST_30": total >= 1800, "DAILY_120": daily.CreditedFocusSeconds >= 7200, "STREAK_3": streak >= 3, "STREAK_7": streak >= 7, "STREAK_30": streak >= 30, "WEEK_600": week >= 600, "MISSION_10": missions >= 10, "COMEBACK": comebackFocus >= 1800}
 	for id, ok := range checks {
 		if ok {
 			if unlocked, _ := s.store.UnlockAchievement(ctx, id, now, "{}"); unlocked {
@@ -287,19 +302,16 @@ func (s *Service) Achievements(ctx context.Context, now time.Time) ([]Achievemen
 	daily, _ := s.store.GetMotivationDaily(ctx, now.Format("2006-01-02"))
 	streak := s.streak(ctx, now.Format("2006-01-02"))
 	missions, _ := s.store.MissionCount(ctx)
-	distractedBefore, _ := s.store.HasDistractionBefore(ctx, now)
 	history, _ := s.GetHistory(ctx, 7, now)
 	week := int64(0)
 	for _, d := range history {
 		week += d.FocusMinutes
 	}
-	dailyTarget, _ := s.store.GetMotivationTarget(ctx, int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
-	if dailyTarget <= 0 {
-		dailyTarget = 7200
-	}
+	dailyTarget := int64(7200)
 	comebackProgress := 0.0
-	if distractedBefore {
-		comebackProgress = float64(total) / 1800
+	comebackFocus, _ := s.store.ComebackFocusSeconds(ctx)
+	if comebackFocus > 0 {
+		comebackProgress = float64(comebackFocus) / 1800
 	}
 	vals := map[string]float64{"FIRST_30": float64(total) / 1800, "DAILY_120": float64(daily.CreditedFocusSeconds) / float64(dailyTarget), "STREAK_3": float64(streak) / 3, "STREAK_7": float64(streak) / 7, "STREAK_30": float64(streak) / 30, "WEEK_600": float64(week) / 600, "MISSION_10": float64(missions) / 10, "COMEBACK": comebackProgress}
 	out := make([]AchievementDefinition, 0, len(definitions))
@@ -327,14 +339,16 @@ func (s *Service) CreateMission(ctx context.Context, title, description string, 
 	if title == "" {
 		return storage.Mission{}, fmt.Errorf("title is required")
 	}
-	m := storage.Mission{ID: fmt.Sprintf("mission-%d", time.Now().UnixNano()), Title: title, Description: description, RewardMilliAP: reward, DueDate: due, CreatedAt: time.Now()}
+	now := s.clock.Now()
+	m := storage.Mission{ID: fmt.Sprintf("mission-%d", now.UnixNano()), Title: title, Description: description, RewardMilliAP: reward, DueDate: due, CreatedAt: now}
 	return m, s.store.CreateMission(ctx, m)
 }
 func (s *Service) CompleteMission(ctx context.Context, id string) (storage.Mission, bool, error) {
-	m, done, err := s.store.CompleteMission(ctx, id, time.Now())
+	now := s.clock.Now()
+	m, done, err := s.store.CompleteMission(ctx, id, now)
 	if err == nil && done {
-		s.emit("MISSION_COMPLETED", "完成任务："+m.Title, time.Now())
-		s.evaluateAchievements(time.Now())
+		s.emit("MISSION_COMPLETED", "完成任务："+m.Title, now)
+		s.evaluateAchievements(now)
 	}
 	return m, done, err
 }
@@ -349,9 +363,10 @@ func (s *Service) RedeemReward(ctx context.Context, id string) (storage.Redempti
 	if rate <= 0 {
 		rate = 1000
 	}
-	r, err := s.store.RedeemReward(ctx, id, time.Now(), rate)
+	now := s.clock.Now()
+	r, err := s.store.RedeemReward(ctx, id, now, rate)
 	if err == nil {
-		s.emit("REWARD_REDEEMED", "已兑换："+r.RewardName, time.Now())
+		s.emit("REWARD_REDEEMED", "已兑换："+r.RewardName, now)
 	}
 	return r, err
 }

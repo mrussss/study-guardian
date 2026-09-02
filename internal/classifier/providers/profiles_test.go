@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"strings"
 	"testing"
 
 	"study-guardian/internal/config"
@@ -40,5 +41,20 @@ func TestVisionProviderCanBeConfiguredIndependently(t *testing.T) {
 	}
 	if r.VisionProvider() == nil {
 		t.Fatal("vision provider should be configurable independently")
+	}
+}
+
+func TestProviderConfigurationRequiresModel(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.AI.Enabled = true
+	cfg.AI.Text.Provider = "deepseek"
+	cfg.AI.Text.Model = ""
+	cfg.AI.APIKey = "test-key"
+	r := New(cfg)
+	if r.Provider() != nil {
+		t.Fatal("provider must not be created without a model")
+	}
+	if !strings.Contains(r.Status().Warning, "model") {
+		t.Fatalf("warning=%q, want missing-model warning", r.Status().Warning)
 	}
 }

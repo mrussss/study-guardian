@@ -79,7 +79,7 @@ func main() {
 	}
 
 	classifierService := classifier.NewServiceWithProviders(cfg, ruleEngine, privacyGate, aiProvider, aiRegistry.VisionProvider(), store)
-	motivationService := motivation.NewService(cfg, store)
+	motivationService := motivation.NewServiceWithClock(cfg, store, clock)
 
 	stateMgr := state.NewPersistentManager(clock, cfg, store, ruleEngine, privacyGate, reminderEng)
 	stateMgr.SetToastNotifier(windows.SendToast)
@@ -129,7 +129,6 @@ func main() {
 				title := ""
 				domain := ""
 				isAFK := false
-				imageBase64 := ""
 				isStale := false
 
 				if awOK {
@@ -188,18 +187,14 @@ func main() {
 					lastScreenChanged = false
 				} else if shouldSample {
 					if sensorOK && cfg.Screen.Enabled && priv == state.PrivacyNormal {
-						includeImg := cfg.AI.Enabled && cfg.AI.UseVisionOnlyWhenNeeded && sysStatus.UserMode == state.UserModeStudy
 						capResp, err := sensorClient.Capture(tickerCtx, sensor.CaptureRequest{
 							Monitor:              cfg.Screen.Monitor,
-							IncludeAnalysisImage: includeImg,
+							IncludeAnalysisImage: false,
 							MaxWidth:             960,
 						})
 						if err == nil && capResp != nil {
 							lastScreenChanged = capResp.Changed
 							lastScreenHash = capResp.Hash
-							if capResp.AnalysisImage != nil {
-								imageBase64 = *capResp.AnalysisImage
-							}
 						}
 					} else {
 						lastScreenChanged = false
@@ -211,7 +206,18 @@ func main() {
 						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "BREAK mode"}
 					} else {
 						currentTask := stateMgr.GetCurrentTask()
-						lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), imageBase64)
+						lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), "")
+						minConfidence := cfg.AI.MinConfidence
+						if minConfidence <= 0 {
+							minConfidence = 0.75
+						}
+						needsVision := cfg.AI.Enabled && cfg.AI.Vision.Enabled && aiRegistry.VisionProvider() != nil && (lastClassRes.Relation == state.RelationUnknown || lastClassRes.Confidence < minConfidence)
+						if needsVision && sensorOK && cfg.Screen.Enabled && priv == state.PrivacyNormal {
+							visionResp, visionErr := sensorClient.Capture(tickerCtx, sensor.CaptureRequest{Monitor: cfg.Screen.Monitor, IncludeAnalysisImage: true, MaxWidth: 960})
+							if visionErr == nil && visionResp != nil && visionResp.AnalysisImage != nil {
+								lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), *visionResp.AnalysisImage)
+							}
+						}
 					}
 				} else if sysStatus.UserMode == state.UserModeOff {
 					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "System is OFF"}

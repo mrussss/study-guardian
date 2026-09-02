@@ -174,6 +174,13 @@ func (s *Storage) migrate() error {
 			daily_target_seconds INTEGER NOT NULL DEFAULT 7200,
 			updated_at TIMESTAMP NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS motivation_comeback_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			last_distraction_at TIMESTAMP,
+			focus_seconds_since_distraction INTEGER NOT NULL DEFAULT 0,
+			active BOOLEAN NOT NULL DEFAULT 0,
+			updated_at TIMESTAMP NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS ap_ledger (
 			id TEXT PRIMARY KEY,
 			source TEXT NOT NULL,

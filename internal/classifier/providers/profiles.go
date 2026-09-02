@@ -85,24 +85,28 @@ func New(cfg *config.Config) *Registry {
 				st.Warning = "fake provider disabled outside developer_mode; rules only"
 			}
 		} else {
-			key := resolveKey(text, p.DefaultAPIKeyEnv)
-			// Legacy api_key is read only for compatibility; migration scripts never
-			// create this field and new configs should use env/file references.
-			if key == "" {
-				key = strings.TrimSpace(cfg.AI.APIKey)
-			}
-			endpoint := text.BaseURL
-			if endpoint == "" {
-				endpoint = p.DefaultBaseURL
-			}
-			if endpoint == "" && text.Provider != "ollama" {
-				st.Warning = "provider base_url is required"
+			if strings.TrimSpace(text.Model) == "" {
+				st.Warning = "AI text model is required; rules only"
 			} else {
-				st.TextConfigured = key != "" || text.Provider == "ollama" || localEndpoint(endpoint)
-				if st.TextConfigured {
-					r.provider = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: endpoint, APIKey: key, Model: text.Model, JSONMode: text.JSONMode, SupportsJSONMode: p.SupportsJSONMode, Timeout: time.Duration(text.TimeoutSeconds) * time.Second, Temperature: text.Temperature})
+				key := resolveKey(text, p.DefaultAPIKeyEnv)
+				// Legacy api_key is read only for compatibility; migration scripts never
+				// create this field and new configs should use env/file references.
+				if key == "" {
+					key = strings.TrimSpace(cfg.AI.APIKey)
+				}
+				endpoint := text.BaseURL
+				if endpoint == "" {
+					endpoint = p.DefaultBaseURL
+				}
+				if endpoint == "" && text.Provider != "ollama" {
+					st.Warning = "provider base_url is required"
 				} else {
-					st.Warning = "API key is not configured; rules only"
+					st.TextConfigured = key != "" || text.Provider == "ollama" || localEndpoint(endpoint)
+					if st.TextConfigured {
+						r.provider = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: endpoint, APIKey: key, Model: text.Model, JSONMode: text.JSONMode, SupportsJSONMode: p.SupportsJSONMode, Timeout: time.Duration(text.TimeoutSeconds) * time.Second, Temperature: text.Temperature})
+					} else {
+						st.Warning = "API key is not configured; rules only"
+					}
 				}
 			}
 		}
@@ -118,14 +122,24 @@ func New(cfg *config.Config) *Registry {
 	vision := cfg.AI.Vision
 	if cfg.AI.Vision.Enabled && vision.Provider != "" && vision.Provider != "none" {
 		if vp, exists := ProfileFor(vision.Provider); exists {
-			visionEndpoint := vision.BaseURL
-			if visionEndpoint == "" {
-				visionEndpoint = vp.DefaultBaseURL
+			if strings.TrimSpace(vision.Model) == "" {
+				if st.Warning == "" {
+					st.Warning = "AI vision model is required; vision fallback disabled"
+				}
+			} else {
+				visionEndpoint := vision.BaseURL
+				if visionEndpoint == "" {
+					visionEndpoint = vp.DefaultBaseURL
+				}
+				visionKey := resolveKey(vision, vp.DefaultAPIKeyEnv)
+				if visionKey != "" || vision.Provider == "ollama" || localEndpoint(visionEndpoint) {
+					r.vision = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: visionEndpoint, APIKey: visionKey, Model: vision.Model, JSONMode: vision.JSONMode, SupportsJSONMode: vp.SupportsJSONMode, Timeout: time.Duration(vision.TimeoutSeconds) * time.Second, Temperature: vision.Temperature})
+				} else if st.Warning == "" {
+					st.Warning = "AI vision API key is not configured; vision fallback disabled"
+				}
 			}
-			visionKey := resolveKey(vision, vp.DefaultAPIKeyEnv)
-			if visionKey != "" || vision.Provider == "ollama" || localEndpoint(visionEndpoint) {
-				r.vision = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: visionEndpoint, APIKey: visionKey, Model: vision.Model, JSONMode: vision.JSONMode, SupportsJSONMode: vp.SupportsJSONMode, Timeout: time.Duration(vision.TimeoutSeconds) * time.Second, Temperature: vision.Temperature})
-			}
+		} else if st.Warning == "" {
+			st.Warning = "unknown AI vision provider; vision fallback disabled"
 		}
 	}
 	r.status = st

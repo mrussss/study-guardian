@@ -21,14 +21,20 @@ func testService(t *testing.T) (*Service, *storage.Storage) {
 	return NewService(cfg, store), store
 }
 
+func tickAt(now time.Time, out state.TickOutcome) state.TickOutcome {
+	out.Now = now
+	return out
+}
+
 func TestRecordTickCreditPolicy(t *testing.T) {
 	svc, store := testService(t)
-	base := state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationUnknown}
+	now := time.Now()
+	base := tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationUnknown})
 	svc.RecordTick(base)
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 301, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationFocused})
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationDistracted})
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: false, Interaction: state.InteractionActive, Relation: state.RelationFocused})
-	d, err := store.GetMotivationDaily(context.Background(), time.Now().Format("2006-01-02"))
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 301, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationFocused}))
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationDistracted}))
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: false, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
+	d, err := store.GetMotivationDaily(context.Background(), now.Format("2006-01-02"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,10 +45,11 @@ func TestRecordTickCreditPolicy(t *testing.T) {
 
 func TestStaticReadingCreditGrace(t *testing.T) {
 	svc, store := testService(t)
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationFocused})
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 301, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationFocused})
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 1, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationUnknown})
-	d, err := store.GetMotivationDaily(context.Background(), time.Now().Format("2006-01-02"))
+	now := time.Now()
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationFocused}))
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 301, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationFocused}))
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 1, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationUnknown}))
+	d, err := store.GetMotivationDaily(context.Background(), now.Format("2006-01-02"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +60,7 @@ func TestStaticReadingCreditGrace(t *testing.T) {
 
 func TestMissionAndRewardAreIdempotent(t *testing.T) {
 	svc, _ := testService(t)
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 3600, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused})
+	svc.RecordTick(tickAt(time.Now(), state.TickOutcome{DeltaSeconds: 3600, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
 	m, err := svc.CreateMission(context.Background(), "Read Go", "", 100, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +84,7 @@ func TestConfiguredAPRateIsUsed(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Motivation.APPerFocusHourMilli = 2000
 	svc := NewService(cfg, store)
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 3600, UserMode: state.UserModeStudy, Interaction: state.InteractionActive, Relation: state.RelationUnknown, ActivityValid: true})
+	svc.RecordTick(tickAt(time.Now(), state.TickOutcome{DeltaSeconds: 3600, UserMode: state.UserModeStudy, Interaction: state.InteractionActive, Relation: state.RelationUnknown, ActivityValid: true}))
 	status, err := svc.GetStatus(context.Background(), time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -88,13 +95,11 @@ func TestConfiguredAPRateIsUsed(t *testing.T) {
 }
 
 func TestComebackUnlocksAfterDistractionAndFocus(t *testing.T) {
-	svc, store := testService(t)
-	now := time.Now().Add(-time.Minute)
-	if err := store.RecordObservation(context.Background(), storage.ObservationRecord{Timestamp: now, Interaction: "ACTIVE", Relation: "DISTRACTED", Privacy: "SAFE", CurrentMode: "STUDY"}); err != nil {
-		t.Fatal(err)
-	}
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 1800, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused})
-	items, err := svc.Achievements(context.Background(), time.Now())
+	svc, _ := testService(t)
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 1, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationDistracted}))
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 1800, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
+	items, err := svc.Achievements(context.Background(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +114,53 @@ func TestComebackUnlocksAfterDistractionAndFocus(t *testing.T) {
 	t.Fatal("COMEBACK definition not found")
 }
 
+func TestComebackRequiresContinuousFocusAfterDistraction(t *testing.T) {
+	svc, _ := testService(t)
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 3600, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 1, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationDistracted}))
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
+	items, err := svc.Achievements(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.ID == "COMEBACK" && item.Unlocked {
+			t.Fatal("COMEBACK must not use focus accumulated before the distraction")
+		}
+	}
+}
+
+func TestDaily120UsesFixedAchievementThreshold(t *testing.T) {
+	svc, _ := testService(t)
+	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	if _, err := svc.SetDailyTarget(context.Background(), 60, now); err != nil {
+		t.Fatal(err)
+	}
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 3600, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
+	items, err := svc.Achievements(context.Background(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.ID == "DAILY_120" && item.Unlocked {
+			t.Fatal("DAILY_120 must remain locked at a 60-minute user target")
+		}
+	}
+}
+
+func TestRecordTickUsesOutcomeTimestamp(t *testing.T) {
+	svc, store := testService(t)
+	now := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
+	if _, err := store.GetMotivationDaily(context.Background(), "2025-01-02"); err != nil {
+		t.Fatalf("credited focus was not stored on outcome date: %v", err)
+	}
+	if _, err := store.GetMotivationDaily(context.Background(), time.Now().Format("2006-01-02")); err == nil {
+		t.Fatal("RecordTick unexpectedly used wall-clock date")
+	}
+}
+
 func TestDailyTargetSettingIsPersistentAndUpdatesToday(t *testing.T) {
 	svc, store := testService(t)
 	now := time.Now()
@@ -116,7 +168,7 @@ func TestDailyTargetSettingIsPersistentAndUpdatesToday(t *testing.T) {
 	if err != nil || settings.DailyTargetMinutes != 90 {
 		t.Fatalf("set target: %#v %v", settings, err)
 	}
-	svc.RecordTick(state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused})
+	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
 	d, err := store.GetMotivationDaily(context.Background(), now.Format("2006-01-02"))
 	if err != nil {
 		t.Fatal(err)

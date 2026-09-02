@@ -119,10 +119,40 @@ func (s *Storage) SetMotivationTarget(ctx context.Context, targetSeconds int64, 
 	if _, err = tx.ExecContext(ctx, `INSERT INTO motivation_settings(id,daily_target_seconds,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET daily_target_seconds=excluded.daily_target_seconds,updated_at=excluded.updated_at`, targetSeconds, now); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE motivation_daily SET daily_target_seconds=?, target_completed=(credited_focus_seconds>=?), updated_at=? WHERE date=?`, targetSeconds, targetSeconds, now, date); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO motivation_daily(date,credited_focus_seconds,daily_target_seconds,checkin_completed,target_completed,updated_at) VALUES(?,0,?,0,0,?) ON CONFLICT(date) DO UPDATE SET daily_target_seconds=excluded.daily_target_seconds,target_completed=(motivation_daily.credited_focus_seconds>=excluded.daily_target_seconds),updated_at=excluded.updated_at`, date, targetSeconds, now); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (s *Storage) MarkComebackDistraction(ctx context.Context, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO motivation_comeback_state(id,last_distraction_at,focus_seconds_since_distraction,active,updated_at) VALUES(1,?,0,1,?) ON CONFLICT(id) DO UPDATE SET last_distraction_at=excluded.last_distraction_at,focus_seconds_since_distraction=0,active=1,updated_at=excluded.updated_at`, now, now)
+	return err
+}
+
+func (s *Storage) ResetComebackFocus(ctx context.Context, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE motivation_comeback_state SET focus_seconds_since_distraction=0,updated_at=? WHERE id=1 AND active=1`, now)
+	return err
+}
+
+func (s *Storage) AddComebackFocus(ctx context.Context, delta int64, now time.Time) (int64, error) {
+	if delta <= 0 {
+		return s.ComebackFocusSeconds(ctx)
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE motivation_comeback_state SET focus_seconds_since_distraction=focus_seconds_since_distraction+?,updated_at=? WHERE id=1 AND active=1`, delta, now)
+	if err != nil {
+		return 0, err
+	}
+	return s.ComebackFocusSeconds(ctx)
+}
+
+func (s *Storage) ComebackFocusSeconds(ctx context.Context) (int64, error) {
+	var seconds int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(focus_seconds_since_distraction,0) FROM motivation_comeback_state WHERE id=1 AND active=1`).Scan(&seconds)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return seconds, err
 }
 
 func (s *Storage) APSummaryForDate(ctx context.Context, date string, apPerFocusHourMilli int64) (earned, spent int64, err error) {

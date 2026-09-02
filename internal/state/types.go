@@ -93,6 +93,7 @@ type ReminderDecisionInput struct {
 // Downstream product features must consume this result instead of creating a
 // second wall-clock timer.
 type TickOutcome struct {
+	Now               time.Time
 	DeltaSeconds      int64
 	UserMode          UserMode
 	Interaction       InteractionState

@@ -75,7 +75,9 @@ func (s *Service) Classify(
 		}
 	}
 
-	requestedVision := imageBase64 != "" && s.cfg.AI.UseVisionOnlyWhenNeeded && s.vision != nil
+	// The caller decides when a screenshot is worth collecting. Supplying an
+	// image here explicitly selects the configured vision fallback provider.
+	requestedVision := imageBase64 != "" && s.vision != nil
 	provider := s.provider
 	if requestedVision {
 		provider = s.vision
@@ -116,7 +118,17 @@ func (s *Service) Classify(
 		aiReq.AnalysisImageBase64 = imageBase64
 	}
 
-	aiCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	timeoutSeconds := s.cfg.AI.Text.TimeoutSeconds
+	if requestedVision {
+		timeoutSeconds = s.cfg.AI.Vision.TimeoutSeconds
+	}
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 6
+		if requestedVision {
+			timeoutSeconds = 8
+		}
+	}
+	aiCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 
 	resp, err := provider.Classify(aiCtx, aiReq)

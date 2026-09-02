@@ -353,7 +353,7 @@ func (m *Manager) TickWithClassification(
 	delta := now.Sub(m.lastTickTime)
 	m.lastTickTime = now
 	if delta < 0 {
-		return TickOutcome{}
+		return TickOutcome{Now: now}
 	}
 	if delta > 30*time.Second {
 		delta = 5 * time.Second
@@ -485,6 +485,7 @@ func (m *Manager) TickWithClassification(
 	}
 
 	return TickOutcome{
+		Now:               now,
 		DeltaSeconds:      deltaSec,
 		UserMode:          m.userMode,
 		Interaction:       m.interaction,
