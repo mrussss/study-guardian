@@ -71,3 +71,22 @@ func TestClassificationCacheKeySeparatesProviderAndVision(t *testing.T) {
 		t.Fatal("cache key must include provider/model identity")
 	}
 }
+
+func TestClassificationUsesIndependentVisionProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.AI.Enabled = true
+	cfg.AI.UseVisionOnlyWhenNeeded = true
+	ruleEngine := rules.NewRuleEngine()
+	privacyGate := rules.NewPrivacyGate(cfg)
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	service := NewServiceWithProviders(cfg, ruleEngine, privacyGate, nil, NewFakeProvider(), store)
+	res := service.Classify(context.Background(), "chrome.exe", "Unmatched page", "example.com", "Go Lab", "screen", "STUDY", "base64-image")
+	if res.Relation != state.RelationFocused || res.IsFromRule {
+		t.Fatalf("expected independent vision provider result, got %+v", res)
+	}
+}

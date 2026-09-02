@@ -100,7 +100,7 @@ func (s *Service) Classify(
 	}
 
 	// 4. If AI is not enabled or no provider configured, return rule fallback
-	if !s.cfg.AI.Enabled || s.provider == nil {
+	if !s.cfg.AI.Enabled || provider == nil {
 		return ruleRes
 	}
 
