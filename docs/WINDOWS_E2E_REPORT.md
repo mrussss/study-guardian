@@ -27,6 +27,11 @@
 - Two consecutive deployments: persistent config, token, data, logs, run and handoff directories preserved
 - Pet process startup after moving HTTP polling to a worker thread
 - Startup and stop scripts: idempotent port checks and reliable Python process cleanup
+- Supervisor stopped while Pet remained running: Pet window stayed responsive through multiple HTTP timeout polls
+- Pet GUI drag: real window moved from `(2291, 1271)` to `(2336, 1286)` as expected
+- Pet context menu: right-click opened the native menu with status and mode actions while Supervisor was offline
+- Windows 11 Toast: isolated BREAK test produced `current_reminder.level=TOAST`, reason `BREAK_TOO_LONG_STRONG`; the Windows notification database contains the corresponding `StudyGuardian 提醒 / 休息已满 1 分钟` record and the `StudyGuardian` notification registration timestamp advanced
+- Normal runtime restored after the isolated Toast test; Supervisor, Sensor, ActivityWatch, and Pet were left running for daily trial
 
 ## FAIL
 
@@ -48,9 +53,7 @@
 
 - The installed real machine has one physical monitor; negative-coordinate dual-monitor and unplug/replug behavior were not available to validate.
 - Crash auto-restart/watchdog is not implemented; `start-all.ps1` is a reliable one-shot/idempotent launcher only.
-- `Win + L` lock-screen and Sleep/Hibernate/Resume were not executed automatically because doing so can leave the interactive desktop locked or suspended. Core lock/long-gap tests pass with deterministic clocks, but these remain real-machine pending checks.
-- Windows Toast was not visually verified in the notification center during this pass.
-- Pet process startup was verified; drag/menu responsiveness under a deliberately stopped Supervisor was not visually exercised.
+- Per the current acceptance decision, Windows lock-screen and Sleep/Hibernate/Resume remain explicitly deferred and are not blockers for this 1–3 day daily trial. Core lock/long-gap rules pass with deterministic clocks.
 - The existing user config intentionally enables `provider: fake`; the repository default is now `enabled: false, provider: none`.
 
 ## Not Tested
@@ -58,5 +61,5 @@
 - Windows lock/unlock timing on the Secure Desktop
 - Sleep/Hibernate/Resume timing on physical hardware
 - Dual physical monitor arrangement and hot unplug/replug
-- Visual Windows Toast rendering and cooldown behavior
+- Toast banner animation timing and cooldown behavior beyond the triggered notification-center record
 - Automatic child-process crash recovery

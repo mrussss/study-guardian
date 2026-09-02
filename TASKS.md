@@ -19,14 +19,14 @@
 - [x] 14. Clock abstraction (RealClock / FakeClock)
 - [x] 15. SQLite migration skeleton (modernc.org/sqlite, CGO-free)
 - [x] 16. UserMode state machine + transition tests
-- [~] 17. 跨日 / restart / sleep / lock 时间规则与会话管理（自动测试通过；Windows lock/sleep 真测待完成）
+- [~] 17. 跨日 / restart / sleep / lock 时间规则与会话管理（自动测试与 restart 已通过；按本轮验收决定 lock/sleep 延后且不阻塞）
 - [x] 18. Supervisor /v1/status 与 mode API (/v1/mode/study, /v1/mode/break, /v1/mode/off, /v1/task, /v1/feedback)
 - [x] 19. FakeActivitySource / FakeScreenSource 驱动单测与集成测试
 - [x] 20. Pet 精简为 UI Shell (去除独立业务逻辑，保留透明置顶、动画、托盘、气泡与菜单)
 - [x] 21. Pet ↔ Supervisor 正式 API 通信与轮询
 - [x] 22. Reminder Engine + cooldown
 - [x] 23. BREAK timeout 处理
-- [~] 24. Phase 1 Windows E2E 验证（部分通过；lock/sleep 待完成）
+- [x] 24. Phase 1 Windows E2E 验证（restart、OFF 保持、Pet 离线 GUI、Toast 触发/通知中心记录已通过；lock/sleep 按本轮决定延后）
 
 ## Phase 2: ActivityWatch 正式监督
 - [x] 25. ActivityWatch bucket 动态发现 (window / afk buckets)
@@ -59,12 +59,12 @@
 
 ## Phase 5: 交互优化与发布交付
 - [x] 48. Pet 动画 / 气泡 / feedback UX 完善
-- [x] 49. Windows 本地通知集成 (Toast)
+- [x] 49. Windows 本地通知集成 (Toast)（Windows 11 实机触发并确认通知中心记录）
 - [~] 50. Startup / resume / crash recovery（启动脚本已实现；resume 与 crash 自动拉起待完成）
 - [x] 51. 日志轮转 (Rotating logs)
 - [x] 52. 稳定性检查清单与测试工具
 - [x] 53. Release packaging 骨架
 - [x] 54. 整理 ARCHITECTURE.md, PRIVACY.md, TEST_PLAN.md, OPEN_SOURCE.md
-- [~] 55. 全量自动化测试回归与 Windows smoke test（自动化通过；Windows 完整矩阵待完成）
+- [~] 55. 全量自动化测试回归与 Windows smoke test（自动化与本轮 Pet/Toast smoke 已通过；多显示器热插拔、崩溃自动拉起仍待后续）
 - [x] 56. 中文开发完成总结汇报
 - [x] 57. 准备 docs/FINAL_AUDIT.md 模板与 handoff 数据供独立审计
