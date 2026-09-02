@@ -48,7 +48,7 @@ Start-Sleep -Seconds 2
 
 # 4. Start Pet UI Shell
 Write-Host "[4/4] Starting Study Pet UI..." -ForegroundColor Yellow
-$petVenvPy = "$RootDir\poc\desktop-pet\.venv\Scripts\python.exe"
+$petVenvPy = "$PetDir\.venv\Scripts\python.exe"
 if (-not (Test-Path $petVenvPy)) {
     $petVenvPy = "python.exe"
 }
