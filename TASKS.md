@@ -39,13 +39,13 @@
 - [x] 32. Phase 2 Windows 验证
 
 ## Phase 3: Screen Sensor 正式接入
-- [ ] 33. mss 正式 capture 实现与双端口服务
-- [ ] 34. monitor / virtual desktop 处理
-- [ ] 35. pHash / dHash 屏幕变化检测
-- [ ] 36. Privacy Gate 截图前门禁校验 (sensitive apps / domains)
-- [ ] 37. InteractionState 综合判定 (ACTIVE / IDLE_STATIC / IDLE_DYNAMIC / UNKNOWN)
-- [ ] 38. Sensor timeout / crash fallback fail-soft
-- [ ] 39. Phase 3 自动测试与 Windows 实测
+- [x] 33. mss 正式 capture 实现与双端口服务
+- [x] 34. monitor / virtual desktop 处理
+- [x] 35. pHash / dHash 屏幕变化检测
+- [x] 36. Privacy Gate 截图前门禁校验 (sensitive apps / domains)
+- [x] 37. InteractionState 综合判定 (ACTIVE / IDLE_STATIC / IDLE_DYNAMIC / UNKNOWN)
+- [x] 38. Sensor timeout / crash fallback fail-soft
+- [x] 39. Phase 3 自动测试与 Windows 实测
 
 ## Phase 4: AI Classification
 - [ ] 40. TaskRelationProvider 接口定义与模型适配
