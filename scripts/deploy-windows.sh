@@ -29,16 +29,15 @@ mkdir -p "${TARGET_DIR}/data"
 mkdir -p "${TARGET_DIR}/logs"
 mkdir -p "${TARGET_DIR}/run"
 mkdir -p "${TARGET_DIR}/handoff"
+mkdir -p "${TARGET_DIR}/scripts"
 
 # 3. Ensure auth.token exists
 TOKEN_FILE="${TARGET_DIR}/config/auth.token"
 if [ ! -f "${TOKEN_FILE}" ] || [ ! -s "${TOKEN_FILE}" ]; then
     echo "[Deploy] Generating new auth.token..."
-    # Generate 16 bytes random hex token
     python3 -c "import secrets; print(secrets.token_hex(16))" > "${TOKEN_FILE}"
     chmod 600 "${TOKEN_FILE}"
 fi
-AUTH_TOKEN="$(cat "${TOKEN_FILE}" | tr -d '\r\n')"
 
 # 4. Ensure config.yaml exists
 CONFIG_FILE="${TARGET_DIR}/config/config.yaml"
@@ -64,6 +63,9 @@ fi
 echo "[Deploy] Updating sensor runtime files..."
 mkdir -p "${TARGET_DIR}/sensor/screen"
 cp -r "${REPO_ROOT}/dist/windows/sensor/screen/"* "${TARGET_DIR}/sensor/screen/"
+
+# 8. Deploy Windows PowerShell helper scripts
+cp -f "${REPO_ROOT}/scripts/"*.ps1 "${TARGET_DIR}/scripts/" 2>/dev/null || true
 
 echo "=========================================================="
 echo "Deployment successful!"

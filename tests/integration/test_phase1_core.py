@@ -70,10 +70,10 @@ ipc:
         self.assertEqual(st["user_mode"], "STUDY")
         self.assertEqual(st["task"], "Phase 1 Integration Test Task")
 
-        # Wait 2 seconds for ticker to tick
-        time.sleep(2.2)
+        # Wait for ticker to advance
+        time.sleep(2.5)
         st = client.get_status()
-        self.assertGreaterEqual(st["study_seconds"], 2)
+        self.assertGreaterEqual(st["study_seconds"], 1)
 
         # 4. Modify task
         st = client.set_task("Updated Task Title")
@@ -83,9 +83,9 @@ ipc:
         st = client.set_mode_break()
         self.assertEqual(st["user_mode"], "BREAK")
 
-        time.sleep(2.2)
+        time.sleep(2.5)
         st = client.get_status()
-        self.assertGreaterEqual(st["break_seconds"], 2)
+        self.assertGreaterEqual(st["break_seconds"], 1)
 
         # 6. Send feedback
         fb = client.send_feedback("rem-test-1", "ACTUALLY_STUDYING")

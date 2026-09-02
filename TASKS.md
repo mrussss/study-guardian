@@ -58,13 +58,13 @@
 - [x] 47. Provider unavailable fail-soft 保证系统正常运行
 
 ## Phase 5: 交互优化与发布交付
-- [ ] 48. Pet 动画 / 气泡 / feedback UX 完善
-- [ ] 49. Windows 本地通知集成 (Toast)
-- [ ] 50. Startup / resume / crash recovery
-- [ ] 51. 日志轮转 (Rotating logs)
-- [ ] 52. 稳定性检查清单与测试工具
-- [ ] 53. Release packaging 骨架
-- [ ] 54. 整理 ARCHITECTURE.md, PRIVACY.md, TEST_PLAN.md, OPEN_SOURCE.md
-- [ ] 55. 全量自动化测试回归与 Windows smoke test
-- [ ] 56. 中文开发完成总结汇报
-- [ ] 57. 准备 docs/FINAL_AUDIT.md 模板与 handoff 数据供独立审计
+- [x] 48. Pet 动画 / 气泡 / feedback UX 完善
+- [x] 49. Windows 本地通知集成 (Toast)
+- [x] 50. Startup / resume / crash recovery
+- [x] 51. 日志轮转 (Rotating logs)
+- [x] 52. 稳定性检查清单与测试工具
+- [x] 53. Release packaging 骨架
+- [x] 54. 整理 ARCHITECTURE.md, PRIVACY.md, TEST_PLAN.md, OPEN_SOURCE.md
+- [x] 55. 全量自动化测试回归与 Windows smoke test
+- [x] 56. 中文开发完成总结汇报
+- [x] 57. 准备 docs/FINAL_AUDIT.md 模板与 handoff 数据供独立审计
