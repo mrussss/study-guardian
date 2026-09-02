@@ -131,6 +131,12 @@ func (m *Manager) GetStatus() SystemStatus {
 	}
 }
 
+func (m *Manager) GetCurrentTask() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.task
+}
+
 func (m *Manager) SetModeStudy(task string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -258,6 +264,22 @@ func (m *Manager) UpdateObservation(obs Observation) {
 }
 
 func (m *Manager) Tick(now time.Time, app, title, domain string, isAFK bool, screenChanged bool) {
+	var classification ClassificationResult
+	if m.ruleEngine != nil {
+		classification = m.ruleEngine.Classify(app, title, domain, m.task)
+	} else {
+		classification = ClassificationResult{Relation: RelationUnknown, Confidence: 0.5}
+	}
+	m.TickWithClassification(now, app, title, domain, isAFK, screenChanged, classification)
+}
+
+func (m *Manager) TickWithClassification(
+	now time.Time,
+	app, title, domain string,
+	isAFK bool,
+	screenChanged bool,
+	classification ClassificationResult,
+) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -317,17 +339,14 @@ func (m *Manager) Tick(now time.Time, app, title, domain string, isAFK bool, scr
 		}
 	}
 
-	// 7. Task Relation Evaluation (local rules)
-	if m.ruleEngine != nil {
-		res := m.ruleEngine.Classify(app, title, domain, m.task)
-		m.relation = res.Relation
-		m.confidence = res.Confidence
+	// 7. Task Relation Evaluation (from classification result)
+	m.relation = classification.Relation
+	m.confidence = classification.Confidence
 
-		if m.relation == RelationDistracted {
-			m.distractedSeconds += deltaSec
-		} else {
-			m.distractedSeconds = 0
-		}
+	if m.relation == RelationDistracted {
+		m.distractedSeconds += deltaSec
+	} else {
+		m.distractedSeconds = 0
 	}
 
 	// 8. Reminder Engine Evaluation
@@ -370,6 +389,7 @@ func (m *Manager) Tick(now time.Time, app, title, domain string, isAFK bool, scr
 			Relation:    string(m.relation),
 			Privacy:     string(m.privacy),
 			Confidence:  m.confidence,
+			Reason:      classification.Reason,
 			CurrentMode: string(m.userMode),
 			Task:        m.task,
 		})

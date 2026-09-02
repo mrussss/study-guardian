@@ -14,6 +14,7 @@ import (
 
 	"study-guardian/internal/activitywatch"
 	"study-guardian/internal/api"
+	"study-guardian/internal/classifier"
 	"study-guardian/internal/config"
 	"study-guardian/internal/reminder"
 	"study-guardian/internal/rules"
@@ -55,6 +56,18 @@ func main() {
 	ruleEngine := rules.NewRuleEngine()
 	reminderEng := reminder.NewEngine(cfg)
 
+	// Configure AI Provider
+	var aiProvider classifier.TaskRelationProvider
+	if cfg.AI.Enabled {
+		if cfg.AI.Provider == "openai" || cfg.AI.Provider == "deepseek" || cfg.AI.Provider == "ollama" {
+			aiProvider = classifier.NewOpenAICompatibleProvider(cfg.AI.Endpoint, cfg.AI.APIKey, cfg.AI.Model)
+		} else {
+			aiProvider = classifier.NewFakeProvider()
+		}
+	}
+
+	classifierService := classifier.NewService(cfg, ruleEngine, privacyGate, aiProvider, store)
+
 	stateMgr := state.NewPersistentManager(clock, cfg, store, ruleEngine, privacyGate, reminderEng)
 	server := api.NewServer(cfg, stateMgr)
 
@@ -78,6 +91,8 @@ func main() {
 		defer ticker.Stop()
 
 		var lastScreenChanged bool
+		var lastScreenHash string
+
 		for {
 			select {
 			case <-tickerCtx.Done():
@@ -93,6 +108,7 @@ func main() {
 				title := ""
 				domain := ""
 				isAFK := false
+				imageBase64 := ""
 
 				if awOK {
 					snap, err := awClient.GetLatestActivity(tickerCtx)
@@ -104,24 +120,33 @@ func main() {
 					}
 				}
 
-				// If AFK and screen sensor is available and enabled, capture diff
-				if isAFK && sensorOK && cfg.Screen.Enabled {
-					// Check privacy gate first before capturing!
-					priv := privacyGate.Evaluate(app, title, domain)
-					if priv == state.PrivacyNormal {
-						capResp, err := sensorClient.Capture(tickerCtx, sensor.CaptureRequest{
-							Monitor:              1,
-							IncludeAnalysisImage: false,
-						})
-						if err == nil && capResp != nil {
-							lastScreenChanged = capResp.Changed
+				// Check privacy gate first!
+				priv := privacyGate.Evaluate(app, title, domain)
+
+				// If screen sensor available & enabled & not sensitive
+				if sensorOK && cfg.Screen.Enabled && priv == state.PrivacyNormal {
+					includeImg := cfg.AI.Enabled && cfg.AI.UseVisionOnlyWhenNeeded
+					capResp, err := sensorClient.Capture(tickerCtx, sensor.CaptureRequest{
+						Monitor:              1,
+						IncludeAnalysisImage: includeImg,
+						MaxWidth:             960,
+					})
+					if err == nil && capResp != nil {
+						lastScreenChanged = capResp.Changed
+						lastScreenHash = capResp.Hash
+						if capResp.AnalysisImage != nil {
+							imageBase64 = *capResp.AnalysisImage
 						}
-					} else {
-						lastScreenChanged = false
 					}
+				} else {
+					lastScreenChanged = false
 				}
 
-				stateMgr.Tick(t, app, title, domain, isAFK, lastScreenChanged)
+				// Perform classification
+				currentTask := stateMgr.GetCurrentTask()
+				classRes := classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, imageBase64)
+
+				stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, classRes)
 			}
 		}
 	}()

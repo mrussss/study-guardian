@@ -48,14 +48,14 @@
 - [x] 39. Phase 3 自动测试与 Windows 实测
 
 ## Phase 4: AI Classification
-- [ ] 40. TaskRelationProvider 接口定义与模型适配
-- [ ] 41. VisionProvider 接口与低分辨率/裁剪支持
-- [ ] 42. 结构化 JSON Schema 输出校验
-- [ ] 43. 本地规则优先 / AI fallback 机制
-- [ ] 44. Classification cache (app/title/domain/task/hash)
-- [ ] 45. AI timeout / invalid response fallback
-- [ ] 46. 敏感窗口禁止 Vision 门禁与元数据过滤
-- [ ] 47. Provider unavailable fail-soft 保证系统正常运行
+- [x] 40. TaskRelationProvider 接口定义与模型适配
+- [x] 41. VisionProvider 接口与低分辨率/裁剪支持
+- [x] 42. 结构化 JSON Schema 输出校验
+- [x] 43. 本地规则优先 / AI fallback 机制
+- [x] 44. Classification cache (app/title/domain/task/hash)
+- [x] 45. AI timeout / invalid response fallback
+- [x] 46. 敏感窗口禁止 Vision 门禁与元数据过滤
+- [x] 47. Provider unavailable fail-soft 保证系统正常运行
 
 ## Phase 5: 交互优化与发布交付
 - [ ] 48. Pet 动画 / 气泡 / feedback UX 完善
