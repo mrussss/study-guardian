@@ -16,17 +16,17 @@
 - [x] 13. 打 tag: phase0-passed 并 push
 
 ## Phase 1: 确定性核心
-- [ ] 14. Clock abstraction (RealClock / FakeClock)
-- [ ] 15. SQLite migration skeleton (modernc.org/sqlite, CGO-free)
-- [ ] 16. UserMode state machine + transition tests
-- [ ] 17. 跨日 / restart / sleep / lock 时间规则与会话管理
-- [ ] 18. Supervisor /v1/status 与 mode API (/v1/mode/study, /v1/mode/break, /v1/mode/off, /v1/task, /v1/feedback)
-- [ ] 19. FakeActivitySource / FakeScreenSource 驱动单测与集成测试
-- [ ] 20. Pet 精简为 UI Shell (去除独立业务逻辑，保留透明置顶、动画、托盘、气泡与菜单)
-- [ ] 21. Pet ↔ Supervisor 正式 API 通信与轮询
-- [ ] 22. Reminder Engine + cooldown
-- [ ] 23. BREAK timeout 处理
-- [ ] 24. Phase 1 Windows E2E 验证
+- [x] 14. Clock abstraction (RealClock / FakeClock)
+- [x] 15. SQLite migration skeleton (modernc.org/sqlite, CGO-free)
+- [x] 16. UserMode state machine + transition tests
+- [x] 17. 跨日 / restart / sleep / lock 时间规则与会话管理
+- [x] 18. Supervisor /v1/status 与 mode API (/v1/mode/study, /v1/mode/break, /v1/mode/off, /v1/task, /v1/feedback)
+- [x] 19. FakeActivitySource / FakeScreenSource 驱动单测与集成测试
+- [x] 20. Pet 精简为 UI Shell (去除独立业务逻辑，保留透明置顶、动画、托盘、气泡与菜单)
+- [x] 21. Pet ↔ Supervisor 正式 API 通信与轮询
+- [x] 22. Reminder Engine + cooldown
+- [x] 23. BREAK timeout 处理
+- [x] 24. Phase 1 Windows E2E 验证
 
 ## Phase 2: ActivityWatch 正式监督
 - [ ] 25. ActivityWatch bucket 动态发现 (window / afk buckets)

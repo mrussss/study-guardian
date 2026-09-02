@@ -61,6 +61,34 @@ type ReminderEvent struct {
 	CreatedAt time.Time     `json:"created_at"`
 }
 
+type FeedbackRecord struct {
+	EventID   string    `json:"event_id"`
+	Feedback  string    `json:"feedback"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type ClassificationResult struct {
+	Relation   TaskRelation `json:"relation"`
+	Confidence float64      `json:"confidence"`
+	Reason     string       `json:"reason"`
+	IsFromRule bool         `json:"is_from_rule"`
+}
+
+type ReminderDecisionInput struct {
+	Now               time.Time
+	UserMode          UserMode
+	Task              string
+	Interaction       InteractionState
+	Relation          TaskRelation
+	Privacy           PrivacyState
+	Confidence        float64
+	ActiveSeconds     int64
+	StudySeconds      int64
+	BreakSeconds      int64
+	DistractedSeconds int64
+	IdleStaticSeconds int64
+}
+
 type SystemStatus struct {
 	UserMode         UserMode         `json:"user_mode"`
 	InteractionState InteractionState `json:"interaction_state"`
