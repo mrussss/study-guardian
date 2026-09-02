@@ -14,6 +14,9 @@ echo "data-canary-12345" > "${TARGET_DIR}/data/canary.db"
 echo "logs-canary-12345" > "${TARGET_DIR}/logs/canary.log"
 echo "run-canary-12345" > "${TARGET_DIR}/run/canary.pid"
 echo "handoff-canary-12345" > "${TARGET_DIR}/handoff/canary.json"
+mkdir -p "${TARGET_DIR}/pet/src" "${TARGET_DIR}/config/pet-skins/user-canary"
+echo "stale-v06-canary" > "${TARGET_DIR}/pet/src/stale-v06.py"
+cp -r "${REPO_ROOT}/pet/assets/skins/builtin-minimal/." "${TARGET_DIR}/config/pet-skins/user-canary/"
 
 # 2. Run first deploy
 echo "--- Running Deploy 1 ---"
@@ -25,6 +28,8 @@ grep -q "data-canary-12345" "${TARGET_DIR}/data/canary.db"
 grep -q "logs-canary-12345" "${TARGET_DIR}/logs/canary.log"
 grep -q "run-canary-12345" "${TARGET_DIR}/run/canary.pid"
 grep -q "handoff-canary-12345" "${TARGET_DIR}/handoff/canary.json"
+test ! -e "${TARGET_DIR}/pet/src/stale-v06.py"
+test -f "${TARGET_DIR}/config/pet-skins/user-canary/manifest.json"
 
 # Record auth.token
 TOKEN_1="$(cat "${TARGET_DIR}/config/auth.token")"
@@ -39,6 +44,8 @@ grep -q "data-canary-12345" "${TARGET_DIR}/data/canary.db"
 grep -q "logs-canary-12345" "${TARGET_DIR}/logs/canary.log"
 grep -q "run-canary-12345" "${TARGET_DIR}/run/canary.pid"
 grep -q "handoff-canary-12345" "${TARGET_DIR}/handoff/canary.json"
+test ! -e "${TARGET_DIR}/pet/src/stale-v06.py"
+test -f "${TARGET_DIR}/config/pet-skins/user-canary/manifest.json"
 
 TOKEN_2="$(cat "${TARGET_DIR}/config/auth.token")"
 if [ "${TOKEN_1}" != "${TOKEN_2}" ]; then
@@ -48,5 +55,6 @@ fi
 
 # Clean up canaries
 rm -f "${TARGET_DIR}/config/canary.txt" "${TARGET_DIR}/data/canary.db" "${TARGET_DIR}/logs/canary.log" "${TARGET_DIR}/run/canary.pid" "${TARGET_DIR}/handoff/canary.json"
+rm -rf "${TARGET_DIR}/config/pet-skins/user-canary"
 
 echo "PASS: Deploy safety verified! All persistent directories and tokens preserved across multiple deployments."
