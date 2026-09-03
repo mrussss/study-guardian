@@ -17,21 +17,68 @@ function textForNode(node) {
   return normalizeText(content.innerText || content.textContent || '');
 }
 
+function attribute(node, name) {
+  return String(node?.getAttribute?.(name) || '');
+}
+
+export function detectRole(node) {
+  return attribute(node, 'data-message-author-role') ||
+    (node.querySelector?.('[data-message-author-role="user"]') ? 'user' :
+      node.querySelector?.('[data-message-author-role="assistant"]') ? 'assistant' : '');
+}
+
+function conversationTurnNode(node) {
+  if (attribute(node, 'data-testid').startsWith('conversation-turn')) return node;
+  if (typeof node?.closest === 'function') return node.closest('[data-testid^="conversation-turn"]');
+  let current = node?.parentElement;
+  while (current) {
+    if (attribute(current, 'data-testid').startsWith('conversation-turn')) return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function identityDetails(node) {
+  const role = detectRole(node);
+  const explicit = attribute(node, 'data-message-id');
+  if (explicit) return { value: explicit, source: 'data-message-id' };
+
+  const turnNode = conversationTurnNode(node);
+  const turnID = attribute(turnNode, 'data-testid');
+  if (turnID) return { value: `${turnID}:${role}`, source: 'conversation-turn' };
+
+  return { value: `${role}:fallback:${stableHash(textForNode(node))}`, source: 'content_hash_fallback' };
+}
+
+export function stableNodeIdentity(node) {
+  return identityDetails(node).value;
+}
+
 export function messageIdentity(node) {
-  const explicit = node.getAttribute('data-message-id') || node.getAttribute('data-testid');
-  const role = node.getAttribute('data-message-author-role') || '';
-  return explicit || `${role}:${stableHash(textForNode(node))}`;
+  return stableNodeIdentity(node);
 }
 
 export function parseMessageNode(node) {
-  const role = node.getAttribute('data-message-author-role') ||
-    (node.querySelector('[data-message-author-role="user"]') ? 'user' :
-      node.querySelector('[data-message-author-role="assistant"]') ? 'assistant' : '');
+  const role = detectRole(node);
   if (!role) return null;
   const content = textForNode(node);
   if (!content) return null;
-  const id = messageIdentity(node);
-  return { external_message_id: id, role, content, content_hash: stableHash(content), observed_at: new Date().toISOString() };
+  const identity = identityDetails(node);
+  const observedAt = new Date().toISOString();
+  const branchKey = attribute(node, 'data-branch-key') || attribute(node, 'data-message-branch-key');
+  const isUser = role === 'user';
+  return {
+    external_message_id: identity.value,
+    role,
+    branch_key: branchKey,
+    content,
+    content_hash: stableHash(content),
+    observed_at: observedAt,
+    finalized_at: isUser ? observedAt : null,
+    is_final: isUser,
+    is_active: true,
+    metadata_json: JSON.stringify({ identity_source: identity.source })
+  };
 }
 
 export function findMessageNodes(root = document) {
@@ -72,6 +119,10 @@ export function turnsFromMessages(messages) {
   }
   return turns.map(turn => {
     const turnKey = stableHash(`${turn.user.external_message_id}|${turn.user.content_hash}`);
-    return { turn_key: turnKey, user: turn.user, assistants: turn.assistants };
+    const assistants = turn.assistants.map((message, index) => ({
+      ...message,
+      is_active: index === turn.assistants.length - 1
+    }));
+    return { turn_key: turnKey, user: { ...turn.user, is_active: true, is_final: true }, assistants };
   });
 }

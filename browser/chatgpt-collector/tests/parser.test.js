@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConversation, turnsFromMessages, stableHash } from '../src/parser.js';
+import { parseConversation, turnsFromMessages, stableHash, parseMessageNode, stableNodeIdentity } from '../src/parser.js';
 
 class FakeNode {
   constructor(role, content, children = []) { this.role = role; this.content = content; this.children = children; }
@@ -31,4 +31,21 @@ test('parser extracts DOM messages and groups a user turn with assistant output'
 
 test('stable hash is deterministic', () => {
   assert.equal(stableHash('study'), stableHash('study'));
+});
+
+test('parser emits canonical message state and stable DOM identity metadata', () => {
+  const content = { innerText: 'Stable assistant answer', textContent: 'Stable assistant answer' };
+  const turn = { getAttribute: name => name === 'data-testid' ? 'conversation-turn-42' : null };
+  const node = {
+    getAttribute: name => name === 'data-message-author-role' ? 'assistant' : null,
+    querySelector: selector => selector.includes('data-message-content') ? content : null,
+    closest: () => turn
+  };
+  const parsed = parseMessageNode(node);
+  assert.equal(stableNodeIdentity(node), 'conversation-turn-42:assistant');
+  assert.equal(parsed.external_message_id, 'conversation-turn-42:assistant');
+  assert.equal(parsed.is_active, true);
+  assert.equal(parsed.is_final, false);
+  assert.equal(parsed.finalized_at, null);
+  assert.equal(JSON.parse(parsed.metadata_json).identity_source, 'conversation-turn');
 });
