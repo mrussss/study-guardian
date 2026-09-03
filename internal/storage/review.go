@@ -116,4 +116,9 @@ func (s *Storage) DeleteDailyReview(ctx context.Context, date string) error {
 	return err
 }
 
+func (s *Storage) MarkDailyReviewStale(ctx context.Context, date string, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE daily_reviews SET status = 'STALE', updated_at = ? WHERE date = ? AND status = 'READY'`, now, date)
+	return err
+}
+
 func IsNotFound(err error) bool { return errors.Is(err, sql.ErrNoRows) }

@@ -59,14 +59,35 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 	} else if !storage.IsNotFound(err) {
 		return DailyEvidenceBundle{}, err
 	}
+	exclusions, err := a.store.ListReviewExclusionsForDate(ctx, date)
+	if err != nil {
+		return DailyEvidenceBundle{}, err
+	}
+	excludedTurns := map[string]struct{}{}
+	excludedConversations := map[string]struct{}{}
+	for _, exclusion := range exclusions {
+		switch exclusion.SourceType {
+		case "chat_turn":
+			excludedTurns[exclusion.SourceID] = struct{}{}
+		case "chat_conversation":
+			excludedConversations[exclusion.SourceID] = struct{}{}
+		}
+	}
 	chatTurns, err := a.store.ListChatTurnsForDate(ctx, date)
 	if err != nil {
 		return DailyEvidenceBundle{}, err
 	}
 	for _, item := range chatTurns {
-		if item.EligibleForReview {
-			bundle.ChatTurns = append(bundle.ChatTurns, ChatTurnSummary{Ref: "chat_turn:" + item.TurnKey, ID: item.ID, TurnKey: item.TurnKey, ObservedAt: item.ObservedAt, TaskAtStart: item.TaskAtStart, EligibleForReview: true, Finalized: item.Finalized, UserContent: item.UserContent, AssistantContent: item.AssistantContent})
+		if !item.EligibleForReview || item.CapturePolicy == "ALWAYS_EXCLUDE" {
+			continue
 		}
+		if _, excluded := excludedTurns[item.TurnKey]; excluded {
+			continue
+		}
+		if _, excluded := excludedConversations[item.ExternalConversationID]; excluded {
+			continue
+		}
+		bundle.ChatTurns = append(bundle.ChatTurns, ChatTurnSummary{Ref: "chat_turn:" + item.TurnKey, ID: item.ID, TurnKey: item.TurnKey, ExternalConversationID: item.ExternalConversationID, ConversationTitle: item.ConversationTitle, ObservedAt: item.ObservedAt, TaskAtStart: item.TaskAtStart, EligibleForReview: true, Finalized: item.Finalized, UserContent: item.UserContent, AssistantContent: item.AssistantContent})
 	}
 	semantic, err := a.store.ListSemanticSnapshotsForDate(ctx, date)
 	if err != nil {
@@ -74,10 +95,6 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 	}
 	for index, item := range semantic {
 		bundle.Semantic = append(bundle.Semantic, SemanticSummary{Ref: "semantic:" + itoa(index+1), ObservedAt: item.ObservedAt, Task: item.Task, App: item.App, Title: item.Title, Domain: item.Domain, Relation: item.Relation, Confidence: item.Confidence, Activity: item.Activity, SourceKind: item.SourceKind})
-	}
-	exclusions, err := a.store.ListReviewExclusionsForDate(ctx, date)
-	if err != nil {
-		return DailyEvidenceBundle{}, err
 	}
 	if len(exclusions) > 0 {
 		bundle.Warnings = append(bundle.Warnings, "review exclusions applied")

@@ -114,6 +114,7 @@ func TestReviewGenerateAndEvidenceAPI(t *testing.T) {
 	mux.HandleFunc("/v1/review/generate", server.withAuth(server.handleReviewGenerate))
 	mux.HandleFunc("/v1/review/daily", server.withAuth(server.handleReviewDaily))
 	mux.HandleFunc("/v1/review/evidence", server.withAuth(server.handleReviewEvidence))
+	mux.HandleFunc("/v1/review/exclude", server.withAuth(server.handleReviewExclude))
 	request := httptest.NewRequest(http.MethodPost, "/v1/review/generate", bytes.NewBufferString(`{"date":"2026-09-03"}`))
 	request.Header.Set("Authorization", "Bearer main-token")
 	response := httptest.NewRecorder()
@@ -134,6 +135,13 @@ func TestReviewGenerateAndEvidenceAPI(t *testing.T) {
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"date":"2026-09-03"`)) {
 		t.Fatalf("evidence status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/review/exclude", bytes.NewBufferString(`{"date":"2026-09-03","source_type":"whatever","source_id":"123"}`))
+	request.Header.Set("Authorization", "Bearer main-token")
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid exclusion status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

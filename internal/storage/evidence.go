@@ -18,16 +18,19 @@ type DistractionEvidenceRecord struct {
 }
 
 type ChatTurnEvidenceRecord struct {
-	ID                int64
-	TurnKey           string
-	ObservedAt        time.Time
-	LocalDate         string
-	TaskAtStart       string
-	EligibleForReview bool
-	ActiveBranchKey   string
-	Finalized         bool
-	UserContent       string
-	AssistantContent  string
+	ID                     int64
+	TurnKey                string
+	ObservedAt             time.Time
+	LocalDate              string
+	TaskAtStart            string
+	EligibleForReview      bool
+	ActiveBranchKey        string
+	Finalized              bool
+	ExternalConversationID string
+	ConversationTitle      string
+	CapturePolicy          string
+	UserContent            string
+	AssistantContent       string
 }
 
 func (s *Storage) ListSessionsForDate(ctx context.Context, date string) ([]SessionRecord, error) {
@@ -82,14 +85,14 @@ func (s *Storage) ListRemindersForDate(ctx context.Context, date string) ([]Remi
 }
 
 func (s *Storage) ListChatTurnsForDate(ctx context.Context, date string) ([]ChatTurnEvidenceRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, turn_key, observed_at, local_date, task_at_start, eligible_for_review, active_branch_key, finalized FROM chat_turns WHERE local_date = ? ORDER BY observed_at, id`, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT t.id, t.turn_key, t.observed_at, t.local_date, t.task_at_start, t.eligible_for_review, t.active_branch_key, t.finalized, c.external_conversation_id, c.title, c.capture_policy FROM chat_turns t JOIN chat_conversations c ON c.id = t.conversation_id WHERE t.local_date = ? ORDER BY t.observed_at, t.id`, date)
 	if err != nil {
 		return nil, err
 	}
 	var out []ChatTurnEvidenceRecord
 	for rows.Next() {
 		var record ChatTurnEvidenceRecord
-		if err := rows.Scan(&record.ID, &record.TurnKey, &record.ObservedAt, &record.LocalDate, &record.TaskAtStart, &record.EligibleForReview, &record.ActiveBranchKey, &record.Finalized); err != nil {
+		if err := rows.Scan(&record.ID, &record.TurnKey, &record.ObservedAt, &record.LocalDate, &record.TaskAtStart, &record.EligibleForReview, &record.ActiveBranchKey, &record.Finalized, &record.ExternalConversationID, &record.ConversationTitle, &record.CapturePolicy); err != nil {
 			return nil, err
 		}
 		out = append(out, record)

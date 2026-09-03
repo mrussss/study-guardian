@@ -84,7 +84,13 @@ func (s *Service) Get(ctx context.Context, date string) (storage.DailyReviewReco
 }
 
 func (s *Service) Exclude(ctx context.Context, date, sourceType, sourceID string) error {
-	return s.store.AddReviewExclusion(ctx, storage.ReviewExclusionRecord{Date: date, SourceType: sourceType, SourceID: sourceID, CreatedAt: time.Now()})
+	if sourceType != "chat_turn" && sourceType != "chat_conversation" {
+		return fmt.Errorf("unsupported review exclusion type: %s", sourceType)
+	}
+	if err := s.store.AddReviewExclusion(ctx, storage.ReviewExclusionRecord{Date: date, SourceType: sourceType, SourceID: sourceID, CreatedAt: time.Now()}); err != nil {
+		return err
+	}
+	return s.store.MarkDailyReviewStale(ctx, date, time.Now())
 }
 
 func (s *Service) Delete(ctx context.Context, date string) error {

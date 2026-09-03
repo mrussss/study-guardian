@@ -83,7 +83,7 @@ func (s *Storage) IngestChatTurn(ctx context.Context, conversation ChatConversat
 		ON CONFLICT(platform, external_conversation_id) DO UPDATE SET
 			title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE chat_conversations.title END,
 			url = CASE WHEN excluded.url <> '' THEN excluded.url ELSE chat_conversations.url END,
-			capture_policy = CASE WHEN excluded.capture_policy <> '' THEN excluded.capture_policy ELSE chat_conversations.capture_policy END,
+			capture_policy = CASE WHEN chat_conversations.capture_policy = 'ALWAYS_EXCLUDE' THEN chat_conversations.capture_policy WHEN excluded.capture_policy <> '' THEN excluded.capture_policy ELSE chat_conversations.capture_policy END,
 			last_seen_at = CASE WHEN excluded.last_seen_at > chat_conversations.last_seen_at THEN excluded.last_seen_at ELSE chat_conversations.last_seen_at END;`,
 		conversation.Platform, conversation.ExternalConversationID, conversation.Title, conversation.URL,
 		conversation.CapturePolicy, conversation.ObservedAt, conversation.ObservedAt)

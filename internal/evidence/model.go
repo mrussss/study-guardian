@@ -60,15 +60,17 @@ type MotivationSummary struct {
 }
 
 type ChatTurnSummary struct {
-	Ref               string    `json:"ref"`
-	ID                int64     `json:"id"`
-	TurnKey           string    `json:"turn_key"`
-	ObservedAt        time.Time `json:"observed_at"`
-	TaskAtStart       string    `json:"task_at_start"`
-	EligibleForReview bool      `json:"eligible_for_review"`
-	Finalized         bool      `json:"finalized"`
-	UserContent       string    `json:"user_content"`
-	AssistantContent  string    `json:"assistant_content"`
+	Ref                    string    `json:"ref"`
+	ID                     int64     `json:"id"`
+	TurnKey                string    `json:"turn_key"`
+	ExternalConversationID string    `json:"external_conversation_id"`
+	ConversationTitle      string    `json:"conversation_title"`
+	ObservedAt             time.Time `json:"observed_at"`
+	TaskAtStart            string    `json:"task_at_start"`
+	EligibleForReview      bool      `json:"eligible_for_review"`
+	Finalized              bool      `json:"finalized"`
+	UserContent            string    `json:"user_content"`
+	AssistantContent       string    `json:"assistant_content"`
 }
 
 type SemanticSummary struct {

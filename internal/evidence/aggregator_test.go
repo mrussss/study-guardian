@@ -37,3 +37,62 @@ func TestAggregatorKeepsOnlyEligibleChatTurns(t *testing.T) {
 		t.Fatalf("quality=%+v", bundle.Quality)
 	}
 }
+
+func TestAggregatorAppliesTurnConversationAndGlobalExclusions(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	newStore := func(t *testing.T) *storage.Storage {
+		store, err := storage.OpenSQLite(":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range []struct{ conversation, turn string }{{"A", "A1"}, {"A", "A2"}, {"B", "B1"}} {
+			if _, err := store.IngestChatTurn(ctx, storage.ChatConversationRecord{Platform: "chatgpt", ExternalConversationID: item.conversation, Title: item.conversation, ObservedAt: now}, storage.ChatTurnRecord{TurnKey: item.turn, ObservedAt: now, LocalDate: "2026-09-03", ModeAtStart: "STUDY", EligibleForReview: true}, nil, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return store
+	}
+	t.Run("turn exclusion", func(t *testing.T) {
+		store := newStore(t)
+		defer store.Close()
+		if err := store.AddReviewExclusion(ctx, storage.ReviewExclusionRecord{Date: "2026-09-03", SourceType: "chat_turn", SourceID: "A1", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := NewAggregator(store, time.UTC).Build(ctx, "2026-09-03")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.ChatTurns) != 2 || bundle.ChatTurns[0].TurnKey != "A2" {
+			t.Fatalf("turn exclusion bundle=%+v", bundle.ChatTurns)
+		}
+	})
+	t.Run("conversation exclusion", func(t *testing.T) {
+		store := newStore(t)
+		defer store.Close()
+		if err := store.AddReviewExclusion(ctx, storage.ReviewExclusionRecord{Date: "2026-09-03", SourceType: "chat_conversation", SourceID: "A", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := NewAggregator(store, time.UTC).Build(ctx, "2026-09-03")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.ChatTurns) != 1 || bundle.ChatTurns[0].ExternalConversationID != "B" {
+			t.Fatalf("conversation exclusion bundle=%+v", bundle.ChatTurns)
+		}
+	})
+	t.Run("always exclude", func(t *testing.T) {
+		store := newStore(t)
+		defer store.Close()
+		if _, err := store.IngestChatTurn(ctx, storage.ChatConversationRecord{Platform: "chatgpt", ExternalConversationID: "A", CapturePolicy: "ALWAYS_EXCLUDE", ObservedAt: now}, storage.ChatTurnRecord{TurnKey: "A3", ObservedAt: now, LocalDate: "2026-09-03", ModeAtStart: "STUDY", EligibleForReview: true}, nil, now); err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := NewAggregator(store, time.UTC).Build(ctx, "2026-09-03")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.ChatTurns) != 1 || bundle.ChatTurns[0].ExternalConversationID != "B" {
+			t.Fatalf("always exclusion bundle=%+v", bundle.ChatTurns)
+		}
+	})
+}
