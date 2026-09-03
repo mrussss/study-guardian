@@ -102,7 +102,14 @@ func main() {
 
 	server := api.NewServer(cfg, stateMgr)
 	server.SetStorage(store)
-	server.SetReview(review.NewService(store, time.Local, filepath.Join(filepath.Dir(targetDB), "reviews")))
+	reviewService := review.NewService(store, time.Local, filepath.Join(filepath.Dir(targetDB), "reviews"))
+	reviewService.SetLimits(review.ReviewLimits{MaxTurnChars: cfg.Review.Limits.MaxTurnChars, MaxConversationChars: cfg.Review.Limits.MaxConversationChars, MaxFinalInputChars: cfg.Review.Limits.MaxFinalInputChars})
+	if reviewProvider, reviewStatus := review.NewConfiguredProvider(cfg); reviewProvider != nil {
+		reviewService.SetProvider(reviewProvider)
+	} else if reviewStatus.Warning != "" {
+		log.Printf("[Review] Warning: %s", reviewStatus.Warning)
+	}
+	server.SetReview(reviewService)
 	server.SetMotivation(motivationService)
 	server.SetAIStatus(func() interface{} { return aiRegistry.Status() })
 	semanticService := semantic.NewService(store)

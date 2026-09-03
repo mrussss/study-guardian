@@ -64,7 +64,7 @@ func (s *Server) handleReviewGenerate(w http.ResponseWriter, r *http.Request) {
 	if date == "" {
 		date = time.Now().Format("2006-01-02")
 	}
-	record, err := s.review.GenerateFallback(context.Background(), date)
+	record, err := s.review.Generate(context.Background(), date)
 	if err != nil {
 		jsonError(w, err, http.StatusInternalServerError)
 		return

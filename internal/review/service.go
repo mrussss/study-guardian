@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,12 +27,18 @@ type Service struct {
 	store      *storage.Storage
 	aggregator *evidence.Aggregator
 	outputDir  string
+	provider   Provider
+	limits     ReviewLimits
 	mu         sync.Mutex
 }
 
 func NewService(store *storage.Storage, timezone *time.Location, outputDir string) *Service {
-	return &Service{store: store, aggregator: evidence.NewAggregator(store, timezone), outputDir: outputDir}
+	return &Service{store: store, aggregator: evidence.NewAggregator(store, timezone), outputDir: outputDir, limits: normalizeReviewLimits(ReviewLimits{})}
 }
+
+func (s *Service) SetProvider(provider Provider) { s.provider = provider }
+
+func (s *Service) SetLimits(limits ReviewLimits) { s.limits = normalizeReviewLimits(limits) }
 
 func (s *Service) Evidence(ctx context.Context, date string) (evidence.DailyEvidenceBundle, error) {
 	return s.aggregator.Build(ctx, date)
@@ -48,6 +55,44 @@ func (s *Service) BuildReviewInput(ctx context.Context, date string, limits Revi
 	return Compact(bundle, limits)
 }
 
+// Generate executes the complete guarded AI path. Any provider, sanitization
+// or validation failure is persisted as a deterministic fallback so the API
+// remains useful while the failure is observable in ErrorCode.
+func (s *Service) Generate(ctx context.Context, date string) (storage.DailyReviewRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bundle, err := s.aggregator.Build(ctx, date)
+	if err != nil {
+		return storage.DailyReviewRecord{}, err
+	}
+	if s.provider == nil {
+		return s.generateFallbackLocked(ctx, bundle, "provider_not_configured")
+	}
+	input, err := Compact(bundle, s.limits)
+	if err != nil {
+		return s.generateFallbackLocked(ctx, bundle, "compaction_failed")
+	}
+	inputHash, err := hashReviewInput(input)
+	if err != nil {
+		return s.generateFallbackLocked(ctx, bundle, "input_hash_failed")
+	}
+	sanitized, sanitizerReport, err := Sanitize(input, s.limits.MaxFinalInputChars)
+	if err != nil {
+		return s.generateFallbackLockedWithHash(ctx, bundle, inputHash, "sanitizer_failed")
+	}
+	document, metadata, err := s.provider.Generate(ctx, sanitized)
+	if err != nil {
+		return s.generateFallbackLockedWithHash(ctx, bundle, inputHash, providerErrorCode(err))
+	}
+	validated, validationReport, err := ValidateDocument(sanitized, document)
+	if err != nil {
+		return s.generateFallbackLockedWithHash(ctx, bundle, inputHash, "validation_failed")
+	}
+	validated.EvidenceQuality = input.Quality
+	validated.Warnings = appendReviewWarnings(input.Warnings, sanitizerReport.Warnings, validationReport.Warnings)
+	return s.persistLocked(ctx, bundle, validated, inputHash, "AI", metadata.Provider, metadata.Model, metadata.PromptVersion, "")
+}
+
 // GenerateFallback is deterministic and offline-safe. The mutex is the single
 // in-process generation gate; future AI generation must use the same gate.
 func (s *Service) GenerateFallback(ctx context.Context, date string) (storage.DailyReviewRecord, error) {
@@ -57,37 +102,116 @@ func (s *Service) GenerateFallback(ctx context.Context, date string) (storage.Da
 	if err != nil {
 		return storage.DailyReviewRecord{}, err
 	}
+	return s.generateFallbackLocked(ctx, bundle, "")
+}
+
+func (s *Service) generateFallbackLocked(ctx context.Context, bundle evidence.DailyEvidenceBundle, errorCode string) (storage.DailyReviewRecord, error) {
+	input, err := Compact(bundle, s.limits)
+	if err != nil {
+		return s.persistFallbackLocked(ctx, bundle, fallbackDocument(bundle), "", "", "", errorCode)
+	}
+	hash, err := hashReviewInput(input)
+	if err != nil {
+		return s.persistFallbackLocked(ctx, bundle, fallbackDocument(bundle), "", "", "", errorCode)
+	}
 	doc := BuildFallback(bundle)
+	doc.EvidenceQuality = input.Quality
+	doc.Warnings = appendReviewWarnings(input.Warnings)
+	return s.persistFallbackLocked(ctx, bundle, doc, hash, "", "", errorCode)
+}
+
+func (s *Service) generateFallbackLockedWithHash(ctx context.Context, bundle evidence.DailyEvidenceBundle, inputHash, errorCode string) (storage.DailyReviewRecord, error) {
+	return s.persistFallbackLocked(ctx, bundle, fallbackDocument(bundle), inputHash, "", "", errorCode)
+}
+
+func fallbackDocument(bundle evidence.DailyEvidenceBundle) Document {
+	doc := BuildFallback(bundle)
+	doc.EvidenceQuality = bundle.Quality
+	doc.Warnings = appendReviewWarnings(bundle.Warnings)
+	return doc
+}
+
+func (s *Service) persistFallbackLocked(ctx context.Context, bundle evidence.DailyEvidenceBundle, doc Document, inputHash, providerName, model, errorCode string) (storage.DailyReviewRecord, error) {
+	return s.persistLocked(ctx, bundle, doc, inputHash, "FALLBACK", providerName, model, "fallback-v1", errorCode)
+}
+
+func (s *Service) persistLocked(ctx context.Context, bundle evidence.DailyEvidenceBundle, doc Document, inputHash, generationMode, providerName, model, promptVersion, errorCode string) (storage.DailyReviewRecord, error) {
 	reviewJSON, err := json.Marshal(doc)
 	if err != nil {
 		return storage.DailyReviewRecord{}, err
 	}
-	input, err := json.Marshal(bundle)
-	if err != nil {
-		return storage.DailyReviewRecord{}, err
+	if inputHash == "" {
+		inputHash, err = hashBundle(bundle)
+		if err != nil {
+			return storage.DailyReviewRecord{}, err
+		}
 	}
-	hash := sha256.Sum256(input)
 	now := time.Now()
 	revision := 1
-	if previous, loadErr := s.store.LoadDailyReview(ctx, date); loadErr == nil {
+	if previous, loadErr := s.store.LoadDailyReview(ctx, bundle.Date); loadErr == nil {
 		revision = previous.Revision + 1
 	}
 	markdown := RenderMarkdown(doc, bundle)
 	record := storage.DailyReviewRecord{
-		Date: date, Status: StatusReady, GenerationMode: "FALLBACK", Revision: revision,
-		InputHash: hex.EncodeToString(hash[:]), SchemaVersion: 1, PromptVersion: "fallback-v1",
+		Date: bundle.Date, Status: StatusReady, GenerationMode: generationMode, Revision: revision,
+		InputHash: inputHash, SchemaVersion: 1, PromptVersion: promptVersion,
+		Provider: providerName, Model: model,
 		ReviewJSON: string(reviewJSON), Markdown: markdown, AttemptCount: 1,
-		GeneratedAt: &now, UpdatedAt: now,
+		GeneratedAt: &now, UpdatedAt: now, ErrorCode: errorCode,
 	}
 	if err := s.store.SaveDailyReview(ctx, record); err != nil {
 		return storage.DailyReviewRecord{}, err
 	}
 	if s.outputDir != "" {
-		if err := writeMarkdownAtomic(s.outputDir, date, markdown); err != nil {
+		if err := writeMarkdownAtomic(s.outputDir, bundle.Date, markdown); err != nil {
 			return storage.DailyReviewRecord{}, err
 		}
 	}
 	return record, nil
+}
+
+func hashReviewInput(input ReviewInput) (string, error) {
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(encoded)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+func hashBundle(bundle evidence.DailyEvidenceBundle) (string, error) {
+	encoded, err := json.Marshal(bundle)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(encoded)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+func providerErrorCode(err error) string {
+	var providerErr ProviderError
+	if errors.As(err, &providerErr) {
+		return string(providerErr.Kind)
+	}
+	return "provider_failed"
+}
+
+func appendReviewWarnings(groups ...[]string) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		for _, warning := range group {
+			if warning == "" {
+				continue
+			}
+			if _, exists := seen[warning]; exists {
+				continue
+			}
+			seen[warning] = struct{}{}
+			out = append(out, warning)
+		}
+	}
+	return out
 }
 
 func (s *Service) Get(ctx context.Context, date string) (storage.DailyReviewRecord, error) {

@@ -1,15 +1,19 @@
 package review
 
+import "study-guardian/internal/evidence"
+
 type Document struct {
-	SchemaVersion    int              `json:"schema_version"`
-	Date             string           `json:"date"`
-	Headline         string           `json:"headline"`
-	Topics           []Topic          `json:"topics"`
-	Accomplishments  []Accomplishment `json:"accomplishments"`
-	Unfinished       []string         `json:"unfinished"`
-	Difficulties     []string         `json:"difficulties"`
-	Behavior         Behavior         `json:"behavior"`
-	TomorrowPriority string           `json:"tomorrow_priority"`
+	SchemaVersion    int                      `json:"schema_version"`
+	Date             string                   `json:"date"`
+	Headline         string                   `json:"headline"`
+	Topics           []Topic                  `json:"topics"`
+	Accomplishments  []Accomplishment         `json:"accomplishments"`
+	Unfinished       []string                 `json:"unfinished"`
+	Difficulties     []string                 `json:"difficulties"`
+	Behavior         Behavior                 `json:"behavior"`
+	TomorrowPriority string                   `json:"tomorrow_priority"`
+	EvidenceQuality  evidence.EvidenceQuality `json:"evidence_quality"`
+	Warnings         []string                 `json:"warnings"`
 }
 
 type Topic struct {

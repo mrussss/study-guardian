@@ -83,9 +83,11 @@ func RenderMarkdown(doc Document, bundle evidence.DailyEvidenceBundle) string {
 	}
 	b.WriteString("\n## 明日\n")
 	fmt.Fprintf(&b, "%s\n", safeLine(doc.TomorrowPriority))
-	if len(bundle.Warnings) > 0 {
+	warnings := append([]string(nil), bundle.Warnings...)
+	warnings = append(warnings, doc.Warnings...)
+	if len(warnings) > 0 {
 		b.WriteString("\n> 证据提示：")
-		b.WriteString(strings.Join(bundle.Warnings, "；"))
+		b.WriteString(strings.Join(warnings, "；"))
 		b.WriteString("\n")
 	}
 	return b.String()
