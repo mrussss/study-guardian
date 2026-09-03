@@ -74,6 +74,7 @@ type ChatTurnSummary struct {
 }
 
 type SemanticSummary struct {
+	ID         int64     `json:"id"`
 	Ref        string    `json:"ref"`
 	ObservedAt time.Time `json:"observed_at"`
 	Task       string    `json:"task"`

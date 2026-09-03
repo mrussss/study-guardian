@@ -80,6 +80,23 @@ func TestStorageLifecycle(t *testing.T) {
 	}
 }
 
+func TestSemanticSnapshotHasStableDatabaseID(t *testing.T) {
+	store, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	id, err := store.RecordSemanticSnapshot(context.Background(), SemanticSnapshotRecord{ObservedAt: now, LocalDate: "2026-09-03", Task: "Go", App: "Code.exe", Title: "main.go", Relation: "FOCUSED", Confidence: .95, Activity: "CODING", SourceKind: "LOCAL_RULE"})
+	if err != nil || id <= 0 {
+		t.Fatalf("insert id=%d err=%v", id, err)
+	}
+	rows, err := store.ListSemanticSnapshotsForDate(context.Background(), "2026-09-03")
+	if err != nil || len(rows) != 1 || rows[0].ID != id {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+}
+
 func TestIngestChatTurnIsIdempotentAndKeepsEligibilityFrozen(t *testing.T) {
 	store, err := OpenSQLite(":memory:")
 	if err != nil {

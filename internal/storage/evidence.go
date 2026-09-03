@@ -111,7 +111,7 @@ func (s *Storage) ListChatTurnsForDate(ctx context.Context, date string) ([]Chat
 }
 
 func (s *Storage) ListSemanticSnapshotsForDate(ctx context.Context, date string) ([]SemanticSnapshotRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT observed_at, local_date, task, app, title, domain, relation, confidence, activity, reason, source_kind, metadata_json FROM semantic_snapshots WHERE local_date = ? ORDER BY observed_at, id`, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, observed_at, local_date, task, app, title, domain, relation, confidence, activity, reason, source_kind, metadata_json FROM semantic_snapshots WHERE local_date = ? ORDER BY observed_at, id`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (s *Storage) ListSemanticSnapshotsForDate(ctx context.Context, date string)
 	var out []SemanticSnapshotRecord
 	for rows.Next() {
 		var record SemanticSnapshotRecord
-		if err := rows.Scan(&record.ObservedAt, &record.LocalDate, &record.Task, &record.App, &record.Title, &record.Domain, &record.Relation, &record.Confidence, &record.Activity, &record.Reason, &record.SourceKind, &record.MetadataJSON); err != nil {
+		if err := rows.Scan(&record.ID, &record.ObservedAt, &record.LocalDate, &record.Task, &record.App, &record.Title, &record.Domain, &record.Relation, &record.Confidence, &record.Activity, &record.Reason, &record.SourceKind, &record.MetadataJSON); err != nil {
 			return nil, err
 		}
 		out = append(out, record)

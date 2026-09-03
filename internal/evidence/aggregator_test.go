@@ -96,3 +96,25 @@ func TestAggregatorAppliesTurnConversationAndGlobalExclusions(t *testing.T) {
 		}
 	})
 }
+
+func TestAggregatorUsesSemanticDatabaseIDReference(t *testing.T) {
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	if _, err := store.RecordSemanticSnapshot(context.Background(), storage.SemanticSnapshotRecord{ObservedAt: now, LocalDate: "2026-09-03", Relation: "DISTRACTED", Confidence: .8, Activity: "BROWSING", SourceKind: "LOCAL_RULE"}); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := NewAggregator(store, time.UTC).Build(context.Background(), "2026-09-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Semantic) != 1 || bundle.Semantic[0].ID <= 0 || bundle.Semantic[0].Ref != "semantic:"+itoa64(bundle.Semantic[0].ID) {
+		t.Fatalf("semantic evidence=%+v", bundle.Semantic)
+	}
+	if !bundle.Quality.HasSemantic {
+		t.Fatal("semantic evidence did not set quality.has_semantic")
+	}
+}

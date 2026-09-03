@@ -93,8 +93,8 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 	if err != nil {
 		return DailyEvidenceBundle{}, err
 	}
-	for index, item := range semantic {
-		bundle.Semantic = append(bundle.Semantic, SemanticSummary{Ref: "semantic:" + itoa(index+1), ObservedAt: item.ObservedAt, Task: item.Task, App: item.App, Title: item.Title, Domain: item.Domain, Relation: item.Relation, Confidence: item.Confidence, Activity: item.Activity, SourceKind: item.SourceKind})
+	for _, item := range semantic {
+		bundle.Semantic = append(bundle.Semantic, SemanticSummary{ID: item.ID, Ref: "semantic:" + itoa64(item.ID), ObservedAt: item.ObservedAt, Task: item.Task, App: item.App, Title: item.Title, Domain: item.Domain, Relation: item.Relation, Confidence: item.Confidence, Activity: item.Activity, SourceKind: item.SourceKind})
 	}
 	if len(exclusions) > 0 {
 		bundle.Warnings = append(bundle.Warnings, "review exclusions applied")
@@ -131,6 +131,18 @@ func itoa(value int) string {
 		return "0"
 	}
 	buf := make([]byte, 0, 12)
+	for value > 0 {
+		buf = append([]byte{byte('0' + value%10)}, buf...)
+		value /= 10
+	}
+	return string(buf)
+}
+
+func itoa64(value int64) string {
+	if value == 0 {
+		return "0"
+	}
+	buf := make([]byte, 0, 20)
 	for value > 0 {
 		buf = append([]byte{byte('0' + value%10)}, buf...)
 		value /= 10

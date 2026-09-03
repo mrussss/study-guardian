@@ -13,6 +13,7 @@ import (
 	"study-guardian/internal/config"
 	"study-guardian/internal/motivation"
 	"study-guardian/internal/review"
+	"study-guardian/internal/semantic"
 	"study-guardian/internal/state"
 	"study-guardian/internal/storage"
 )
@@ -35,6 +36,7 @@ type Server struct {
 	aiStatus   func() interface{}
 	store      *storage.Storage
 	review     *review.Service
+	semantic   *semantic.Service
 }
 
 type MotivationManager interface {
@@ -61,6 +63,7 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/v1/status", s.withAuth(s.handleStatus))
+	mux.HandleFunc("/v1/activity/current", s.withAuth(s.handleCurrentActivity))
 	mux.HandleFunc("/v1/mode/study", s.withAuth(s.handleModeStudy))
 	mux.HandleFunc("/v1/mode/break", s.withAuth(s.handleModeBreak))
 	mux.HandleFunc("/v1/mode/off", s.withAuth(s.handleModeOff))
@@ -96,10 +99,11 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	return s
 }
 
-func (s *Server) SetMotivation(m MotivationManager) { s.motivation = m }
-func (s *Server) SetAIStatus(fn func() interface{}) { s.aiStatus = fn }
-func (s *Server) SetStorage(store *storage.Storage) { s.store = store }
-func (s *Server) SetReview(service *review.Service) { s.review = service }
+func (s *Server) SetMotivation(m MotivationManager)     { s.motivation = m }
+func (s *Server) SetAIStatus(fn func() interface{})     { s.aiStatus = fn }
+func (s *Server) SetStorage(store *storage.Storage)     { s.store = store }
+func (s *Server) SetReview(service *review.Service)     { s.review = service }
+func (s *Server) SetSemantic(service *semantic.Service) { s.semantic = service }
 
 func (s *Server) Start() error {
 	addr := s.httpServer.Addr

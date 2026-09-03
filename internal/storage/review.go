@@ -9,6 +9,7 @@ import (
 )
 
 type SemanticSnapshotRecord struct {
+	ID           int64     `json:"id"`
 	ObservedAt   time.Time `json:"observed_at"`
 	LocalDate    string    `json:"local_date"`
 	Task         string    `json:"task"`

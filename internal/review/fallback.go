@@ -43,7 +43,7 @@ func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
 			continue
 		}
 		seen[name] = true
-		doc.Topics = append(doc.Topics, Topic{Name: name, Summary: "来自有效专注语义快照；仅用于说明学习主题。", EvidenceRefs: []string{semantic.Ref}, Confidence: semantic.Confidence})
+		doc.Topics = append(doc.Topics, Topic{Name: name, Summary: "来自本地规则语义快照；仅用于说明出现过的活动，不代表有效专注或已经掌握。", EvidenceRefs: []string{semantic.Ref}, Confidence: semantic.Confidence})
 	}
 	if len(doc.Topics) > 8 {
 		doc.Topics = doc.Topics[:8]

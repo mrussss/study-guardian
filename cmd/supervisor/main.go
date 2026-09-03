@@ -23,6 +23,7 @@ import (
 	"study-guardian/internal/reminder"
 	"study-guardian/internal/review"
 	"study-guardian/internal/rules"
+	"study-guardian/internal/semantic"
 	"study-guardian/internal/sensor"
 	"study-guardian/internal/state"
 	"study-guardian/internal/storage"
@@ -104,6 +105,8 @@ func main() {
 	server.SetReview(review.NewService(store, time.Local, filepath.Join(filepath.Dir(targetDB), "reviews")))
 	server.SetMotivation(motivationService)
 	server.SetAIStatus(func() interface{} { return aiRegistry.Status() })
+	semanticService := semantic.NewService(store)
+	server.SetSemantic(semanticService)
 
 	// ActivityWatch & Screen Sensor clients
 	awClient := activitywatch.NewClient(*awURL)
@@ -127,6 +130,7 @@ func main() {
 		var lastScreenChanged bool
 		var lastScreenHash string
 		var lastCaptureTime time.Time
+		var latestSnapshot *activitywatch.ActivitySnapshot
 		lastClassRes := state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "No observation yet"}
 
 		for {
@@ -134,6 +138,7 @@ func main() {
 			case <-tickerCtx.Done():
 				return
 			case t := <-ticker.C:
+				latestSnapshot = nil
 				awOK := awClient.Health(tickerCtx)
 				sensorHealth, _ := sensorClient.Health(tickerCtx)
 				// Issue 6 Fix: Check MSSAvailable
@@ -151,6 +156,7 @@ func main() {
 				if awOK {
 					snap, err := awClient.GetLatestActivity(tickerCtx)
 					if err == nil && snap != nil {
+						latestSnapshot = snap
 						// Issue 4 Fix: Drop stale events (older than 2 minutes)
 						if !snap.IsFresh(t, 2*time.Minute) {
 							isStale = true
@@ -161,6 +167,9 @@ func main() {
 							isAFK = snap.IsAFK
 						}
 					}
+				}
+				if !awOK {
+					latestSnapshot = nil
 				}
 
 				if isStale || !awOK {
@@ -252,6 +261,28 @@ func main() {
 
 				outcome := stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes)
 				motivationService.RecordTick(outcome)
+				postStatus := stateMgr.GetStatus()
+				// observed_at is the time Supervisor actually observed this
+				// candidate, not the ActivityWatch event time or DB insert time.
+				// The source event time is used only for the age-based freshness
+				// decision, so a stable AW event can still satisfy the transition
+				// window across multiple Supervisor ticks.
+				observedAt := outcome.Now
+				semanticFresh := latestSnapshot != nil && awOK && !isStale && latestSnapshot.IsFresh(outcome.Now, semantic.DefaultTiming.LiveMaxAge)
+				if err := semanticService.Observe(tickerCtx, semantic.Candidate{
+					ObservedAt:  observedAt,
+					Fresh:       semanticFresh,
+					UserMode:    outcome.UserMode,
+					Task:        postStatus.Task,
+					Interaction: outcome.Interaction,
+					Relation:    outcome.Relation,
+					Privacy:     postStatus.PrivacyState,
+					App:         app,
+					Title:       title,
+					Domain:      domain,
+				}); err != nil {
+					log.Printf("[Semantic] observation failed: %v", err)
+				}
 			}
 		}
 	}()

@@ -12,6 +12,7 @@ import (
 	"study-guardian/internal/config"
 	"study-guardian/internal/motivation"
 	"study-guardian/internal/review"
+	"study-guardian/internal/semantic"
 	"study-guardian/internal/state"
 	"study-guardian/internal/storage"
 )
@@ -192,6 +193,53 @@ func TestAuthProtection(t *testing.T) {
 	mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 for valid token, got %d", w.Code)
+	}
+}
+
+func TestCurrentActivityContractUsesMainAuthAndAgeFreshness(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.IPC.AuthToken = "main-token"
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now()
+	semanticService := semantic.NewServiceWithTiming(store, semantic.Timing{LiveMaxAge: time.Minute, TransitionStableFor: time.Second, MinPersistInterval: time.Second, HeartbeatInterval: time.Minute})
+	if err := semanticService.Observe(context.Background(), semantic.Candidate{ObservedAt: now, Fresh: true, UserMode: state.UserModeStudy, Task: "Go", Interaction: state.InteractionActive, Relation: state.RelationFocused, Privacy: state.PrivacyNormal, App: "Code.exe", Title: "main.go"}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(cfg, state.NewManager(state.NewFakeClock(now)))
+	server.SetSemantic(semanticService)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/activity/current", server.withAuth(server.handleCurrentActivity))
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/activity/current", nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("missing auth status=%d", response.Code)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/activity/current", nil)
+	request.Header.Set("Authorization", "Bearer main-token")
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("current activity status=%d body=%s", response.Code, response.Body.String())
+	}
+	var view semantic.CurrentActivityView
+	if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	if view.SchemaVersion != semantic.SchemaVersion || view.Activity != semantic.ActivityCoding || !view.Fresh || view.Task != "Go" {
+		t.Fatalf("current activity view=%+v", view)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/activity/current", nil)
+	request.Header.Set("Authorization", "Bearer main-token")
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status=%d", response.Code)
 	}
 }
 
