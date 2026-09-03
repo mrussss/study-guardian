@@ -7,6 +7,10 @@ is the only component that reads the scoped collector token and performs
 localhost HTTP requests. The queue is bounded to 1000 items / 10 MiB and
 prefers dropping finalized assistant payloads before user prompts.
 
+Frozen Turn Context is backed by `chrome.storage.session`, so it survives a
+Manifest V3 Service Worker restart but is cleared when the browser exits. The
+current page's historical baseline remains in Content Script memory.
+
 Install dependencies with `npm install` in this directory, run `npm test`,
 then load the directory as an unpacked extension in Chrome. Configure the
 token from the extension options page; never put the Supervisor main token in

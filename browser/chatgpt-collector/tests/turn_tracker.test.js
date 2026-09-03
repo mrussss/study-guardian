@@ -33,3 +33,10 @@ test('old session contexts are pruned on load', async () => {
   assert.equal(await tracker.hasContext('old'), false);
   assert.equal(await tracker.hasContext('recent'), true);
 });
+
+test('untrusted UNKNOWN context fails closed', async () => {
+  const tracker = new TurnTracker(fakeSession(), () => Date.parse('2026-09-03T10:00:00Z'));
+  const context = await tracker.contextFor({ turn_key: 'unknown', user: { content: 'question' } }, { user_mode: 'UNKNOWN', task: '' }, { allowReview: false });
+  assert.equal(context.mode_at_start, 'UNKNOWN');
+  assert.equal(context.eligible_for_review, false);
+});

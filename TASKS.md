@@ -103,7 +103,7 @@
 - [x] 83. Scoped collector token + collector context API
 - [x] 84. ChatGPT Collector baseline POC
 - [x] 85. STUDY turn eligibility freeze
-- [ ] 86. Streaming / reload / regenerate / edit / branch dedupe
+- [~] 86. Streaming / reload / regenerate / edit / branch dedupe（本轮完成 reload、Worker restart、基础 streaming continuity；Regenerate/Edit/Branch 待后续）
 - [x] 87. Offline queue + observed_at local-date correctness
 - [ ] 88. Semantic snapshots without extra Vision/capture
 - [ ] 89. Phase 7 unit/integration/Windows E2E
