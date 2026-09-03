@@ -110,6 +110,13 @@ func main() {
 		log.Printf("[Review] Warning: %s", reviewStatus.Warning)
 	}
 	server.SetReview(reviewService)
+	if cfg.Review.Trigger.BackfillPreviousDay {
+		go func() {
+			if err := reviewService.BackfillPreviousDay(context.Background(), time.Now(), true); err != nil {
+				log.Printf("[Review] Previous-day backfill failed: %v", err)
+			}
+		}()
+	}
 	server.SetMotivation(motivationService)
 	server.SetAIStatus(func() interface{} { return aiRegistry.Status() })
 	semanticService := semantic.NewService(store)
@@ -289,6 +296,8 @@ func main() {
 					Domain:      domain,
 				}); err != nil {
 					log.Printf("[Semantic] observation failed: %v", err)
+				} else if _, err := reviewService.MarkStaleIfChanged(tickerCtx, observedAt.In(time.Local).Format("2006-01-02")); err != nil {
+					log.Printf("[Review] stale check failed: %v", err)
 				}
 			}
 		}

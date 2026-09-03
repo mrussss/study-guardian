@@ -14,9 +14,11 @@ import (
 type recordingProvider struct {
 	input ReviewInput
 	err   error
+	calls int
 }
 
 func (p *recordingProvider) Generate(_ context.Context, input ReviewInput) (Document, ProviderMetadata, error) {
+	p.calls++
 	p.input = input
 	if p.err != nil {
 		return Document{}, ProviderMetadata{Provider: "test", Model: "test-model", PromptVersion: ReviewPromptVersion}, p.err
@@ -84,6 +86,10 @@ func TestGenerateUsesSanitizedInputValidatorAndPersistsAI(t *testing.T) {
 	if record.GenerationMode != "AI" || record.Provider != "test" || record.Model != "test-model" {
 		t.Fatalf("record=%+v", record)
 	}
+	events, err := store.ListUIEvents(context.Background(), 0, 20)
+	if err != nil || len(events) != 1 || events[0].EventType != "DAILY_REVIEW_READY" {
+		t.Fatalf("ready events=%+v err=%v", events, err)
+	}
 	if strings.Contains(provider.input.Semantic[0].App, `C:\Users\Lenovo`) {
 		t.Fatalf("provider received unsanitized path: %+v", provider.input.Semantic[0])
 	}
@@ -110,6 +116,71 @@ func TestGenerateProviderFailureFallsBackWithBoundedErrorCode(t *testing.T) {
 	}
 	if record.GenerationMode != "FALLBACK" || record.ErrorCode != string(ProviderErrorTimeout) || strings.Contains(record.ErrorCode, "private") {
 		t.Fatalf("record=%+v", record)
+	}
+}
+
+func TestGenerateSkipsSameReadyInputAndMarksChangedEvidenceStale(t *testing.T) {
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	provider := &recordingProvider{}
+	service := NewService(store, time.UTC, t.TempDir())
+	service.SetProvider(provider)
+	first, err := service.Generate(context.Background(), "2026-09-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Generate(context.Background(), "2026-09-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 1 || second.Revision != first.Revision || second.InputHash != first.InputHash {
+		t.Fatalf("same input was regenerated: calls=%d first=%+v second=%+v", provider.calls, first, second)
+	}
+	events, err := store.ListUIEvents(context.Background(), 0, 20)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("same input duplicated ready event: events=%+v err=%v", events, err)
+	}
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	if _, err := store.RecordSemanticSnapshot(context.Background(), storage.SemanticSnapshotRecord{ObservedAt: now, LocalDate: "2026-09-03", Relation: "FOCUSED", Confidence: .9, Activity: "coding", SourceKind: "LOCAL_RULE"}); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := service.MarkStaleIfChanged(context.Background(), "2026-09-03")
+	if err != nil || !changed {
+		t.Fatalf("changed evidence stale=%v err=%v", changed, err)
+	}
+	stale, err := service.Get(context.Background(), "2026-09-03")
+	if err != nil || stale.Status != StatusStale {
+		t.Fatalf("stale review=%+v err=%v", stale, err)
+	}
+}
+
+func TestBackfillPreviousDayHonorsConfigAndRequiresEvidence(t *testing.T) {
+	now := time.Date(2026, 9, 4, 8, 0, 0, 0, time.UTC)
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.RecordSemanticSnapshot(context.Background(), storage.SemanticSnapshotRecord{ObservedAt: now.Add(-24 * time.Hour), LocalDate: "2026-09-03", Relation: "FOCUSED", Confidence: .8, Activity: "reading", SourceKind: "LOCAL_RULE"}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingProvider{}
+	service := NewService(store, time.UTC, t.TempDir())
+	service.SetProvider(provider)
+	if err := service.BackfillPreviousDay(context.Background(), now, true); err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("backfill calls=%d", provider.calls)
+	}
+	if _, err := service.Get(context.Background(), "2026-09-03"); err != nil {
+		t.Fatalf("backfill did not persist review: %v", err)
+	}
+	if err := service.BackfillPreviousDay(context.Background(), now, false); err != nil {
+		t.Fatal(err)
 	}
 }
 

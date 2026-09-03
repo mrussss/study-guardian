@@ -173,6 +173,10 @@ func NewConfiguredProvider(cfg *config.Config) (Provider, ProviderStatus) {
 		status.Warning = "review config is unavailable"
 		return nil, status
 	}
+	if !cfg.Review.Enabled {
+		status.Warning = "daily review is disabled"
+		return nil, status
+	}
 	reviewConfig := cfg.Review.Provider
 	providerName := strings.TrimSpace(reviewConfig.Provider)
 	model := strings.TrimSpace(reviewConfig.Model)

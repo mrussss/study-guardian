@@ -28,15 +28,16 @@ type StateManager interface {
 }
 
 type Server struct {
-	cfg        *config.Config
-	stateMgr   StateManager
-	httpServer *http.Server
-	mu         sync.RWMutex
-	motivation MotivationManager
-	aiStatus   func() interface{}
-	store      *storage.Storage
-	review     *review.Service
-	semantic   *semantic.Service
+	cfg           *config.Config
+	stateMgr      StateManager
+	httpServer    *http.Server
+	mu            sync.RWMutex
+	motivation    MotivationManager
+	aiStatus      func() interface{}
+	store         *storage.Storage
+	review        *review.Service
+	reviewTrigger *review.ReviewTrigger
+	semantic      *semantic.Service
 }
 
 type MotivationManager interface {
@@ -99,10 +100,27 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	return s
 }
 
-func (s *Server) SetMotivation(m MotivationManager)     { s.motivation = m }
-func (s *Server) SetAIStatus(fn func() interface{})     { s.aiStatus = fn }
-func (s *Server) SetStorage(store *storage.Storage)     { s.store = store }
-func (s *Server) SetReview(service *review.Service)     { s.review = service }
+func (s *Server) SetMotivation(m MotivationManager) { s.motivation = m }
+func (s *Server) SetAIStatus(fn func() interface{}) { s.aiStatus = fn }
+func (s *Server) SetStorage(store *storage.Storage) { s.store = store }
+func (s *Server) SetReview(service *review.Service) {
+	s.review = service
+	if s.reviewTrigger != nil {
+		s.reviewTrigger.Close()
+	}
+	if service == nil {
+		s.reviewTrigger = nil
+		return
+	}
+	debounce := 5 * time.Minute
+	if s.cfg != nil && s.cfg.Review.Trigger.OffDebounceMinutes > 0 {
+		debounce = time.Duration(s.cfg.Review.Trigger.OffDebounceMinutes) * time.Minute
+	}
+	s.reviewTrigger = review.NewReviewTrigger(debounce, func(ctx context.Context, date string) error {
+		_, err := service.Generate(ctx, date)
+		return err
+	})
+}
 func (s *Server) SetSemantic(service *semantic.Service) { s.semantic = service }
 
 func (s *Server) Start() error {
@@ -115,6 +133,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.reviewTrigger != nil {
+		s.reviewTrigger.Close()
+	}
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -208,6 +229,9 @@ func (s *Server) handleModeStudy(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	if s.reviewTrigger != nil {
+		s.reviewTrigger.OnModeChanged(string(state.UserModeStudy), time.Now())
+	}
 
 	st := s.stateMgr.GetStatus()
 	w.Header().Set("Content-Type", "application/json")
@@ -226,6 +250,9 @@ func (s *Server) handleModeBreak(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+	if s.reviewTrigger != nil {
+		s.reviewTrigger.OnModeChanged(string(state.UserModeBreak), time.Now())
+	}
 
 	st := s.stateMgr.GetStatus()
 	w.Header().Set("Content-Type", "application/json")
@@ -243,6 +270,9 @@ func (s *Server) handleModeOff(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+	if s.reviewTrigger != nil {
+		s.reviewTrigger.OnModeChanged(string(state.UserModeOff), time.Now())
 	}
 
 	st := s.stateMgr.GetStatus()

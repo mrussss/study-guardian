@@ -55,6 +55,65 @@ func (s *Service) BuildReviewInput(ctx context.Context, date string, limits Revi
 	return Compact(bundle, limits)
 }
 
+// MarkStaleIfChanged compares the current bounded canonical input with the
+// saved review hash. Equal input is a no-op, so frequent callers do not write
+// STALE on every supervisor tick.
+func (s *Service) MarkStaleIfChanged(ctx context.Context, date string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bundle, err := s.aggregator.Build(ctx, date)
+	if err != nil {
+		return false, err
+	}
+	input, err := Compact(bundle, s.limits)
+	if err != nil {
+		return false, err
+	}
+	hash, err := hashReviewInput(input)
+	if err != nil {
+		return false, err
+	}
+	previous, err := s.store.LoadDailyReview(ctx, date)
+	if err != nil {
+		if storage.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if previous.Status != StatusReady || previous.InputHash == hash {
+		return false, nil
+	}
+	if err := s.store.MarkDailyReviewStale(ctx, date, time.Now()); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// BackfillPreviousDay is safe to call during startup. It only generates when
+// the previous day has evidence and no current READY review.
+func (s *Service) BackfillPreviousDay(ctx context.Context, now time.Time, enabled bool) error {
+	if !enabled {
+		return nil
+	}
+	date := now.AddDate(0, 0, -1).Format("2006-01-02")
+	bundle, err := s.aggregator.Build(ctx, date)
+	if err != nil {
+		return err
+	}
+	if !hasReviewEvidence(bundle) {
+		return nil
+	}
+	if previous, loadErr := s.store.LoadDailyReview(ctx, date); loadErr == nil && previous.Status == StatusReady {
+		return nil
+	}
+	_, err = s.Generate(ctx, date)
+	return err
+}
+
+func hasReviewEvidence(bundle evidence.DailyEvidenceBundle) bool {
+	return bundle.Quality.StudyStatePresent || len(bundle.Sessions) > 0 || len(bundle.Distractions) > 0 || len(bundle.Reminders) > 0 || len(bundle.ChatTurns) > 0 || len(bundle.Semantic) > 0
+}
+
 // Generate executes the complete guarded AI path. Any provider, sanitization
 // or validation failure is persisted as a deterministic fallback so the API
 // remains useful while the failure is observable in ErrorCode.
@@ -65,9 +124,6 @@ func (s *Service) Generate(ctx context.Context, date string) (storage.DailyRevie
 	if err != nil {
 		return storage.DailyReviewRecord{}, err
 	}
-	if s.provider == nil {
-		return s.generateFallbackLocked(ctx, bundle, "provider_not_configured")
-	}
 	input, err := Compact(bundle, s.limits)
 	if err != nil {
 		return s.generateFallbackLocked(ctx, bundle, "compaction_failed")
@@ -75,6 +131,17 @@ func (s *Service) Generate(ctx context.Context, date string) (storage.DailyRevie
 	inputHash, err := hashReviewInput(input)
 	if err != nil {
 		return s.generateFallbackLocked(ctx, bundle, "input_hash_failed")
+	}
+	if previous, loadErr := s.store.LoadDailyReview(ctx, date); loadErr == nil {
+		if previous.Status == StatusReady && previous.InputHash == inputHash {
+			return previous, nil
+		}
+		if previous.Status == StatusReady && previous.InputHash != inputHash {
+			_ = s.store.MarkDailyReviewStale(ctx, date, time.Now())
+		}
+	}
+	if s.provider == nil {
+		return s.generateFallbackLockedWithHash(ctx, bundle, inputHash, "provider_not_configured")
 	}
 	sanitized, sanitizerReport, err := Sanitize(input, s.limits.MaxFinalInputChars)
 	if err != nil {
@@ -166,6 +233,9 @@ func (s *Service) persistLocked(ctx context.Context, bundle evidence.DailyEviden
 		if err := writeMarkdownAtomic(s.outputDir, bundle.Date, markdown); err != nil {
 			return storage.DailyReviewRecord{}, err
 		}
+	}
+	if _, _, err := s.store.RecordDailyReviewReady(ctx, bundle.Date, record.Revision, generationMode, now); err != nil {
+		return storage.DailyReviewRecord{}, err
 	}
 	return record, nil
 }
