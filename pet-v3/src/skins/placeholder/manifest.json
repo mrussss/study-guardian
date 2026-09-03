@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "studyguardian-placeholder-v1",
+  "name": "StudyGuardian Placeholder",
+  "license": "Original placeholder asset",
+  "frame_size": { "width": 16, "height": 16 },
+  "display_size": { "width": 176, "height": 176 },
+  "fps": 8,
+  "pixel_art": true,
+  "states": { "IDLE": "idle.png", "CODING": "coding.png" }
+}

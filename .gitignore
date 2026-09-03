@@ -48,6 +48,9 @@ browser/chatgpt-collector/debug/
 browser/**/local-config*
 browser/**/debug-dumps/
 
+# Pet v3 local Node dependencies
+pet-v3/node_modules/
+
 # IDE
 .vscode/
 .idea/

@@ -1,0 +1,11 @@
+:root { color-scheme: dark; font-family: "Segoe UI", sans-serif; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+body { user-select: none; }
+.pet-shell { width: 100%; height: 100%; display: grid; place-items: center; position: relative; cursor: grab; }
+.pet-shell:active { cursor: grabbing; }
+.pet-canvas { width: 176px; height: 176px; image-rendering: pixelated; image-rendering: crisp-edges; }
+.pet-state { position: absolute; top: 4px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-shadow: 0 1px #10151d; }
+.pet-task { position: absolute; bottom: 8px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: #dbe8f3; text-shadow: 0 1px #10151d; }
+.pet-controls { position: absolute; left: 4px; right: 4px; bottom: 28px; display: none; gap: 2px; flex-wrap: wrap; justify-content: center; }
+.pet-shell:hover .pet-controls { display: flex; }
+.pet-controls button, .pet-controls select { font: 9px "Segoe UI"; background: #18202bd9; color: #e9f2fa; border: 1px solid #49657c; border-radius: 3px; }
