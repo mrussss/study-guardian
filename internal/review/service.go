@@ -37,6 +37,17 @@ func (s *Service) Evidence(ctx context.Context, date string) (evidence.DailyEvid
 	return s.aggregator.Build(ctx, date)
 }
 
+// BuildReviewInput is the only service entry point that prepares evidence for
+// an AI provider. Aggregation reads the canonical store and Compact then
+// creates a bounded copy; neither stage mutates the stored evidence.
+func (s *Service) BuildReviewInput(ctx context.Context, date string, limits ReviewLimits) (ReviewInput, error) {
+	bundle, err := s.aggregator.Build(ctx, date)
+	if err != nil {
+		return ReviewInput{}, err
+	}
+	return Compact(bundle, limits)
+}
+
 // GenerateFallback is deterministic and offline-safe. The mutex is the single
 // in-process generation gate; future AI generation must use the same gate.
 func (s *Service) GenerateFallback(ctx context.Context, date string) (storage.DailyReviewRecord, error) {
