@@ -93,6 +93,12 @@ test -f "${STAGE_DIR}/pet/assets/skins/studyguardian-pixel/manifest.json"
 test -f "${STAGE_DIR}/sensor/screen/server.py"
 test -f "${STAGE_DIR}/sensor/requirements.txt"
 test -f "${STAGE_DIR}/browser/chatgpt-collector/manifest.json"
+test -s "${STAGE_DIR}/browser/chatgpt-collector/dist/content.js"
+if grep -Eq '^[[:space:]]*import[[:space:]]' "${STAGE_DIR}/browser/chatgpt-collector/dist/content.js"; then
+    echo "[Deploy] Refusing Content Script artifact with static import" >&2
+    exit 1
+fi
+test ! -e "${STAGE_DIR}/browser/chatgpt-collector/node_modules"
 
 # 6. Stop the known runtime processes before touching locked Windows files.
 STOP_SCRIPT="${TARGET_DIR}/scripts/stop-all.ps1"
@@ -146,6 +152,8 @@ test -s "${TARGET_DIR}/bin/study-supervisor.exe"
 test -f "${TARGET_DIR}/pet/src/main.py"
 test -f "${TARGET_DIR}/sensor/screen/server.py"
 test -f "${TARGET_DIR}/browser/chatgpt-collector/manifest.json"
+test -s "${TARGET_DIR}/browser/chatgpt-collector/dist/content.js"
+test ! -e "${TARGET_DIR}/browser/chatgpt-collector/node_modules"
 
 # Start only the newly deployed Supervisor for a bounded localhost health
 # smoke. This validates the executable and config/database wiring without
