@@ -42,6 +42,7 @@ handoff/
 scratch/
 
 # Browser collector local settings/debug output
+browser/chatgpt-collector/node_modules/
 browser/chatgpt-collector/local-config/
 browser/chatgpt-collector/debug/
 browser/**/local-config*

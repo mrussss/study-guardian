@@ -13,7 +13,7 @@
 
 ```text
 go test ./...                         PASS
-node --test tests/*.test.js          PASS（25/25）
+node --test tests/*.test.js          PASS（26/26）
 git diff --check                      PASS
 ```
 

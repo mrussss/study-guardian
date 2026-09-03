@@ -17,7 +17,7 @@ Snapshot 正式接入、自动触发和 UI 均未扩展。
 
 ```text
 go test ./...                         PASS
-node --test tests/*.test.js          PASS（当前 14 个测试）
+node --test tests/*.test.js          PASS（当时 14 个测试）
 ```
 
 Windows 运行 smoke 已通过，Supervisor 与 Sensor 均正常。真实 Chrome + ChatGPT
