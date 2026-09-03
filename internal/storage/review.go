@@ -9,44 +9,44 @@ import (
 )
 
 type SemanticSnapshotRecord struct {
-	ObservedAt   time.Time
-	LocalDate    string
-	Task         string
-	App          string
-	Title        string
-	Domain       string
-	Relation     string
-	Confidence   float64
-	Activity     string
-	Reason       string
-	SourceKind   string
-	MetadataJSON string
+	ObservedAt   time.Time `json:"observed_at"`
+	LocalDate    string    `json:"local_date"`
+	Task         string    `json:"task"`
+	App          string    `json:"app"`
+	Title        string    `json:"title"`
+	Domain       string    `json:"domain"`
+	Relation     string    `json:"relation"`
+	Confidence   float64   `json:"confidence"`
+	Activity     string    `json:"activity"`
+	Reason       string    `json:"reason"`
+	SourceKind   string    `json:"source_kind"`
+	MetadataJSON string    `json:"metadata_json"`
 }
 
 type ReviewExclusionRecord struct {
-	Date       string
-	SourceType string
-	SourceID   string
-	CreatedAt  time.Time
+	Date       string    `json:"date"`
+	SourceType string    `json:"source_type"`
+	SourceID   string    `json:"source_id"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type DailyReviewRecord struct {
-	Date           string
-	Status         string
-	GenerationMode string
-	Revision       int
-	InputHash      string
-	SchemaVersion  int
-	PromptVersion  string
-	Provider       string
-	Model          string
-	ReviewJSON     string
-	Markdown       string
-	AttemptCount   int
-	StartedAt      *time.Time
-	GeneratedAt    *time.Time
-	UpdatedAt      time.Time
-	ErrorCode      string
+	Date           string     `json:"date"`
+	Status         string     `json:"status"`
+	GenerationMode string     `json:"generation_mode"`
+	Revision       int        `json:"revision"`
+	InputHash      string     `json:"input_hash"`
+	SchemaVersion  int        `json:"schema_version"`
+	PromptVersion  string     `json:"prompt_version"`
+	Provider       string     `json:"provider"`
+	Model          string     `json:"model"`
+	ReviewJSON     string     `json:"review_json"`
+	Markdown       string     `json:"markdown"`
+	AttemptCount   int        `json:"attempt_count"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	GeneratedAt    *time.Time `json:"generated_at,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	ErrorCode      string     `json:"error_code"`
 }
 
 func (s *Storage) RecordSemanticSnapshot(ctx context.Context, record SemanticSnapshotRecord) (int64, error) {
@@ -109,6 +109,11 @@ func (s *Storage) LoadDailyReview(ctx context.Context, date string) (DailyReview
 		return DailyReviewRecord{}, fmt.Errorf("load daily review: %w", err)
 	}
 	return record, nil
+}
+
+func (s *Storage) DeleteDailyReview(ctx context.Context, date string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM daily_reviews WHERE date = ?`, date)
+	return err
 }
 
 func IsNotFound(err error) bool { return errors.Is(err, sql.ErrNoRows) }

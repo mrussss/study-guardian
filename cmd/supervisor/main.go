@@ -21,6 +21,7 @@ import (
 	"study-guardian/internal/motivation"
 	"study-guardian/internal/platform/windows"
 	"study-guardian/internal/reminder"
+	"study-guardian/internal/review"
 	"study-guardian/internal/rules"
 	"study-guardian/internal/sensor"
 	"study-guardian/internal/state"
@@ -100,6 +101,7 @@ func main() {
 
 	server := api.NewServer(cfg, stateMgr)
 	server.SetStorage(store)
+	server.SetReview(review.NewService(store, time.Local, filepath.Join(filepath.Dir(targetDB), "reviews")))
 	server.SetMotivation(motivationService)
 	server.SetAIStatus(func() interface{} { return aiRegistry.Status() })
 

@@ -12,6 +12,7 @@ import (
 
 	"study-guardian/internal/config"
 	"study-guardian/internal/motivation"
+	"study-guardian/internal/review"
 	"study-guardian/internal/state"
 	"study-guardian/internal/storage"
 )
@@ -33,6 +34,7 @@ type Server struct {
 	motivation MotivationManager
 	aiStatus   func() interface{}
 	store      *storage.Storage
+	review     *review.Service
 }
 
 type MotivationManager interface {
@@ -78,6 +80,10 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/collector/turn", s.withCollectorAuth(s.handleCollectorTurn))
 	mux.HandleFunc("/v1/collector/message", s.withCollectorAuth(s.handleCollectorMessage))
 	mux.HandleFunc("/v1/collector/heartbeat", s.withCollectorAuth(s.handleCollectorHeartbeat))
+	mux.HandleFunc("/v1/review/daily", s.withAuth(s.handleReviewDaily))
+	mux.HandleFunc("/v1/review/generate", s.withAuth(s.handleReviewGenerate))
+	mux.HandleFunc("/v1/review/exclude", s.withAuth(s.handleReviewExclude))
+	mux.HandleFunc("/v1/review/evidence", s.withAuth(s.handleReviewEvidence))
 
 	addr := fmt.Sprintf("%s:%d", cfg.IPC.SupervisorHost, cfg.IPC.SupervisorPort)
 	s.httpServer = &http.Server{
@@ -93,6 +99,7 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 func (s *Server) SetMotivation(m MotivationManager) { s.motivation = m }
 func (s *Server) SetAIStatus(fn func() interface{}) { s.aiStatus = fn }
 func (s *Server) SetStorage(store *storage.Storage) { s.store = store }
+func (s *Server) SetReview(service *review.Service) { s.review = service }
 
 func (s *Server) Start() error {
 	addr := s.httpServer.Addr

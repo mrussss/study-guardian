@@ -11,6 +11,7 @@ import (
 
 	"study-guardian/internal/config"
 	"study-guardian/internal/motivation"
+	"study-guardian/internal/review"
 	"study-guardian/internal/state"
 	"study-guardian/internal/storage"
 )
@@ -91,6 +92,48 @@ func TestCollectorTurnUsesObservedLocalDateAndScopedAuth(t *testing.T) {
 	expectedDate := time.Date(2026, 9, 3, 23, 58, 0, 0, time.FixedZone("payload", 8*60*60)).In(time.Local).Format("2006-01-02")
 	if record.LocalDate != expectedDate || !record.EligibleForReview {
 		t.Fatalf("local_date=%s eligible=%v, want %s/true", record.LocalDate, record.EligibleForReview, expectedDate)
+	}
+}
+
+func TestReviewGenerateAndEvidenceAPI(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.IPC.AuthToken = "main-token"
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	if err := store.UpdateDailyState(context.Background(), "2026-09-03", 0, 1800, 0, 0, 1200, now); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(cfg, state.NewManager(state.NewFakeClock(now)))
+	server.SetStorage(store)
+	server.SetReview(review.NewService(store, time.UTC, t.TempDir()))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/review/generate", server.withAuth(server.handleReviewGenerate))
+	mux.HandleFunc("/v1/review/daily", server.withAuth(server.handleReviewDaily))
+	mux.HandleFunc("/v1/review/evidence", server.withAuth(server.handleReviewEvidence))
+	request := httptest.NewRequest(http.MethodPost, "/v1/review/generate", bytes.NewBufferString(`{"date":"2026-09-03"}`))
+	request.Header.Set("Authorization", "Bearer main-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"generation_mode":"FALLBACK"`)) {
+		t.Fatalf("generate status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/review/daily?date=2026-09-03", nil)
+	request.Header.Set("Authorization", "Bearer main-token")
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte("学习复盘")) {
+		t.Fatalf("daily status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/review/evidence?date=2026-09-03&detail=summary", nil)
+	request.Header.Set("Authorization", "Bearer main-token")
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"date":"2026-09-03"`)) {
+		t.Fatalf("evidence status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

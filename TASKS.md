@@ -110,15 +110,15 @@
 
 ## Phase 8: Daily Review
 
-- [ ] 90. Daily Evidence Aggregator over existing + new data
-- [ ] 91. Deterministic fallback report
+- [x] 90. Daily Evidence Aggregator over existing + new data
+- [x] 91. Deterministic fallback report
 - [ ] 92. Conversation compaction
 - [ ] 93. Generic ReviewProvider + JSON schema
 - [ ] 94. Evidence-ref / accomplishment validator
 - [ ] 95. Cloud sanitizer
-- [ ] 96. Canonical daily review persistence + input hash
+- [x] 96. Canonical daily review persistence + input hash
 - [ ] 97. OFF debounce / stale / restart / next-day backfill
-- [ ] 98. Markdown atomic output
+- [x] 98. Markdown atomic output
 - [ ] 99. DAILY_REVIEW_READY ui_event
 - [ ] 100. Pet / Study Center Review UI
 - [ ] 101. Full Windows E2E
