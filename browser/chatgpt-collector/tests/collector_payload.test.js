@@ -83,3 +83,19 @@ test('payload JSON satisfies the collector contract fields', async () => {
     messages: [candidate().user]
   });
 });
+
+test('payload finalization follows the active assistant only', async () => {
+  const tracker = new TurnTracker(fakeSession(), () => Date.parse('2026-09-03T02:00:00Z'));
+  const value = candidate();
+  value.turn_key = 'turn-with-branches';
+  value.assistants = [
+    { external_message_id: 'assistant-old', role: 'assistant', branch_key: 'old', is_active: false, is_final: true },
+    { external_message_id: 'assistant-active', role: 'assistant', branch_key: 'active', is_active: true, is_final: false }
+  ];
+  const payload = await buildTurnPayload(value, tracker, async () => ({
+    context: { user_mode: 'STUDY', task: 'Go' },
+    trustworthy: true
+  }));
+  assert.equal(payload.active_branch_key, 'active');
+  assert.equal(payload.finalized, false);
+});

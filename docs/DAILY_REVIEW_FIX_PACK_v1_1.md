@@ -17,6 +17,20 @@ node --test tests/*.test.js          PASS（25/25）
 git diff --check                      PASS
 ```
 
+Windows runtime smoke：
+
+```text
+build-windows.sh                     PASS
+deploy-windows.sh /mnt/d/StudyGuardianDev  PASS
+GET /healthz                         PASS（status=ok，ActivityWatch/Screen Sensor=true）
+GET /v1/status                       PASS（main token）
+GET /v1/collector/context             PASS（collector token）
+GET /v1/review/evidence               PASS
+```
+
+部署后的扩展目录已包含 `collector.js`、`stream_state.js`、`conversation_epoch.js`、
+`candidate_dedupe.js` 和更新后的 `content.js` / `background.js`。
+
 已加入脱敏 fixtures：
 
 ```text
