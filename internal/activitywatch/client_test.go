@@ -3,6 +3,7 @@ package activitywatch
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -123,5 +124,35 @@ func TestActivityWatchOfflineFailSoft(t *testing.T) {
 	_, err := client.GetLatestActivity(context.Background())
 	if err == nil {
 		t.Fatalf("expected error when getting activity from offline port, got nil")
+	}
+}
+
+func TestActivitySnapshotHeartbeatFreshness(t *testing.T) {
+	base := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
+	maxAge := 10 * time.Second
+	tests := []struct {
+		name     string
+		duration float64
+		now      time.Time
+		want     bool
+	}{
+		{"heartbeat still active", 299, base.Add(5 * time.Minute), true},
+		{"stopped event stale", 30, base.Add(5 * time.Minute), false},
+		{"duration covers now", 60, base.Add(45 * time.Second), true},
+		{"future timestamp fail closed", 1, base.Add(-time.Second), false},
+		{"negative duration fail soft", -1, base.Add(11 * time.Second), false},
+		{"nan duration fail soft", math.NaN(), base.Add(11 * time.Second), false},
+		{"infinite duration fail soft", math.Inf(1), base.Add(11 * time.Second), false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := &ActivitySnapshot{Timestamp: base, Duration: test.duration}
+			if got := snapshot.IsFresh(test.now, maxAge); got != test.want {
+				t.Fatalf("IsFresh()=%v, want %v (end=%v)", got, test.want, snapshot.EffectiveEnd())
+			}
+		})
+	}
+	if got := (*ActivitySnapshot)(nil).EffectiveEnd(); !got.IsZero() {
+		t.Fatalf("nil EffectiveEnd=%v, want zero", got)
 	}
 }

@@ -54,6 +54,12 @@ func (s *Service) Observe(ctx context.Context, candidate Candidate) error {
 		activity = ActivityUnknown
 		confidence = 0
 	}
+	// Sensitive windows are deliberately indistinguishable from unavailable
+	// semantic activity to consumers: the privacy bit remains visible, while
+	// fresh is false and no content can enter persistence.
+	if candidate.Privacy == state.PrivacySensitive {
+		candidate.Fresh = false
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

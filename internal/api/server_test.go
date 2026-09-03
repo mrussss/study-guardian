@@ -243,6 +243,51 @@ func TestCurrentActivityContractUsesMainAuthAndAgeFreshness(t *testing.T) {
 	}
 }
 
+func TestCurrentActivitySensitiveViewIsNeutralAndNotPersisted(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.IPC.AuthToken = "main-token"
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC()
+	semanticService := semantic.NewServiceWithTiming(store, semantic.Timing{LiveMaxAge: time.Minute, TransitionStableFor: time.Second, MinPersistInterval: time.Second, HeartbeatInterval: time.Minute})
+	if err := semanticService.Observe(context.Background(), semantic.Candidate{
+		ObservedAt: now, Fresh: true, UserMode: state.UserModeStudy, Task: "Secret",
+		Interaction: state.InteractionActive, Relation: state.RelationFocused, Privacy: state.PrivacySensitive,
+		App: "Private.exe", Title: "secret.txt",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(cfg, state.NewManager(state.NewFakeClock(now)))
+	server.SetSemantic(semanticService)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/activity/current", server.withAuth(server.handleCurrentActivity))
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/activity/current", nil)
+	request.Header.Set("Authorization", "Bearer main-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("current activity status=%d body=%s", response.Code, response.Body.String())
+	}
+	var view semantic.CurrentActivityView
+	if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Privacy != state.PrivacySensitive || view.Fresh || view.Activity != semantic.ActivityUnknown || view.Confidence != 0 {
+		t.Fatalf("sensitive current activity view=%+v", view)
+	}
+	rows, err := store.ListSemanticSnapshotsForDate(context.Background(), now.In(time.Local).Format("2006-01-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("sensitive observation was persisted: %+v", rows)
+	}
+}
+
 func TestModeTransitionsViaAPI(t *testing.T) {
 	_, _, mux := setupTestServer()
 

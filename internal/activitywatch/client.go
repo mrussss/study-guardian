@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,12 +27,35 @@ type ActivitySnapshot struct {
 	Duration             float64   `json:"duration"`
 }
 
+// EffectiveEnd returns the end of the ActivityWatch heartbeat event. Invalid
+// durations are treated as zero so malformed watcher data cannot panic or
+// make a stale event live forever.
+func (s *ActivitySnapshot) EffectiveEnd() time.Time {
+	if s == nil || s.Timestamp.IsZero() || math.IsNaN(s.Duration) || math.IsInf(s.Duration, 0) || s.Duration <= 0 {
+		if s == nil {
+			return time.Time{}
+		}
+		return s.Timestamp
+	}
+	seconds := s.Duration * float64(time.Second)
+	if seconds > float64(math.MaxInt64) {
+		return s.Timestamp.Add(time.Duration(math.MaxInt64))
+	}
+	return s.Timestamp.Add(time.Duration(seconds))
+}
+
 func (s *ActivitySnapshot) IsFresh(now time.Time, maxAge time.Duration) bool {
 	if s == nil || s.Timestamp.IsZero() {
 		return false
 	}
-	age := now.Sub(s.Timestamp)
-	return age >= 0 && age <= maxAge
+	if now.Before(s.Timestamp) || maxAge < 0 {
+		return false
+	}
+	effectiveEnd := s.EffectiveEnd()
+	if !now.After(effectiveEnd) {
+		return true
+	}
+	return now.Sub(effectiveEnd) <= maxAge
 }
 
 type ActivitySource interface {

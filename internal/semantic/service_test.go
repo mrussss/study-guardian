@@ -131,7 +131,7 @@ func TestServicePrivacyFreshnessModeAndCrossMidnight(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := service.Current(sensitive.ObservedAt)
-	if view.Privacy != state.PrivacySensitive || view.Activity != ActivityUnknown || view.Fresh != true {
+	if view.Privacy != state.PrivacySensitive || view.Activity != ActivityUnknown || view.Fresh {
 		t.Fatalf("sensitive current view=%+v", view)
 	}
 	if err := service.Observe(ctx, Candidate{ObservedAt: start.Add(3 * time.Second), Fresh: false, UserMode: state.UserModeStudy, Interaction: state.InteractionUnknown, Relation: state.RelationUnknown, Privacy: state.PrivacyNormal}); err != nil {

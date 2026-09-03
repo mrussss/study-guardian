@@ -18,8 +18,13 @@ The activity enum is:
 `BROWSING`, `GENERAL_STUDY`, `UNKNOWN`.
 
 `observed_at` is the Supervisor observation time. ActivityWatch's event time
-is used only to calculate freshness. A stale, unavailable, sensitive, or
-unknown observation becomes live `UNKNOWN` and is never persisted.
+and positive finite heartbeat `duration` form an effective event end
+(`timestamp + duration`); freshness is calculated from that end, not from a
+second wall clock. A future timestamp is stale, and invalid duration values
+are treated as zero. The Supervisor live view uses the existing 2-minute
+window; Task 88's ActivityWatch rule remains 10 seconds. A stale, unavailable,
+sensitive, or unknown observation becomes live `UNKNOWN` and is never
+persisted.
 
 ## Persistence and evidence
 
@@ -33,6 +38,14 @@ transition interval, and a 180-second heartbeat. The semantic key excludes
 the full title and contains task, relation, activity, interaction, and
 normalized app/domain. Database IDs are used for stable `semantic:<id>`
 evidence references.
+
+## P1.1 boundary notes
+
+`semantic.fresh` describes the semantic snapshot, not whether the Supervisor
+transport is reachable. Pet consumers receive a separate `connected` signal:
+connected plus stale is a neutral `IDLE`, while disconnected is `OFFLINE`.
+Sensitive observations keep `privacy=SENSITIVE` but expose
+`fresh=false`, `activity=UNKNOWN`, and `confidence=0` without persistence.
 
 ## Verification
 
