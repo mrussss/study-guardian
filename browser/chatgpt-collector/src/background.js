@@ -70,7 +70,8 @@ async function sendTurn(candidate) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message.type === 'attach') {
-      tracker.attach(message.identities || []);
+      // Baseline belongs to the page-bound Content Script. Keep this message
+      // as a harmless compatibility acknowledgement for an older page epoch.
       sendResponse({ ok: true });
       return;
     }
