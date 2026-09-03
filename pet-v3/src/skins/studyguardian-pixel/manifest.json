@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "studyguardian-pixel",
+  "name": "StudyGuardian Pixel",
+  "author": "StudyGuardian",
+  "license": "Original placeholder generated during Phase 6 development",
+  "frame_size": 64,
+  "display_size": 128,
+  "fps": 7,
+  "pixel_art": true,
+  "states": {
+    "idle": "sprites/idle.png",
+    "study": "sprites/study.png",
+    "distracted": "sprites/distracted.png",
+    "rest": "sprites/rest.png",
+    "talk": "sprites/talk.png",
+    "celebrate": "sprites/celebrate.png"
+  }
+}

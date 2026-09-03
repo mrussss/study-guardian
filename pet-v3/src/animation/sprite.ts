@@ -6,7 +6,7 @@ export interface SpriteFrame {
 }
 
 export function splitHorizontal(sheetWidth: number, sheetHeight: number, frameWidth: number, frameHeight = sheetHeight): SpriteFrame[] {
-  if (!Number.isInteger(sheetWidth) || !Number.isInteger(sheetHeight) || !Number.isInteger(frameWidth) || !Number.isInteger(frameHeight) || frameWidth <= 0 || frameHeight <= 0 || sheetWidth < frameWidth || sheetHeight < frameHeight) return [];
+  if (!Number.isInteger(sheetWidth) || !Number.isInteger(sheetHeight) || !Number.isInteger(frameWidth) || !Number.isInteger(frameHeight) || frameWidth <= 0 || frameHeight <= 0 || sheetWidth < frameWidth || sheetHeight < frameHeight || sheetWidth % frameWidth !== 0) return [];
   const count = Math.floor(sheetWidth / frameWidth);
   return Array.from({ length: count }, (_, index) => ({ sx: index * frameWidth, sy: 0, width: frameWidth, height: frameHeight }));
 }

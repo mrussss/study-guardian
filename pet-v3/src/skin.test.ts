@@ -1,27 +1,24 @@
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { loadSkinManifest, resolveState } from "./skin";
 
-const skin = {
-  schema_version: 1 as const,
-  id: "placeholder-v1",
-  name: "StudyGuardian Placeholder",
-  license: "Original placeholder; CC0-style project asset",
-  frame_size: { width: 16, height: 16 },
-  display_size: { width: 176, height: 176 },
-  fps: 8,
-  pixel_art: true,
-  states: { IDLE: "idle.png", CODING: "coding.png" },
-};
+const existingManifest = JSON.parse(readFileSync(new URL("../../pet/assets/skins/studyguardian-pixel/manifest.json", import.meta.url), "utf8"));
 
-test("skin v1 validates and falls back missing states", () => {
-  const loaded = loadSkinManifest(skin);
-  assert.deepEqual(resolveState(loaded, "CODING"), { state: "CODING", source: "coding.png" });
-  assert.deepEqual(resolveState(loaded, "THINKING"), { state: "IDLE", source: "idle.png" });
-  assert.deepEqual(resolveState(loaded, "ALGORITHM"), { state: "CODING", source: "coding.png" });
+test("real existing PyQt skin manifest is accepted as v1", () => {
+  const loaded = loadSkinManifest(existingManifest);
+  assert.equal(loaded.frame_size, 64);
+  assert.equal(loaded.display_size, 128);
+  assert.equal(loaded.fps, 7);
+  for (const state of ["idle", "study", "distracted", "rest", "talk", "celebrate"]) assert.equal(typeof loaded.states[state], "string");
+  assert.deepEqual(resolveState(loaded, "CODING"), { state: "study", source: "sprites/study.png" });
+  assert.deepEqual(resolveState(loaded, "DISTRACTED"), { state: "distracted", source: "sprites/distracted.png" });
+  assert.deepEqual(resolveState(loaded, "CELEBRATE"), { state: "celebrate", source: "sprites/celebrate.png" });
+  assert.deepEqual(resolveState(loaded, "OFFLINE"), { state: "idle", source: "sprites/idle.png" });
 });
 
-test("invalid skin schema is rejected", () => {
-  assert.throws(() => loadSkinManifest({ ...skin, schema_version: 2 }));
-  assert.throws(() => loadSkinManifest({ ...skin, frame_size: { width: 0, height: 16 } }));
+test("skin v1 requires numeric dimensions and an idle hard fallback", () => {
+  assert.throws(() => loadSkinManifest({ ...existingManifest, frame_size: { width: 64, height: 64 } }));
+  assert.throws(() => loadSkinManifest({ ...existingManifest, states: { ...existingManifest.states, idle: "" } }));
+  assert.throws(() => loadSkinManifest({ ...existingManifest, fps: Number.NaN }));
 });

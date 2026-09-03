@@ -18,6 +18,7 @@ export type VisualState =
 export type PetEvent = { kind: "celebrate" | "reminder"; critical?: boolean };
 
 export interface BehaviorInput {
+  connected: boolean;
   semantic: CurrentActivityView;
   event?: PetEvent;
   nowMs: number;
@@ -39,12 +40,17 @@ export function targetState(input: BehaviorInput): VisualState {
   const { semantic, event } = input;
   if (event?.kind === "celebrate" || event?.critical) return "CELEBRATE";
   if (event?.kind === "reminder") return "TALKING";
-  if (!semantic.fresh) return "OFFLINE";
-  if (semantic.privacy === "SENSITIVE") return "OFFLINE";
+  if (!input.connected) return "OFFLINE";
   if (semantic.user_mode === "BREAK") return "RESTING";
   if (semantic.user_mode === "OFF" || semantic.user_mode === "STANDBY") return "IDLE";
   if (semantic.user_mode !== "STUDY") return "IDLE";
   if (semantic.relation === "DISTRACTED") return "DISTRACTED";
+
+  // THINKING is a UI-only derivation and must be checked before the generic
+  // GENERAL_STUDY -> LEARNING mapping. Semantic freshness is independent from
+  // Supervisor connectivity, so a stale but connected source remains neutral.
+  if (semantic.fresh && semantic.relation === "FOCUSED" && semantic.interaction === "IDLE_STATIC" && (semantic.activity === "UNKNOWN" || semantic.activity === "GENERAL_STUDY")) return "THINKING";
+  if (!semantic.fresh) return "IDLE";
 
   const activityMap: Partial<Record<Activity, VisualState>> = {
     CODING: "CODING",
@@ -59,9 +65,6 @@ export function targetState(input: BehaviorInput): VisualState {
   const mapped = activityMap[semantic.activity];
   if (mapped) return mapped;
 
-  // THINKING is a UI-only derivation. It is never sent back as semantic
-  // activity and is available only after a stable focused static idle.
-  if (semantic.relation === "FOCUSED" && semantic.interaction === "IDLE_STATIC") return "THINKING";
   return "IDLE";
 }
 

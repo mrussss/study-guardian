@@ -9,6 +9,7 @@ test("horizontal spritesheets split into pixel frames", () => {
   assert.equal(frames.length, 4);
   assert.deepEqual(frames[2], { sx: 16, sy: 0, width: 8, height: 8 });
   assert.deepEqual(splitHorizontal(7, 8, 8), []);
+  assert.deepEqual(splitHorizontal(30, 8, 8), [], "malformed partial frame must fail closed");
 });
 
 test("animation timing loops and one-shot completion", () => {
