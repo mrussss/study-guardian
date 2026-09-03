@@ -99,7 +99,7 @@ export function mountApp(root: HTMLElement): void {
     animation.update(now - lastFrame);
     stateLabel.textContent = state;
     stateLabel.style.color = colors[state];
-    taskLabel.textContent = !connected ? "Supervisor offline" : !semantic.fresh ? "ActivityWatch stale" : semantic.task;
+    taskLabel.textContent = !connected ? "Supervisor offline" : !semantic.fresh ? "活动状态不可用" : semantic.task;
     draw(state);
     lastFrame = now;
     requestAnimationFrame(refresh);
