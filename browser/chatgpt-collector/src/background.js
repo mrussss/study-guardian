@@ -1,4 +1,4 @@
-import { getContext } from './mode_cache.js';
+import { getContext, resolveContextForNewTurn, setContext } from './mode_cache.js';
 import { enqueue, dequeue, readQueue } from './queue.js';
 import { TurnTracker } from './turn_tracker.js';
 
@@ -21,8 +21,7 @@ async function refreshContext() {
   const response = await request('/v1/collector/context');
   if (!response.ok) throw new Error(`context HTTP ${response.status}`);
   const context = await response.json();
-  await chrome.storage.local.set({ studyguardian_collector_context: { ...context, status_observed_at: new Date().toISOString() } });
-  return context;
+  return setContext(context);
 }
 
 async function flushQueue() {
@@ -43,9 +42,11 @@ async function sendTurn(candidate) {
 	const changedIdentity = [candidate.user, ...candidate.assistants]
 	  .some(message => tracker.isNew(message.external_message_id));
 	if (!changedIdentity && !tracker.hasContext(candidate.turn_key)) return;
-	let context = await getContext();
-  if (!context) context = await refreshContext();
-  const frozen = tracker.contextFor(candidate, context);
+  const isNewTurn = !tracker.hasContext(candidate.turn_key);
+  const resolved = isNewTurn
+    ? await resolveContextForNewTurn(refreshContext)
+    : { context: await getContext(), trustworthy: true };
+  const frozen = tracker.contextFor(candidate, resolved.context, { allowReview: resolved.trustworthy });
   const payload = {
     platform: candidate.platform,
     external_conversation_id: candidate.external_conversation_id,

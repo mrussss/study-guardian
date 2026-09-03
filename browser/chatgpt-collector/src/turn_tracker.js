@@ -20,14 +20,14 @@ export class TurnTracker {
     return this.contexts.has(turnKey);
   }
 
-  contextFor(turn, modeContext) {
+  contextFor(turn, modeContext, options = {}) {
     const key = turn.turn_key || stableHash(turn.user.content);
     if (!this.contexts.has(key)) {
-      const mode = modeContext?.user_mode || 'OFF';
+      const mode = modeContext?.user_mode || 'UNKNOWN';
       this.contexts.set(key, {
         mode_at_start: mode,
         task_at_start: modeContext?.task || '',
-        eligible_for_review: mode === 'STUDY'
+        eligible_for_review: options.allowReview !== false && mode === 'STUDY'
       });
     }
     return this.contexts.get(key);
