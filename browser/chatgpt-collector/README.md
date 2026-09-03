@@ -17,6 +17,9 @@ classic bundle, while the background Service Worker remains an ES module.
 The Windows artifact therefore does not require Node or npm on the machine
 where Chrome loads the unpacked extension.
 
+The Background Service Worker serializes the complete Collector delivery
+pipeline globally, so streaming snapshots cannot overtake one another.
+
 Development source workflow:
 
 ```text
