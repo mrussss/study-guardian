@@ -23,6 +23,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
 echo "=== [3/5] Preparing Python Artifacts ==="
 mkdir -p "${REPO_ROOT}/dist/windows/pet"
 mkdir -p "${REPO_ROOT}/dist/windows/sensor"
+mkdir -p "${REPO_ROOT}/dist/windows/browser"
 
 # Copy Pet source & assets
 cp -r "${REPO_ROOT}/pet/src" "${REPO_ROOT}/dist/windows/pet/"
@@ -33,6 +34,9 @@ cp -r "${REPO_ROOT}/pet/assets/skins/." "${REPO_ROOT}/dist/windows/pet/assets/sk
 # Copy Sensor source
 cp -r "${REPO_ROOT}/sensor/screen" "${REPO_ROOT}/dist/windows/sensor/"
 cp "${REPO_ROOT}/sensor/requirements.txt" "${REPO_ROOT}/dist/windows/sensor/requirements.txt"
+
+# Copy the DOM-only Manifest V3 collector source (never local extension storage).
+cp -r "${REPO_ROOT}/browser/chatgpt-collector" "${REPO_ROOT}/dist/windows/browser/"
 
 # Copy default config template
 cp "${REPO_ROOT}/configs/default.yaml" "${REPO_ROOT}/dist/windows/config.default.yaml"

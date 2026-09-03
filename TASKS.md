@@ -94,3 +94,38 @@
 - [x] 77. 复审修正：TickOutcome.Now 单一时钟、COMEBACK 连续专注、DAILY_120 固定阈值
 - [x] 78. 复审修正：Rules → Text AI → Vision fallback、按端点 timeout、model 配置校验
 - [x] 79. 复审修正：Deploy 停进程、ephemeral rollback、health smoke、真实文件统计口径
+
+## Phase 7: Daily Review Foundations
+
+- [x] 80. Extract generic OpenAI-compatible AI transport without classifier regression
+- [x] 81. Chat conversation / turn / message migrations
+- [x] 82. Semantic snapshot / review exclusion / daily review migrations
+- [x] 83. Scoped collector token + collector context API
+- [x] 84. ChatGPT Collector baseline POC
+- [x] 85. STUDY turn eligibility freeze
+- [ ] 86. Streaming / reload / regenerate / edit / branch dedupe
+- [x] 87. Offline queue + observed_at local-date correctness
+- [ ] 88. Semantic snapshots without extra Vision/capture
+- [ ] 89. Phase 7 unit/integration/Windows E2E
+
+## Phase 8: Daily Review
+
+- [ ] 90. Daily Evidence Aggregator over existing + new data
+- [ ] 91. Deterministic fallback report
+- [ ] 92. Conversation compaction
+- [ ] 93. Generic ReviewProvider + JSON schema
+- [ ] 94. Evidence-ref / accomplishment validator
+- [ ] 95. Cloud sanitizer
+- [ ] 96. Canonical daily review persistence + input hash
+- [ ] 97. OFF debounce / stale / restart / next-day backfill
+- [ ] 98. Markdown atomic output
+- [ ] 99. DAILY_REVIEW_READY ui_event
+- [ ] 100. Pet / Study Center Review UI
+- [ ] 101. Full Windows E2E
+
+## Phase 9: Trial
+
+- [ ] 102. 7-day daily-use trial
+- [ ] 103. Collector miss/duplicate/wrong-day audit
+- [ ] 104. Review factuality audit
+- [ ] 105. Optional Git evidence

@@ -15,3 +15,16 @@
 - **Screen Sensor** (`127.0.0.1:17322`): 极薄屏幕采集与 diff 适配层（Python/mss 实现）。
 - **Study Pet** (PyQt6 UI Shell): 纯 UI 交互层，不含独立业务/监督逻辑，仅连接 Supervisor。
 - **ActivityWatch** (`127.0.0.1:5600`): 外部事实采集源，通过 Adapter 访问，不修改上游。
+
+## 3. Daily Review 与浏览器采集约束
+- Daily Review 不得引入第二套 Supervisor/状态机。
+- Review Evidence 是聚合层，不得复制现有 sessions/observations/distraction_events 成第二真源。
+- ChatGPT 自动采集必须先 baseline，禁止把页面已有历史消息当今天新消息。
+- Chat Turn 的 eligibility 在用户 Turn 开始时冻结，Assistant 继承。
+- 日历归属使用 observed_at + Supervisor local date，不使用 ingested_at。
+- Collector 使用 scoped token，不得持有主业务 Bearer Token；Content Script 永远不得读取 localhost token。
+- Daily Review 不得增加 Screen capture / Vision 调用频率；Review AI 使用通用 AI transport，不得直接复用 TaskRelationProvider。
+- Review 必须有 deterministic fallback，且生成必须异步，不阻塞 mode API。
+- Topic Evidence 与 Accomplishment Evidence 必须区分；AI accomplishments 必须引用有效的 accomplishment evidence。
+- Collector 故障不得影响实时监督；ActivityWatch enrichment 故障不得导致 Review 整体失败。
+- raw chat / review / token 禁止进入 Git；复用开源 ChatGPT parser 时必须记录 upstream SHA/license。

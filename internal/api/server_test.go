@@ -18,6 +18,7 @@ import (
 func setupTestServer() (*config.Config, *state.Manager, *http.ServeMux) {
 	cfg := config.DefaultConfig()
 	cfg.IPC.AuthToken = "secret-token-123"
+	cfg.IPC.CollectorToken = "collector-token-456"
 
 	clock := state.NewFakeClock(time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC))
 	stateMgr := state.NewManager(clock)
@@ -31,8 +32,66 @@ func setupTestServer() (*config.Config, *state.Manager, *http.ServeMux) {
 	mux.HandleFunc("/v1/mode/off", s.withAuth(s.handleModeOff))
 	mux.HandleFunc("/v1/task", s.withAuth(s.handleTask))
 	mux.HandleFunc("/v1/feedback", s.withAuth(s.handleFeedback))
+	mux.HandleFunc("/v1/collector/context", s.withCollectorAuth(s.handleCollectorContext))
 
 	return cfg, stateMgr, mux
+}
+
+func TestCollectorTokenIsScopedAndContextIsAvailable(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.IPC.AuthToken = "main-token"
+	cfg.IPC.CollectorToken = "collector-token"
+	stateMgr := state.NewManager(state.NewFakeClock(time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)))
+	server := NewServer(cfg, stateMgr)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/status", server.withAuth(server.handleStatus))
+	mux.HandleFunc("/v1/collector/context", server.withCollectorAuth(server.handleCollectorContext))
+	request := httptest.NewRequest(http.MethodGet, "/v1/collector/context", nil)
+	request.Header.Set("Authorization", "Bearer main-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("main token must not access collector context: %d", response.Code)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/collector/context", nil)
+	request.Header.Set("Authorization", "Bearer collector-token")
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"user_mode"`)) {
+		t.Fatalf("collector token context status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCollectorTurnUsesObservedLocalDateAndScopedAuth(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.IPC.AuthToken = "main-token"
+	cfg.IPC.CollectorToken = "collector-token"
+	stateMgr := state.NewManager(state.NewFakeClock(time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)))
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server := NewServer(cfg, stateMgr)
+	server.SetStorage(store)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/collector/turn", server.withCollectorAuth(server.handleCollectorTurn))
+	body := bytes.NewBufferString(`{"platform":"chatgpt","external_conversation_id":"c1","turn_key":"t1","observed_at":"2026-09-03T23:58:00+08:00","mode_at_start":"STUDY","task_at_start":"Go","eligible_for_review":true,"finalized":true,"messages":[{"external_message_id":"m1","role":"user","content":"Explain interfaces","is_active":true}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/collector/turn", body)
+	req.Header.Set("Authorization", "Bearer collector-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("collector turn status=%d body=%s", response.Code, response.Body.String())
+	}
+	record, err := store.LoadChatTurn(context.Background(), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedDate := time.Date(2026, 9, 3, 23, 58, 0, 0, time.FixedZone("payload", 8*60*60)).In(time.Local).Format("2006-01-02")
+	if record.LocalDate != expectedDate || !record.EligibleForReview {
+		t.Fatalf("local_date=%s eligible=%v, want %s/true", record.LocalDate, record.EligibleForReview, expectedDate)
+	}
 }
 
 func TestHealthzEndpoint(t *testing.T) {

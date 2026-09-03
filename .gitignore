@@ -27,9 +27,11 @@ htmlcov/
 *.db-shm
 *.token
 auth.token
+config/*token*
 *.log
 logs/
 data/
+reviews/
 run/
 handoff/
 
@@ -38,6 +40,12 @@ handoff/
 *.jpg
 *.jpeg
 scratch/
+
+# Browser collector local settings/debug output
+browser/chatgpt-collector/local-config/
+browser/chatgpt-collector/debug/
+browser/**/local-config*
+browser/**/debug-dumps/
 
 # IDE
 .vscode/

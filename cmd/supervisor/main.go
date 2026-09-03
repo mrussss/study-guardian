@@ -30,6 +30,7 @@ import (
 func main() {
 	configPath := flag.String("config", "", "Path to config YAML file")
 	tokenPath := flag.String("token", "", "Path to auth token file")
+	collectorTokenPath := flag.String("collector-token", "", "Path to scoped collector token file")
 	dbPath := flag.String("db", "", "Path to SQLite database")
 	awURL := flag.String("aw-url", "http://127.0.0.1:5600", "ActivityWatch base URL")
 	flag.Parse()
@@ -57,6 +58,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("[Supervisor] Error loading config: %v", err)
 	}
+	collectorTokenFile := *collectorTokenPath
+	if collectorTokenFile == "" {
+		if *tokenPath != "" {
+			collectorTokenFile = filepath.Join(filepath.Dir(*tokenPath), "collector-token")
+		} else {
+			collectorTokenFile = filepath.Join(filepath.Dir(targetDB), "..", "config", "collector-token")
+		}
+	}
+	collectorToken, err := config.EnsureToken(collectorTokenFile)
+	if err != nil {
+		log.Fatalf("[Supervisor] Error resolving collector token: %v", err)
+	}
+	cfg.IPC.CollectorToken = collectorToken
 
 	store, err := storage.OpenSQLite(targetDB)
 	if err != nil {
@@ -85,6 +99,7 @@ func main() {
 	stateMgr.SetToastNotifier(windows.SendToast)
 
 	server := api.NewServer(cfg, stateMgr)
+	server.SetStorage(store)
 	server.SetMotivation(motivationService)
 	server.SetAIStatus(func() interface{} { return aiRegistry.Status() })
 

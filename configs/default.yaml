@@ -82,3 +82,27 @@ motivation:
   checkin_threshold_minutes: 30
   idle_static_credit_grace_seconds: 300
   ap_per_focus_hour_milli: 1000
+
+review:
+  enabled: true
+  timezone: "local"
+  provider:
+    inherit_text_profile: true
+    provider: ""
+    model: ""
+    base_url: ""
+    api_key_env: ""
+    api_key_file: ""
+    timeout_seconds: 30
+    json_mode: "auto"
+    temperature: null
+  trigger:
+    off_debounce_minutes: 5
+    backfill_previous_day: true
+  retention:
+    raw_chat_days: 30
+    semantic_days: 180
+  limits:
+    max_turn_chars: 12000
+    max_conversation_chars: 40000
+    max_final_input_chars: 60000

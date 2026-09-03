@@ -44,10 +44,11 @@ if (@(Get-NetTCPConnection -State Listen -LocalPort 17322 -ErrorAction SilentlyC
 $supExe = "$BinDir\study-supervisor.exe"
 $supConfig = "$ConfigDir\config.yaml"
 $supToken = "$ConfigDir\auth.token"
+$collectorToken = "$ConfigDir\collector-token"
 $supDB = "$RootDir\data\studyguardian.db"
 if (@(Get-NetTCPConnection -State Listen -LocalPort 17321 -ErrorAction SilentlyContinue).Count -eq 0) {
     Write-Host "[3/4] Starting Supervisor (:17321)..." -ForegroundColor Yellow
-    Start-Process -FilePath $supExe -ArgumentList "-config `"$supConfig`" -token `"$supToken`" -db `"$supDB`"" -WorkingDirectory "$RootDir" -WindowStyle Hidden
+    Start-Process -FilePath $supExe -ArgumentList "-config `"$supConfig`" -token `"$supToken`" -collector-token `"$collectorToken`" -db `"$supDB`"" -WorkingDirectory "$RootDir" -WindowStyle Hidden
 } else {
     Write-Host "[3/4] Supervisor is already running." -ForegroundColor Green
 }

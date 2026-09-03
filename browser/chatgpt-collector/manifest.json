@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "StudyGuardian ChatGPT Collector",
+  "version": "0.1.0",
+  "description": "Collects new ChatGPT study turns for the local StudyGuardian review.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "http://127.0.0.1:17321/*"
+  ],
+  "content_scripts": [{
+    "matches": ["https://chatgpt.com/*"],
+    "js": ["src/content.js"],
+    "run_at": "document_idle"
+  }],
+  "background": {"service_worker": "src/background.js", "type": "module"},
+  "options_page": "src/options.html",
+  "action": {"default_title": "StudyGuardian ChatGPT Collector"}
+}

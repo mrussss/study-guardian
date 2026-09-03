@@ -1,19 +1,18 @@
 package classifier
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"study-guardian/internal/ai"
 	"study-guardian/internal/state"
 )
 
@@ -105,12 +104,12 @@ type OpenAICompatibleProvider struct {
 	JSONMode            string
 	SupportsJSONMode    bool
 	Temperature         *float64
-	httpClient          *http.Client
 	mu                  sync.Mutex
 	cooldownUntil       time.Time
 	consecutiveFailures int
 	lastError           string
 	lastSuccessAt       time.Time
+	client              *ai.Client
 }
 
 func NewOpenAICompatibleProvider(endpoint, apiKey, model string) *OpenAICompatibleProvider {
@@ -129,7 +128,11 @@ func NewOpenAICompatibleProviderWithOptions(o ProviderOptions) *OpenAICompatible
 	if o.Timeout <= 0 {
 		o.Timeout = 6 * time.Second
 	}
-	return &OpenAICompatibleProvider{Endpoint: strings.TrimRight(o.Endpoint, "/"), APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Temperature: o.Temperature, httpClient: &http.Client{Timeout: o.Timeout}}
+	return &OpenAICompatibleProvider{
+		Endpoint: strings.TrimRight(o.Endpoint, "/"), APIKey: o.APIKey, Model: o.Model,
+		JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Temperature: o.Temperature,
+		client: ai.NewClient(ai.Options{Endpoint: o.Endpoint, APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Timeout: o.Timeout, Temperature: o.Temperature}),
+	}
 }
 func (p *OpenAICompatibleProvider) Name() string { return "openai-compatible (" + p.Model + ")" }
 func (p *OpenAICompatibleProvider) CooldownUntil() time.Time {
@@ -148,30 +151,6 @@ func (p *OpenAICompatibleProvider) LastSuccessAt() time.Time {
 	return p.lastSuccessAt
 }
 
-type chatMessage struct {
-	Role    string      `json:"role"`
-	Content interface{} `json:"content"`
-}
-type chatCompletionRequest struct {
-	Model          string        `json:"model"`
-	Messages       []chatMessage `json:"messages"`
-	ResponseFormat *respFormat   `json:"response_format,omitempty"`
-	Temperature    *float64      `json:"temperature,omitempty"`
-}
-type respFormat struct {
-	Type string `json:"type"`
-}
-type chatCompletionResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
 func (p *OpenAICompatibleProvider) Classify(ctx context.Context, req ClassificationRequest) (*ClassificationResponse, error) {
 	if p.APIKey == "" && !isLocalEndpoint(p.Endpoint) {
 		return nil, errors.New("API key not configured for AI provider")
@@ -185,17 +164,13 @@ func (p *OpenAICompatibleProvider) Classify(ctx context.Context, req Classificat
 	p.mu.Unlock()
 	system := `You are an AI study guardian assistant. Classify if the user's current computer activity is related to their declared study task. Respond ONLY with a valid JSON object with the following schema: {"relation":"FOCUSED|DISTRACTED|UNKNOWN","confidence":number,"activity":"short description","task_related":boolean,"reason_short":"brief justification"}`
 	user := fmt.Sprintf("Declared Task: %s\nActive Window: %s\nWindow Title: %s\nDomain: %s", req.Task, req.App, req.Title, req.Domain)
-	messages := []chatMessage{{Role: "system", Content: system}}
+	messages := []ai.Message{{Role: "system", Content: system}}
 	if req.AnalysisImageBase64 != "" {
-		messages = append(messages, chatMessage{Role: "user", Content: []map[string]interface{}{{"type": "text", "text": user}, {"type": "image_url", "image_url": map[string]string{"url": "data:image/jpeg;base64," + req.AnalysisImageBase64, "detail": "low"}}}})
+		messages = append(messages, ai.Message{Role: "user", Content: []map[string]interface{}{{"type": "text", "text": user}, {"type": "image_url", "image_url": map[string]string{"url": "data:image/jpeg;base64," + req.AnalysisImageBase64, "detail": "low"}}}})
 	} else {
-		messages = append(messages, chatMessage{Role: "user", Content: user})
+		messages = append(messages, ai.Message{Role: "user", Content: user})
 	}
-	withFormat := p.JSONMode == "json_object" || (p.JSONMode == "auto" && p.SupportsJSONMode)
-	raw, err := p.doRequest(ctx, messages, withFormat)
-	if err != nil && withFormat && isUnsupportedJSONMode(err) {
-		raw, err = p.doRequest(ctx, messages, false)
-	}
+	raw, err := p.client.CompleteJSONMessages(ctx, messages)
 	if err != nil {
 		p.recordFailure(err)
 		return nil, err
@@ -203,68 +178,8 @@ func (p *OpenAICompatibleProvider) Classify(ctx context.Context, req Classificat
 	p.recordSuccess()
 	return parseClassification(raw)
 }
-func (p *OpenAICompatibleProvider) doRequest(ctx context.Context, messages []chatMessage, withFormat bool) ([]byte, error) {
-	payload := chatCompletionRequest{Model: p.Model, Messages: messages, Temperature: p.Temperature}
-	if withFormat {
-		payload.ResponseFormat = &respFormat{Type: "json_object"}
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	r, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Endpoint+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	r.Header.Set("Content-Type", "application/json")
-	if p.APIKey != "" {
-		r.Header.Set("Authorization", "Bearer "+p.APIKey)
-	}
-	resp, err := p.httpClient.Do(r)
-	if err != nil {
-		return nil, fmt.Errorf("AI provider HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	var cr chatCompletionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
-		if resp.StatusCode != http.StatusOK {
-			return nil, providerHTTPError{status: resp.StatusCode, message: "invalid provider response"}
-		}
-		return nil, fmt.Errorf("failed to decode AI response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		msg := "provider request failed"
-		if cr.Error != nil && cr.Error.Message != "" {
-			msg = cr.Error.Message
-		}
-		return nil, providerHTTPError{status: resp.StatusCode, message: msg, retryAfter: resp.Header.Get("Retry-After")}
-	}
-	if cr.Error != nil {
-		return nil, errors.New("AI provider API error")
-	}
-	if len(cr.Choices) == 0 || cr.Choices[0].Message.Content == "" {
-		return nil, errors.New("empty response content from AI provider")
-	}
-	return []byte(cr.Choices[0].Message.Content), nil
-}
 
-type providerHTTPError struct {
-	status     int
-	message    string
-	retryAfter string
-}
-
-func (e providerHTTPError) Error() string {
-	return fmt.Sprintf("AI provider returned HTTP status %d: %s", e.status, e.message)
-}
-func isUnsupportedJSONMode(err error) bool {
-	var e providerHTTPError
-	if !errors.As(err, &e) {
-		return false
-	}
-	message := strings.ToLower(e.message)
-	return (e.status == 400 || e.status == 422) && (strings.Contains(message, "response_format") || strings.Contains(message, "unsupported") || strings.Contains(message, "json_object") || strings.Contains(message, "json mode"))
-}
+type providerHTTPError = ai.HTTPError
 
 func isLocalEndpoint(raw string) bool {
 	u, err := url.Parse(raw)
@@ -284,19 +199,19 @@ func (p *OpenAICompatibleProvider) recordFailure(err error) {
 	}
 	var e providerHTTPError
 	if errors.As(err, &e) {
-		if e.status == 401 || e.status == 403 {
+		if e.Status == 401 || e.Status == 403 {
 			delay = 5 * time.Minute
 		}
-		if e.status == 429 {
+		if e.Status == 429 {
 			delay = 30 * time.Second
-			if n, _ := strconv.Atoi(e.retryAfter); n > 0 {
+			if n, _ := strconv.Atoi(e.RetryAfter); n > 0 {
 				delay = time.Duration(n) * time.Second
 			}
 		}
 	}
 	p.cooldownUntil = time.Now().Add(delay)
 	if errors.As(err, &e) {
-		p.lastError = fmt.Sprintf("HTTP %d", e.status)
+		p.lastError = fmt.Sprintf("HTTP %d", e.Status)
 	} else {
 		p.lastError = "provider request failed"
 	}

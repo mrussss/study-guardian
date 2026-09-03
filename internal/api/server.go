@@ -32,6 +32,7 @@ type Server struct {
 	mu         sync.RWMutex
 	motivation MotivationManager
 	aiStatus   func() interface{}
+	store      *storage.Storage
 }
 
 type MotivationManager interface {
@@ -73,6 +74,10 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/rewards/", s.withAuth(s.handleRewardAction))
 	mux.HandleFunc("/v1/events", s.withAuth(s.handleEvents))
 	mux.HandleFunc("/v1/ai/status", s.withAuth(s.handleAIStatus))
+	mux.HandleFunc("/v1/collector/context", s.withCollectorAuth(s.handleCollectorContext))
+	mux.HandleFunc("/v1/collector/turn", s.withCollectorAuth(s.handleCollectorTurn))
+	mux.HandleFunc("/v1/collector/message", s.withCollectorAuth(s.handleCollectorMessage))
+	mux.HandleFunc("/v1/collector/heartbeat", s.withCollectorAuth(s.handleCollectorHeartbeat))
 
 	addr := fmt.Sprintf("%s:%d", cfg.IPC.SupervisorHost, cfg.IPC.SupervisorPort)
 	s.httpServer = &http.Server{
@@ -87,6 +92,7 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 
 func (s *Server) SetMotivation(m MotivationManager) { s.motivation = m }
 func (s *Server) SetAIStatus(fn func() interface{}) { s.aiStatus = fn }
+func (s *Server) SetStorage(store *storage.Storage) { s.store = store }
 
 func (s *Server) Start() error {
 	addr := s.httpServer.Addr
@@ -115,6 +121,20 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 				http.Error(w, `{"error":"unauthorized","reason":"invalid token"}`, http.StatusUnauthorized)
 				return
 			}
+		}
+		next(w, r)
+	}
+}
+
+// withCollectorAuth deliberately does not fall back to the main Bearer token.
+// The browser extension must never be able to call Supervisor business APIs.
+func (s *Server) withCollectorAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		expectedToken := strings.TrimSpace(s.cfg.IPC.CollectorToken)
+		authHeader := r.Header.Get("Authorization")
+		if expectedToken == "" || !strings.HasPrefix(authHeader, "Bearer ") || strings.TrimPrefix(authHeader, "Bearer ") != expectedToken {
+			http.Error(w, `{"error":"unauthorized","reason":"invalid collector token"}`, http.StatusUnauthorized)
+			return
 		}
 		next(w, r)
 	}

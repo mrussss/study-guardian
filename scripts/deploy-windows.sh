@@ -36,6 +36,7 @@ mkdir -p "${TARGET_DIR}/logs"
 mkdir -p "${TARGET_DIR}/run"
 mkdir -p "${TARGET_DIR}/handoff"
 mkdir -p "${TARGET_DIR}/scripts"
+mkdir -p "${TARGET_DIR}/browser"
 
 # 3. Ensure auth.token exists
 TOKEN_FILE="${TARGET_DIR}/config/auth.token"
@@ -73,7 +74,7 @@ cleanup() {
     exit "${status}"
 }
 trap cleanup EXIT
-mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/pet/src" "${STAGE_DIR}/pet/assets/skins" "${STAGE_DIR}/sensor/screen" "${STAGE_DIR}/scripts"
+mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/pet/src" "${STAGE_DIR}/pet/assets/skins" "${STAGE_DIR}/sensor/screen" "${STAGE_DIR}/scripts" "${STAGE_DIR}/browser"
 cp -f "${REPO_ROOT}/dist/windows/bin/study-supervisor.exe" "${STAGE_DIR}/bin/study-supervisor.exe"
 cp -f "${REPO_ROOT}/dist/windows/bin/config-helper.exe" "${STAGE_DIR}/bin/config-helper.exe"
 cp -r "${REPO_ROOT}/dist/windows/pet/src/." "${STAGE_DIR}/pet/src/"
@@ -82,6 +83,7 @@ cp -r "${REPO_ROOT}/dist/windows/pet/assets/skins/." "${STAGE_DIR}/pet/assets/sk
 cp -r "${REPO_ROOT}/dist/windows/sensor/screen/." "${STAGE_DIR}/sensor/screen/"
 cp -f "${REPO_ROOT}/dist/windows/sensor/requirements.txt" "${STAGE_DIR}/sensor/requirements.txt"
 cp -f "${REPO_ROOT}/scripts/"*.ps1 "${STAGE_DIR}/scripts/" 2>/dev/null || true
+cp -r "${REPO_ROOT}/dist/windows/browser/chatgpt-collector" "${STAGE_DIR}/browser/"
 
 test -s "${STAGE_DIR}/bin/study-supervisor.exe"
 test -s "${STAGE_DIR}/bin/config-helper.exe"
@@ -90,6 +92,7 @@ test -f "${STAGE_DIR}/pet/requirements.txt"
 test -f "${STAGE_DIR}/pet/assets/skins/studyguardian-pixel/manifest.json"
 test -f "${STAGE_DIR}/sensor/screen/server.py"
 test -f "${STAGE_DIR}/sensor/requirements.txt"
+test -f "${STAGE_DIR}/browser/chatgpt-collector/manifest.json"
 
 # 6. Stop the known runtime processes before touching locked Windows files.
 STOP_SCRIPT="${TARGET_DIR}/scripts/stop-all.ps1"
@@ -116,6 +119,7 @@ EPHEMERAL_PATHS=(
     "sensor/screen"
     "sensor/requirements.txt"
     "scripts"
+    "browser/chatgpt-collector"
 )
 for relative_path in "${EPHEMERAL_PATHS[@]}"; do
     source_path="${TARGET_DIR}/${relative_path}"
@@ -125,7 +129,7 @@ for relative_path in "${EPHEMERAL_PATHS[@]}"; do
     fi
 done
 
-mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/pet" "${TARGET_DIR}/pet/assets" "${TARGET_DIR}/sensor"
+mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/pet" "${TARGET_DIR}/pet/assets" "${TARGET_DIR}/sensor" "${TARGET_DIR}/browser"
 mv "${STAGE_DIR}/pet/src" "${TARGET_DIR}/pet/src"
 mv "${STAGE_DIR}/pet/requirements.txt" "${TARGET_DIR}/pet/requirements.txt"
 mv "${STAGE_DIR}/pet/assets/skins" "${TARGET_DIR}/pet/assets/skins"
@@ -134,12 +138,14 @@ mv "${STAGE_DIR}/sensor/requirements.txt" "${TARGET_DIR}/sensor/requirements.txt
 mv "${STAGE_DIR}/bin/study-supervisor.exe" "${TARGET_DIR}/bin/study-supervisor.exe"
 mv "${STAGE_DIR}/bin/config-helper.exe" "${TARGET_DIR}/bin/config-helper.exe"
 mv "${STAGE_DIR}/scripts" "${TARGET_DIR}/scripts"
+mv "${STAGE_DIR}/browser/chatgpt-collector" "${TARGET_DIR}/browser/chatgpt-collector"
 
 # Validate the live replacement before deleting the backup. Any failed test
 # or later deploy step is handled by the EXIT trap above.
 test -s "${TARGET_DIR}/bin/study-supervisor.exe"
 test -f "${TARGET_DIR}/pet/src/main.py"
 test -f "${TARGET_DIR}/sensor/screen/server.py"
+test -f "${TARGET_DIR}/browser/chatgpt-collector/manifest.json"
 
 # Start only the newly deployed Supervisor for a bounded localhost health
 # smoke. This validates the executable and config/database wiring without
@@ -149,7 +155,7 @@ WIN_TARGET_DIR="$(wslpath -w "${TARGET_DIR}")"
 WIN_CONFIG_FILE="$(wslpath -w "${CONFIG_FILE}")"
 WIN_TOKEN_FILE="$(wslpath -w "${TOKEN_FILE}")"
 WIN_DB_FILE="$(wslpath -w "${TARGET_DIR}/data/studyguardian.db")"
-SMOKE_COMMAND="\$ErrorActionPreference='Stop'; \$p=Start-Process -FilePath '${WIN_TARGET_DIR}\\bin\\study-supervisor.exe' -ArgumentList @('-config','${WIN_CONFIG_FILE}','-token','${WIN_TOKEN_FILE}','-db','${WIN_DB_FILE}') -WorkingDirectory '${WIN_TARGET_DIR}' -WindowStyle Hidden -PassThru; try { for(\$i=0;\$i -lt 20;\$i++){ try { \$h=Invoke-RestMethod -Uri 'http://127.0.0.1:17321/healthz'; if(\$h.status -eq 'ok'){ exit 0 } } catch {} Start-Sleep -Milliseconds 500 }; exit 1 } finally { if(\$p -and -not \$p.HasExited){ Stop-Process -Id \$p.Id -Force } }"
+SMOKE_COMMAND="\$ErrorActionPreference='Stop'; \$p=Start-Process -FilePath '${WIN_TARGET_DIR}\\bin\\study-supervisor.exe' -ArgumentList @('-config','${WIN_CONFIG_FILE}','-token','${WIN_TOKEN_FILE}','-collector-token','${WIN_TARGET_DIR}\\config\\collector-token','-db','${WIN_DB_FILE}') -WorkingDirectory '${WIN_TARGET_DIR}' -WindowStyle Hidden -PassThru; try { for(\$i=0;\$i -lt 20;\$i++){ try { \$h=Invoke-RestMethod -Uri 'http://127.0.0.1:17321/healthz'; if(\$h.status -eq 'ok'){ exit 0 } } catch {} Start-Sleep -Milliseconds 500 }; exit 1 } finally { if(\$p -and -not \$p.HasExited){ Stop-Process -Id \$p.Id -Force } }"
 echo "[Deploy] Running Supervisor health smoke..."
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${SMOKE_COMMAND}"
 
