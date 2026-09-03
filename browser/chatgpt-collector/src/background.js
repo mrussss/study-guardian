@@ -3,9 +3,11 @@ import { enqueue, peekQueue, ackQueueHead, readQueue } from './queue.js';
 import { TurnTracker } from './turn_tracker.js';
 import { buildTurnPayload } from './collector.js';
 import { deliverInOrder, flushQueuedPayloads } from './collector_delivery.js';
+import { DeliverySerializer } from './delivery_serial.js';
 
 const BASE = 'http://127.0.0.1:17321';
 const tracker = new TurnTracker();
+const deliverySerializer = new DeliverySerializer();
 
 async function token() {
   const result = await chrome.storage.local.get({ collector_token: '' });
@@ -58,7 +60,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
     if (message.type === 'turn_candidates') {
-      for (const candidate of message.candidates || []) await sendTurn(candidate);
+      for (const candidate of message.candidates || []) {
+        await deliverySerializer.run(() => sendTurn(candidate));
+      }
       sendResponse({ ok: true, queue_depth: (await readQueue()).length });
       return;
     }
