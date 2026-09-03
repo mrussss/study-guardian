@@ -17,7 +17,20 @@ classic bundle, while the background Service Worker remains an ES module.
 The Windows artifact therefore does not require Node or npm on the machine
 where Chrome loads the unpacked extension.
 
-Install dependencies with `npm install` in this directory, run `npm test`,
-then load the directory as an unpacked extension in Chrome. Configure the
-token from the extension options page; never put the Supervisor main token in
-the extension.
+Development source workflow:
+
+```text
+npm install
+npm test
+python3 ../../scripts/bundle-content.py src/content.js dist/content.js
+```
+
+After bundling, the current directory can be loaded as an unpacked extension
+in Chrome. The recommended Windows workflow is `scripts/build-windows.sh`,
+which creates the bundle and complete artifact; load
+`D:\StudyGuardianDev\browser\chatgpt-collector` after deployment. A source
+clone that has not run the bundle step is not loadable because `dist/` is a
+generated, ignored directory.
+
+Configure the token from the extension options page; never put the Supervisor
+main token in the extension.
