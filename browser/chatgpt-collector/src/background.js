@@ -2,6 +2,7 @@ import { getContext, resolveContextForNewTurn, setContext } from './mode_cache.j
 import { enqueue, dequeue, readQueue } from './queue.js';
 import { TurnTracker } from './turn_tracker.js';
 import { buildTurnPayload } from './collector.js';
+import { deliverInOrder } from './collector_delivery.js';
 
 const BASE = 'http://127.0.0.1:17321';
 const tracker = new TurnTracker();
@@ -28,28 +29,27 @@ async function refreshContext() {
 async function flushQueue() {
   while (true) {
     const payload = await dequeue();
-    if (!payload) return;
+    if (!payload) return { ok: true };
     try {
       const response = await request('/v1/collector/turn', { method: 'POST', body: JSON.stringify(payload) });
       if (!response.ok) throw new Error(`turn HTTP ${response.status}`);
     } catch (error) {
       await enqueue(payload);
-      return { error: String(error) };
+      return { ok: false, error: String(error) };
     }
   }
 }
 
 async function sendTurn(candidate) {
   const payload = await buildTurnPayload(candidate, tracker, () => resolveContextForNewTurn(refreshContext), getContext);
-  let delivered = false;
-  try {
-    const response = await request('/v1/collector/turn', { method: 'POST', body: JSON.stringify(payload) });
-    if (!response.ok) throw new Error(`turn HTTP ${response.status}`);
-    delivered = true;
-  } catch (_) {
-    await enqueue(payload);
-  }
-  if (delivered) await flushQueue();
+  await deliverInOrder(payload, {
+    flushQueue,
+    postPayload: async current => {
+      const response = await request('/v1/collector/turn', { method: 'POST', body: JSON.stringify(current) });
+      if (!response.ok) throw new Error(`turn HTTP ${response.status}`);
+    },
+    enqueue
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
