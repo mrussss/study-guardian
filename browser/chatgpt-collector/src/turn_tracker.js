@@ -1,34 +1,51 @@
 import { stableHash } from './parser.js';
 
+const KEY = 'studyguardian_turn_contexts';
+const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 export class TurnTracker {
-  constructor() {
-    this.baseline = new Set();
-    this.attachEpoch = Date.now();
+  constructor(storage = chrome.storage.session, now = () => Date.now()) {
+    this.storage = storage;
+    this.now = now;
     this.contexts = new Map();
+    this.loaded = false;
   }
 
-  attach(identities) {
-    this.attachEpoch = Date.now();
-    this.baseline = new Set(identities);
+  async load() {
+    if (this.loaded) return;
+    const value = await this.storage.get({ [KEY]: {} });
+    const entries = Object.entries(value[KEY] || {});
+    const cutoff = this.now() - MAX_AGE_MS;
+    for (const [key, context] of entries) {
+      const created = Date.parse(context?.created_at || '');
+      if (Number.isFinite(created) && created >= cutoff) this.contexts.set(key, context);
+    }
+    this.loaded = true;
+    if (this.contexts.size !== entries.length) await this.persist();
   }
 
-  isNew(identity) {
-    return !this.baseline.has(identity);
+  async persist() {
+    await this.storage.set({ [KEY]: Object.fromEntries(this.contexts) });
   }
 
-  hasContext(turnKey) {
+  async hasContext(turnKey) {
+    await this.load();
     return this.contexts.has(turnKey);
   }
 
-  contextFor(turn, modeContext, options = {}) {
+  async contextFor(turn, modeContext, options = {}) {
+    await this.load();
     const key = turn.turn_key || stableHash(turn.user.content);
     if (!this.contexts.has(key)) {
       const mode = modeContext?.user_mode || 'UNKNOWN';
-      this.contexts.set(key, {
+      const context = {
         mode_at_start: mode,
         task_at_start: modeContext?.task || '',
-        eligible_for_review: options.allowReview !== false && mode === 'STUDY'
-      });
+        eligible_for_review: options.allowReview !== false && mode === 'STUDY',
+        created_at: new Date(this.now()).toISOString()
+      };
+      this.contexts.set(key, context);
+      await this.persist();
     }
     return this.contexts.get(key);
   }

@@ -39,10 +39,7 @@ async function flushQueue() {
 }
 
 async function sendTurn(candidate) {
-	const changedIdentity = [candidate.user, ...candidate.assistants]
-	  .some(message => tracker.isNew(message.external_message_id));
-	if (!changedIdentity && !tracker.hasContext(candidate.turn_key)) return;
-  const isNewTurn = !tracker.hasContext(candidate.turn_key);
+  const isNewTurn = !(await tracker.hasContext(candidate.turn_key));
   const resolved = isNewTurn
     ? await resolveContextForNewTurn(refreshContext)
     : { context: await getContext(), trustworthy: true };
