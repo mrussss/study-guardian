@@ -1,6 +1,7 @@
 import { getContext, resolveContextForNewTurn, setContext } from './mode_cache.js';
 import { enqueue, dequeue, readQueue } from './queue.js';
 import { TurnTracker } from './turn_tracker.js';
+import { buildTurnPayload } from './collector.js';
 
 const BASE = 'http://127.0.0.1:17321';
 const tracker = new TurnTracker();
@@ -39,32 +40,16 @@ async function flushQueue() {
 }
 
 async function sendTurn(candidate) {
-  const isNewTurn = !(await tracker.hasContext(candidate.turn_key));
-  const resolved = isNewTurn
-    ? await resolveContextForNewTurn(refreshContext)
-    : { context: await getContext(), trustworthy: true };
-  const frozen = tracker.contextFor(candidate, resolved.context, { allowReview: resolved.trustworthy });
-  const payload = {
-    platform: candidate.platform,
-    external_conversation_id: candidate.external_conversation_id,
-    title: candidate.title,
-    url: candidate.url,
-    capture_policy: 'AUTO',
-    external_turn_id: candidate.turn_key,
-    turn_key: candidate.turn_key,
-    observed_at: candidate.user.observed_at,
-    ...frozen,
-    active_branch_key: candidate.assistants.at(-1)?.branch_key || '',
-    finalized: candidate.assistants.some(message => message.is_final),
-    messages: [candidate.user, ...candidate.assistants]
-  };
+  const payload = await buildTurnPayload(candidate, tracker, () => resolveContextForNewTurn(refreshContext), getContext);
+  let delivered = false;
   try {
     const response = await request('/v1/collector/turn', { method: 'POST', body: JSON.stringify(payload) });
     if (!response.ok) throw new Error(`turn HTTP ${response.status}`);
+    delivered = true;
   } catch (_) {
     await enqueue(payload);
   }
-  await flushQueue();
+  if (delivered) await flushQueue();
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
