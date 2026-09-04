@@ -8,7 +8,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../pet/src")))
+sys.path.insert(0, os.path.dirname(__file__))
 from client import SupervisorClient
+from supervisor_test_utils import wait_for_supervisor
 
 
 class MockAWHandlerForPhase4(BaseHTTPRequestHandler):
@@ -115,7 +117,7 @@ privacy:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        time.sleep(0.5)
+        wait_for_supervisor(cls.supervisor_proc, 17387)
 
     @classmethod
     def tearDownClass(cls):

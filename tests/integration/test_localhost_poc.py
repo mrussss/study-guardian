@@ -7,9 +7,11 @@ import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../pet/src")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../sensor/screen")))
+sys.path.insert(0, os.path.dirname(__file__))
 
 from client import SupervisorClient
 from server import ThreadedHTTPServer, SensorHandler
+from supervisor_test_utils import wait_for_supervisor
 
 
 class TestLocalhostTriadPoC(unittest.TestCase):
@@ -52,7 +54,7 @@ ipc:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        time.sleep(2.5)
+        wait_for_supervisor(cls.supervisor_proc, 17381)
 
     @classmethod
     def tearDownClass(cls):
