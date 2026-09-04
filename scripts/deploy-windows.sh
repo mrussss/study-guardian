@@ -20,6 +20,25 @@ case "${TARGET_DIR}" in
     *) echo "[Deploy] Refusing unexpected target: ${TARGET_DIR}" >&2; exit 1 ;;
 esac
 
+# WSL interop may expose Windows executables through their absolute mount path
+# without adding that path to PATH. Resolve PowerShell once so stop/smoke steps
+# remain available in both normal and restricted WSL sessions.
+POWERSHELL_BIN="${POWERSHELL_BIN:-powershell.exe}"
+if ! command -v "${POWERSHELL_BIN}" >/dev/null 2>&1; then
+    for candidate in \
+        /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
+        /mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe; do
+        if [ -x "${candidate}" ]; then
+            POWERSHELL_BIN="${candidate}"
+            break
+        fi
+    done
+fi
+if ! command -v "${POWERSHELL_BIN}" >/dev/null 2>&1 && [ ! -x "${POWERSHELL_BIN}" ]; then
+    echo "[Deploy] Windows PowerShell is required for process stop and health smoke." >&2
+    exit 1
+fi
+
 # 1. Check build artifacts
 if [ ! -f "${REPO_ROOT}/dist/windows/bin/study-supervisor.exe" ]; then
     echo "[Deploy] Build artifacts not found. Running build-windows.sh first..."
@@ -105,7 +124,7 @@ STOP_SCRIPT="${TARGET_DIR}/scripts/stop-all.ps1"
 if [ -f "${STOP_SCRIPT}" ]; then
     echo "[Deploy] Stopping Supervisor, Pet and Sensor..."
     WIN_STOP_SCRIPT="$(wslpath -w "${STOP_SCRIPT}")"
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${WIN_STOP_SCRIPT}"
+    "${POWERSHELL_BIN}" -NoProfile -ExecutionPolicy Bypass -File "${WIN_STOP_SCRIPT}"
     sleep 1
 else
     echo "[Deploy] No previous stop script found; continuing as a fresh runtime deployment."
@@ -165,7 +184,7 @@ WIN_TOKEN_FILE="$(wslpath -w "${TOKEN_FILE}")"
 WIN_DB_FILE="$(wslpath -w "${TARGET_DIR}/data/studyguardian.db")"
 SMOKE_COMMAND="\$ErrorActionPreference='Stop'; \$p=Start-Process -FilePath '${WIN_TARGET_DIR}\\bin\\study-supervisor.exe' -ArgumentList @('-config','${WIN_CONFIG_FILE}','-token','${WIN_TOKEN_FILE}','-collector-token','${WIN_TARGET_DIR}\\config\\collector-token','-db','${WIN_DB_FILE}') -WorkingDirectory '${WIN_TARGET_DIR}' -WindowStyle Hidden -PassThru; try { for(\$i=0;\$i -lt 20;\$i++){ try { \$h=Invoke-RestMethod -Uri 'http://127.0.0.1:17321/healthz'; if(\$h.status -eq 'ok'){ exit 0 } } catch {} Start-Sleep -Milliseconds 500 }; exit 1 } finally { if(\$p -and -not \$p.HasExited){ Stop-Process -Id \$p.Id -Force } }"
 echo "[Deploy] Running Supervisor health smoke..."
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${SMOKE_COMMAND}"
+"${POWERSHELL_BIN}" -NoProfile -ExecutionPolicy Bypass -Command "${SMOKE_COMMAND}"
 
 rm -rf "${BACKUP_DIR}"
 BACKUP_DIR=""
