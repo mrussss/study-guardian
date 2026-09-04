@@ -107,6 +107,29 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .review-badge { padding: 5px 8px; color: var(--sg-warning); background: var(--sg-warning-soft); border-radius: 999px; font-size: 11px; font-weight: 650; }
 .review-body { margin-top: 24px; }
 .review-icon { color: var(--sg-success); background: var(--sg-success-soft); }
+.data-page { max-width: 980px; margin: 0 auto; padding: 32px; }
+.data-page-heading { margin-bottom: 22px; }
+.data-page-heading h1 { margin: 4px 0 6px; color: var(--sg-text); font-size: 28px; letter-spacing: -.04em; }
+.data-page-heading p:not(.heading-kicker) { margin: 0; color: var(--sg-text-secondary); font-size: 14px; }
+.data-card { min-height: 240px; }
+.data-list { display: grid; gap: 0; margin-top: 16px; }
+.data-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 0; border-top: 1px solid var(--sg-border); }
+.data-row > div { display: grid; gap: 4px; min-width: 0; }
+.data-row strong { color: var(--sg-text); font-size: 14px; font-weight: 650; }
+.data-row span { color: var(--sg-text-secondary); font-size: 12px; }
+.data-row em { flex: 0 0 auto; color: var(--sg-accent); font-size: 12px; font-style: normal; font-weight: 700; }
+.data-row.is-done strong { color: var(--sg-text-secondary); text-decoration: line-through; }
+.data-progress { width: min(360px, 52vw); height: 6px; margin-top: 5px; overflow: hidden; background: var(--sg-surface-muted); border-radius: 999px; }
+.data-progress span { display: block; height: 100%; background: var(--sg-accent); border-radius: inherit; }
+.data-empty { display: grid; min-height: 170px; place-content: center; justify-items: center; gap: 10px; color: var(--sg-text-tertiary); font-size: 13px; }
+.review-detail-grid { display: grid; grid-template-columns: 1.5fr 1fr; gap: 24px; margin-top: 24px; }
+.review-detail-grid > div { display: grid; align-content: start; gap: 8px; }
+.review-detail-grid p { margin: 0; color: var(--sg-text-secondary); font-size: 13px; line-height: 1.5; }
+.review-detail-grid strong { color: var(--sg-text); }
+.system-status-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; margin-top: 22px; overflow: hidden; background: var(--sg-border); border: 1px solid var(--sg-border); border-radius: 12px; }
+.system-status-grid > div { display: grid; gap: 6px; padding: 16px; background: var(--sg-surface); }
+.system-status-grid span { color: var(--sg-text-tertiary); font-size: 12px; }
+.system-status-grid strong { color: var(--sg-text); font-size: 14px; }
 .coming-page { display: grid; max-width: 450px; min-height: calc(100vh - 70px); place-content: center; justify-items: center; gap: 12px; margin: 0 auto; padding: 32px; text-align: center; }
 .coming-icon { display: grid; width: 54px; height: 54px; place-items: center; color: var(--sg-accent); background: var(--sg-accent-soft); border-radius: 16px; }
 .coming-page h1 { margin: 4px 0 0; font-size: 24px; font-weight: 650; }
@@ -114,4 +137,5 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .coming-page .secondary-button { color: var(--sg-text); background: var(--sg-surface); border-color: var(--sg-border-strong); }
 @media (max-width: 1020px) { .center-sidebar { width: 208px; flex-basis: 208px; } .dashboard-page { padding: 24px; } .center-topbar { padding-inline: 24px; } .metric-cell { padding-inline: 15px; } }
 @media (max-width: 860px) { body:has(.control-center-shell) { min-width: 0; } .control-center-shell { display: block; } .center-sidebar { position: static; width: 100%; height: auto; min-height: 0; } .center-brand { padding: 16px 20px; } .center-sidebar-content, .center-sidebar-footer { display: none; } .center-topbar { height: 58px; padding-inline: 20px; } .dashboard-page { padding: 20px; } .metric-strip { grid-template-columns: repeat(2, 1fr); } .metric-cell { padding: 12px 17px; border-bottom: 1px solid var(--sg-border); } .metric-cell:nth-child(2) { border-right: 0; } .metric-cell:nth-child(3), .metric-cell:nth-child(4) { border-bottom: 0; } }
+@media (max-width: 640px) { .data-page { padding: 20px; } .review-detail-grid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .focus-hero { flex-direction: column; } .hero-progress { display: flex; align-items: center; justify-content: flex-start; padding: 20px 0 0; border-top: 1px solid rgba(255,255,255,.13); border-left: 0; } .dashboard-grid { grid-template-columns: 1fr; } .page-heading h1 { font-size: 23px; } }

@@ -55,6 +55,19 @@ test("dashboard snapshot accepts canonical data and drops invalid optional secti
     missions: [{ id: "m-1", title: "Read", description: "", reward_milli_ap: 100, status: "OPEN", created_at: "2026-09-04T00:00:00Z" }],
     rewards: [{ id: "r-1", name: "Break", type: "TIME", cost_milli_ap: 100, description: "", enabled: true }],
     ai: { enabled: false, text_provider: "none", text_configured: false, vision_enabled: false },
+    review: {
+      schema_version: 1,
+      date: "2026-09-04",
+      headline: "完成了一小步",
+      topics: [{ name: "Go", summary: "复习 context", confidence: 0.8, evidence_refs: ["private"] }],
+      accomplishments: [{ text: "完成练习", confidence: 0.9, evidence_refs: ["private"] }],
+      unfinished: ["整理笔记"],
+      difficulties: [],
+      behavior: { distraction_count: 1, largest_distraction_seconds: 30, average_recovery_seconds: 20 },
+      tomorrow_priority: "继续练习",
+      warnings: [],
+      raw_chat: "must be ignored",
+    },
     secret: "must be ignored",
   });
   assert.equal(snapshot.connected, true);
@@ -62,6 +75,9 @@ test("dashboard snapshot accepts canonical data and drops invalid optional secti
   assert.deepEqual(snapshot.motivation, motivation);
   assert.equal(snapshot.history?.length, 1);
   assert.equal("secret" in snapshot, false);
+  assert.equal(snapshot.review?.topics[0].name, "Go");
+  assert.equal("raw_chat" in (snapshot.review ?? {}), false);
+  assert.equal("evidence_refs" in (snapshot.review?.topics[0] ?? {}), false);
   assert.equal(normalizeNativeDashboardSnapshot({ connected: true, status: { ...status, confidence: 2 } }).connected, false);
   assert.deepEqual(normalizeNativeDashboardSnapshot({ connected: true, status, missions: [{ ...snapshot.missions?.[0], status: "INVALID" }] }).missions, undefined);
 });

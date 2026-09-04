@@ -31,6 +31,7 @@ const SUPERVISOR_GET_PATHS: &[&str] = &[
     "/v1/missions",
     "/v1/rewards",
     "/v1/ai/status",
+    "/v1/review/daily",
 ];
 const DEFAULT_SUPERVISOR_HOST: &str = "127.0.0.1";
 const DEFAULT_SUPERVISOR_PORT: u16 = 17321;
@@ -92,6 +93,8 @@ struct SupervisorDashboardSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     ai: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    review: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     last_error_kind: Option<&'static str>,
 }
 
@@ -114,6 +117,7 @@ fn disconnected_dashboard(kind: NativeErrorKind) -> SupervisorDashboardSnapshot 
         missions: None,
         rewards: None,
         ai: None,
+        review: None,
         last_error_kind: Some(kind.as_str()),
     }
 }
@@ -626,6 +630,69 @@ fn sanitize_ai(value: &Value) -> Result<Value, NativeErrorKind> {
     Ok(output)
 }
 
+fn bounded_text_list(value: &Value, max_items: usize, max_bytes: usize) -> Result<Value, NativeErrorKind> {
+    let values = value.as_array().ok_or(NativeErrorKind::InvalidResponse)?;
+    if values.len() > max_items {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    values
+        .iter()
+        .map(|item| item.as_str().filter(|text| text.len() <= max_bytes).map(Value::from).ok_or(NativeErrorKind::InvalidResponse))
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
+}
+
+fn sanitize_review(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let topics = object.get("topics").and_then(Value::as_array).ok_or(NativeErrorKind::InvalidResponse)?;
+    if topics.len() > 16 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let mut safe_topics = Vec::with_capacity(topics.len());
+    for topic in topics {
+        let item = topic.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        safe_topics.push(json!({
+            "name": text_field(item, "name", 128)?,
+            "summary": text_field(item, "summary", 512)?,
+            "confidence": bounded_progress_field(item, "confidence")?,
+        }));
+    }
+    let accomplishments = object.get("accomplishments").and_then(Value::as_array).ok_or(NativeErrorKind::InvalidResponse)?;
+    if accomplishments.len() > 32 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let mut safe_accomplishments = Vec::with_capacity(accomplishments.len());
+    for accomplishment in accomplishments {
+        let item = accomplishment.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        safe_accomplishments.push(json!({
+            "text": text_field(item, "text", 512)?,
+            "confidence": bounded_progress_field(item, "confidence")?,
+        }));
+    }
+    let behavior = object.get("behavior").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
+    let safe_behavior = json!({
+        "distraction_count": non_negative_i64_field(behavior, "distraction_count")?,
+        "largest_distraction_seconds": non_negative_i64_field(behavior, "largest_distraction_seconds")?,
+        "average_recovery_seconds": non_negative_i64_field(behavior, "average_recovery_seconds")?,
+    });
+    let warnings = object.get("warnings").map(|value| bounded_text_list(value, 16, 512)).transpose()?.unwrap_or_else(|| Value::Array(Vec::new()));
+    Ok(json!({
+        "schema_version": 1,
+        "date": text_field(object, "date", 32)?,
+        "headline": text_field(object, "headline", 512)?,
+        "topics": safe_topics,
+        "accomplishments": safe_accomplishments,
+        "unfinished": bounded_text_list(object.get("unfinished").ok_or(NativeErrorKind::InvalidResponse)?, 32, 512)?,
+        "difficulties": bounded_text_list(object.get("difficulties").ok_or(NativeErrorKind::InvalidResponse)?, 32, 512)?,
+        "behavior": safe_behavior,
+        "tomorrow_priority": text_field(object, "tomorrow_priority", 512)?,
+        "warnings": warnings,
+    }))
+}
+
 fn supervisor_credentials() -> Result<(String, u16, String), NativeErrorKind> {
     let root = runtime_root();
     let token = fs::read_to_string(root.join("config").join("auth.token"))
@@ -747,6 +814,9 @@ fn supervisor_dashboard_snapshot() -> SupervisorDashboardSnapshot {
     let ai = fetch_supervisor_get(&host, port, &token, "/v1/ai/status")
         .ok()
         .and_then(|value| sanitize_ai(&value).ok());
+    let review = fetch_supervisor_get(&host, port, &token, "/v1/review/daily")
+        .ok()
+        .and_then(|value| sanitize_review(&value).ok());
     SupervisorDashboardSnapshot {
         connected: true,
         status: Some(status),
@@ -756,6 +826,7 @@ fn supervisor_dashboard_snapshot() -> SupervisorDashboardSnapshot {
         missions,
         rewards,
         ai,
+        review,
         last_error_kind: None,
     }
 }
@@ -869,7 +940,8 @@ mod tests {
     use super::{
         bounded_panel_position, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
-        sanitize_missions, sanitize_motivation, sanitize_semantic, sanitize_status, NativeErrorKind,
+        sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status,
+        NativeErrorKind,
         SupervisorSnapshot,
     };
 
@@ -1006,6 +1078,24 @@ mod tests {
         .is_err());
         assert_eq!(fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/private"), Err(NativeErrorKind::Unavailable));
         assert_eq!(fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/status"), Err(NativeErrorKind::Unauthorized));
+
+        let review = sanitize_review(&json!({
+            "schema_version": 1,
+            "date": "2026-09-04",
+            "headline": "完成了一小步",
+            "topics": [{"name": "Go", "summary": "复习 context", "confidence": 0.8, "evidence_refs": ["private"]}],
+            "accomplishments": [{"text": "完成练习", "confidence": 0.9, "evidence_refs": ["private"]}],
+            "unfinished": ["整理笔记"],
+            "difficulties": [],
+            "behavior": {"distraction_count": 1, "largest_distraction_seconds": 30, "average_recovery_seconds": 20},
+            "tomorrow_priority": "继续练习",
+            "warnings": ["仅供复盘"],
+            "raw_chat": "must never cross the native boundary",
+        }))
+        .expect("valid review");
+        assert!(review.get("raw_chat").is_none());
+        assert!(review["topics"][0].get("evidence_refs").is_none());
+        assert!(review["accomplishments"][0].get("evidence_refs").is_none());
     }
 
     #[test]

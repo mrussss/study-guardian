@@ -144,6 +144,19 @@ export interface NativeAIStatus {
   warning?: string;
 }
 
+export interface NativeReviewSummary {
+  schema_version: 1;
+  date: string;
+  headline: string;
+  topics: Array<{ name: string; summary: string; confidence: number }>;
+  accomplishments: Array<{ text: string; confidence: number }>;
+  unfinished: string[];
+  difficulties: string[];
+  behavior: { distraction_count: number; largest_distraction_seconds: number; average_recovery_seconds: number };
+  tomorrow_priority: string;
+  warnings: string[];
+}
+
 export interface SupervisorDashboardSnapshot {
   connected: boolean;
   status?: NativeSupervisorStatus;
@@ -153,6 +166,7 @@ export interface SupervisorDashboardSnapshot {
   missions?: NativeMission[];
   rewards?: NativeReward[];
   ai?: NativeAIStatus;
+  review?: NativeReviewSummary;
   last_error_kind?: TransportErrorKind;
 }
 
@@ -232,6 +246,40 @@ function validAI(value: unknown): value is NativeAIStatus {
     (value.warning === undefined || boundedText(value.warning, 512));
 }
 
+function boundedStringList(value: unknown, maxItems: number, maxLength: number): value is string[] {
+  return Array.isArray(value) && value.length <= maxItems && value.every(item => boundedText(item, maxLength));
+}
+
+function normalizedReview(value: unknown): NativeReviewSummary | undefined {
+  if (!record(value) || value.schema_version !== 1 || !boundedText(value.date, 32) || !boundedText(value.headline, 512) ||
+    !boundedText(value.tomorrow_priority, 512) || !boundedStringList(value.unfinished, 32, 512) ||
+    !boundedStringList(value.difficulties, 32, 512) || !boundedStringList(value.warnings, 16, 512) ||
+    !Array.isArray(value.topics) || value.topics.length > 16 || !Array.isArray(value.accomplishments) || value.accomplishments.length > 32 ||
+    !record(value.behavior) || !nonNegativeInteger(value.behavior.distraction_count) ||
+    !nonNegativeInteger(value.behavior.largest_distraction_seconds) || !nonNegativeInteger(value.behavior.average_recovery_seconds)) return undefined;
+  const topics = value.topics.map(topic => record(topic) && boundedText(topic.name, 128) && boundedText(topic.summary, 512) && boundedRatio(topic.confidence)
+    ? { name: topic.name, summary: topic.summary, confidence: topic.confidence } : undefined);
+  const accomplishments = value.accomplishments.map(item => record(item) && boundedText(item.text, 512) && boundedRatio(item.confidence)
+    ? { text: item.text, confidence: item.confidence } : undefined);
+  if (topics.some(topic => !topic) || accomplishments.some(item => !item)) return undefined;
+  return {
+    schema_version: 1,
+    date: value.date,
+    headline: value.headline,
+    topics: topics as Array<{ name: string; summary: string; confidence: number }>,
+    accomplishments: accomplishments as Array<{ text: string; confidence: number }>,
+    unfinished: value.unfinished,
+    difficulties: value.difficulties,
+    behavior: {
+      distraction_count: value.behavior.distraction_count,
+      largest_distraction_seconds: value.behavior.largest_distraction_seconds,
+      average_recovery_seconds: value.behavior.average_recovery_seconds,
+    },
+    tomorrow_priority: value.tomorrow_priority,
+    warnings: value.warnings,
+  };
+}
+
 export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashboardSnapshot {
   if (!record(raw) || raw.connected !== true || !validStatus(raw.status)) {
     return { connected: false, last_error_kind: record(raw) ? errorKind(raw.last_error_kind) ?? "invalid_response" : "invalid_response" };
@@ -245,6 +293,7 @@ export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashbo
     ...(validMissions(raw.missions) ? { missions: raw.missions } : {}),
     ...(validRewards(raw.rewards) ? { rewards: raw.rewards } : {}),
     ...(validAI(raw.ai) ? { ai: raw.ai } : {}),
+    ...(normalizedReview(raw.review) ? { review: normalizedReview(raw.review) } : {}),
   };
 }
 

@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
-import type { NativeMission, SupervisorDashboardSnapshot } from "../transport/supervisor";
+import type { NativeAchievement, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
 
@@ -185,8 +185,55 @@ function Dashboard({ snapshot, live = false }: DashboardProps): ReactElement {
 
 function CoffeeIcon(): ReactElement { return <Coffee size={17} />; }
 
+function DataPage({ title, description, children }: { title: string; description: string; children: ReactElement }): ReactElement {
+  return <div className="data-page"><div className="data-page-heading"><div><p className="heading-kicker">StudyGuardian · 本地数据</p><h1>{title}</h1><p>{description}</p></div></div>{children}</div>;
+}
+
+function EmptyData({ text }: { text: string }): ReactElement {
+  return <div className="data-empty"><Sparkles size={20} /><span>{text}</span></div>;
+}
+
+function MissionsPage({ missions }: { missions?: NativeMission[] }): ReactElement {
+  return <DataPage title="任务" description="把下一步拆小一点，完成也算进展。"><section className="surface-section data-card"><div className="section-header"><div><h2>当前任务</h2><p>Supervisor 返回的任务列表</p></div><ListChecks className="section-icon" size={20} /></div>{missions && missions.length > 0 ? <div className="data-list">{liveMissionRows(missions).map(row => <div className={`data-row ${row.done ? "is-done" : ""}`} key={row.title}><div><strong>{row.title}</strong><span>{row.note}</span></div><em>{row.reward}</em></div>)}</div> : <EmptyData text="暂无任务记录" />}</section></DataPage>;
+}
+
+function AchievementsPage({ achievements }: { achievements?: NativeAchievement[] }): ReactElement {
+  return <DataPage title="成就" description="把稳定的节奏，留在自己的进度里。"><section className="surface-section data-card"><div className="section-header"><div><h2>成就进度</h2><p>已完成和下一步目标</p></div><Trophy className="section-icon" size={20} /></div>{achievements && achievements.length > 0 ? <div className="data-list">{achievements.map(item => <div className={`data-row ${item.unlocked ? "is-done" : ""}`} key={item.achievement_id}><div><strong>{item.name}</strong><span>{item.description}</span><div className="data-progress"><span style={{ width: `${item.progress * 100}%` }} /></div></div><em>{item.unlocked ? "已解锁" : `${Math.round(item.progress * 100)}%`}</em></div>)}</div> : <EmptyData text="暂无成就记录" />}</section></DataPage>;
+}
+
+function RewardsPage({ rewards }: { rewards?: NativeReward[] }): ReactElement {
+  return <DataPage title="奖励" description="有效专注带来的 AP，可以换成现实里的小奖励。"><section className="surface-section data-card"><div className="section-header"><div><h2>奖励目录</h2><p>当前可用的本地奖励</p></div><Gift className="section-icon" size={20} /></div>{rewards && rewards.length > 0 ? <div className="data-list">{rewards.map(item => <div className="data-row" key={item.id}><div><strong>{item.name}</strong><span>{item.description}</span></div><em>{(item.cost_milli_ap / 1000).toFixed(2)} AP</em></div>)}</div> : <EmptyData text="暂无奖励目录" />}</section></DataPage>;
+}
+
+function HistoryPage({ history }: { history?: SupervisorDashboardSnapshot["history"] }): ReactElement {
+  return <DataPage title="历史" description="回看最近 7 天的有效专注，不追踪原始屏幕内容。"><section className="surface-section data-card"><div className="section-header"><div><h2>专注记录</h2><p>仅显示 Supervisor 提供的分钟级汇总</p></div><History className="section-icon" size={20} /></div>{history && history.length > 0 ? <div className="data-list">{history.map(day => <div className="data-row" key={day.date}><div><strong>{day.date}</strong><span>目标 {day.target_minutes} 分钟 · {day.target_completed ? "已达标" : "进行中"}</span></div><em>{day.focus_minutes} min</em></div>)}</div> : <EmptyData text="暂无历史记录" />}</section></DataPage>;
+}
+
+function ReviewPage({ review }: { review?: NativeReviewSummary }): ReactElement {
+  return <DataPage title="学习复盘" description="只读摘要来自 canonical Review，不包含 evidence refs 或原始聊天内容。"><section className="surface-section data-card">{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · 已生成</p></div><span className="review-badge">安全摘要</span></div><div className="review-detail-grid"><div><span className="eyebrow">主题</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>暂无主题</p>}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div></div></> : <EmptyData text="今天还没有可用的复盘摘要" />}</section></DataPage>;
+}
+
+function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
+  const status = snapshot?.status;
+  const ai = snapshot?.ai;
+  return <DataPage title="系统状态" description="查看本地 Supervisor 与受限功能的健康状态。"><section className="surface-section data-card"><div className="section-header"><div><h2>本地服务</h2><p>不会显示 token、路径或原始错误</p></div><Activity className="section-icon" size={20} /></div><div className="system-status-grid"><div><span>Supervisor</span><strong>{snapshot?.connected ? "已连接" : "连接中"}</strong></div><div><span>ActivityWatch</span><strong>{status?.activitywatch_ok ? "正常" : "待检查"}</strong></div><div><span>Screen Sensor</span><strong>{status?.screen_sensor_ok ? "正常" : "待检查"}</strong></div><div><span>AI</span><strong>{ai?.enabled && ai.text_configured ? "已配置" : "规则模式"}</strong></div></div></section></DataPage>;
+}
+
 function ComingSoon({ title }: { title: string }): ReactElement {
   return <div className="coming-page"><div className="coming-icon"><Sparkles size={24} /></div><h1>{title}</h1><p>这个入口已经为 Control Center 预留，当前阶段先完成总览与视觉基础。</p><button className="secondary-button" type="button"><Play size={16} />回到总览</button></div>;
+}
+
+function LiveSection({ active, snapshot, live }: { active: string; snapshot?: SupervisorDashboardSnapshot; live: boolean }): ReactElement {
+  if (!live) return <ComingSoon title={displayTitle(active)} />;
+  switch (active) {
+    case "missions": return <MissionsPage missions={snapshot?.missions} />;
+    case "achievements": return <AchievementsPage achievements={snapshot?.achievements} />;
+    case "rewards": return <RewardsPage rewards={snapshot?.rewards} />;
+    case "review": return <ReviewPage review={snapshot?.review} />;
+    case "history": return <HistoryPage history={snapshot?.history} />;
+    case "system": return <SystemPage snapshot={snapshot} />;
+    default: return <ComingSoon title={displayTitle(active)} />;
+  }
 }
 
 export function ControlCenter({ snapshot, live = false }: DashboardProps): ReactElement {
@@ -204,7 +251,7 @@ export function ControlCenter({ snapshot, live = false }: DashboardProps): React
     </aside>
     <main className="center-main">
       <header className="center-topbar"><div><span className="breadcrumb">StudyGuardian <ChevronRight size={14} />{displayTitle(active)}</span><span className="topbar-note">数据保存在本机</span></div><div className="topbar-actions"><button className="icon-button" type="button" aria-label="查看通知"><Activity size={17} /></button><button className="avatar-button" type="button" aria-label="用户菜单">SG</button></div></header>
-      {active === "overview" ? <Dashboard snapshot={snapshot} live={live} /> : <ComingSoon title={displayTitle(active)} />}
+      {active === "overview" ? <Dashboard snapshot={snapshot} live={live} /> : <LiveSection active={active} snapshot={snapshot} live={live} />}
     </main>
   </div>;
 }
