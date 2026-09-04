@@ -286,6 +286,7 @@ pub fn run() {
         .setup(|app| {
             let window = app.get_webview_window("main").ok_or("main window missing")?;
             window.set_always_on_top(true)?;
+            window.set_shadow(false)?;
             let toggle = MenuItem::with_id(app, "toggle-click-through", "切换鼠标穿透", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出 Pet", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle, &quit])?;

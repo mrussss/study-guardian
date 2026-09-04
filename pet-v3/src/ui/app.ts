@@ -7,6 +7,8 @@ import { mockActivityWatchStale, mockSemantic, mockSupervisorOffline } from "../
 import type { Activity, CurrentActivityView, Relation, UserMode } from "../model/semantic";
 import { loadSkinManifest } from "../skin";
 import { NativeSupervisorAdapter, SupervisorPollLoop } from "../transport/supervisor";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isInteractiveTarget, shouldStartDragging } from "./drag";
 import legacyManifest from "../skins/studyguardian-pixel/manifest.json";
 import idleURL from "../skins/studyguardian-pixel/sprites/idle.png";
 import studyURL from "../skins/studyguardian-pixel/sprites/study.png";
@@ -37,6 +39,7 @@ export function mountApp(root: HTMLElement): void {
   const supervisorPoll = isTauriRuntime()
     ? new SupervisorPollLoop(new NativeSupervisorAdapter())
     : null;
+  const showDevPanel = import.meta.env.DEV && import.meta.env.VITE_PET_DEV_PANEL === "1";
   const emergencyFrames = splitHorizontal(96, 96, 24, 96);
   let semantic: CurrentActivityView = mockSemantic({});
   let connected = true;
@@ -49,18 +52,23 @@ export function mountApp(root: HTMLElement): void {
     <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet"></canvas>
     <div class="pet-state" data-state>LEARNING</div>
     <div class="pet-task" data-task></div>
-    <div class="pet-controls" data-dev-panel>
+    ${showDevPanel ? `<div class="pet-controls" data-dev-panel>
       <select data-mode aria-label="mock mode"><option>STUDY</option><option>BREAK</option><option>STANDBY</option><option>OFF</option></select>
       <select data-activity aria-label="mock activity"><option>GENERAL_STUDY</option><option>CODING</option><option>ALGORITHM</option><option>READING</option><option>WRITING</option><option>WATCHING</option><option>AI_ASSISTED</option><option>BROWSING</option><option>UNKNOWN</option></select>
       <button data-distracted type="button">分心</button><button data-offline type="button">Supervisor离线</button><button data-stale type="button">AW过期</button>
       <button data-clickthrough type="button">穿透:关</button>
-    </div>
+    </div>` : ""}
   </section>`;
+  const petShell = root.querySelector<HTMLElement>(".pet-shell")!;
   const canvas = root.querySelector<HTMLCanvasElement>("canvas")!;
   const stateLabel = root.querySelector<HTMLElement>("[data-state]")!;
   const taskLabel = root.querySelector<HTMLElement>("[data-task]")!;
-  const mode = root.querySelector<HTMLSelectElement>("[data-mode]")!;
-  const activity = root.querySelector<HTMLSelectElement>("[data-activity]")!;
+  petShell.addEventListener("pointerdown", event => {
+    if (!shouldStartDragging(event.button, isTauriRuntime(), isInteractiveTarget(event.target))) return;
+    void getCurrentWindow().startDragging().catch(() => {
+      // Native drag failure must not leak raw IPC errors into the UI.
+    });
+  });
 
   const drawEmergencyPlaceholder = (state: VisualState): void => {
     const ctx = canvas.getContext("2d")!;
@@ -113,28 +121,32 @@ export function mountApp(root: HTMLElement): void {
     lastFrame = now;
     requestAnimationFrame(refresh);
   };
-  const updateMock = (overrides: Parameters<typeof mockSemantic>[0]): void => {
-    connected = true;
-    semantic = mockSemantic(overrides);
-  };
-  mode.addEventListener("change", () => updateMock({ user_mode: mode.value as UserMode }));
-  activity.addEventListener("change", () => updateMock({ activity: activity.value as Activity }));
-  root.querySelector("[data-distracted]")!.addEventListener("click", () => updateMock({ relation: "DISTRACTED" as Relation }));
-  root.querySelector("[data-offline]")!.addEventListener("click", () => {
-    const mock = mockSupervisorOffline();
-    connected = mock.connected;
-    semantic = mock.semantic;
-  });
-  root.querySelector("[data-stale]")!.addEventListener("click", () => {
-    const mock = mockActivityWatchStale();
-    connected = mock.connected;
-    semantic = mock.semantic;
-  });
-  root.querySelector("[data-clickthrough]")!.addEventListener("click", async () => {
-    clickThrough = !clickThrough;
-    try { await invoke("set_click_through", { enabled: clickThrough }); } catch { /* browser dev mode has no Tauri host */ }
-    root.querySelector<HTMLButtonElement>("[data-clickthrough]")!.textContent = `穿透:${clickThrough ? "开" : "关"}`;
-  });
+  if (showDevPanel) {
+    const mode = root.querySelector<HTMLSelectElement>("[data-mode]")!;
+    const activity = root.querySelector<HTMLSelectElement>("[data-activity]")!;
+    const updateMock = (overrides: Parameters<typeof mockSemantic>[0]): void => {
+      connected = true;
+      semantic = mockSemantic(overrides);
+    };
+    mode.addEventListener("change", () => updateMock({ user_mode: mode.value as UserMode }));
+    activity.addEventListener("change", () => updateMock({ activity: activity.value as Activity }));
+    root.querySelector("[data-distracted]")!.addEventListener("click", () => updateMock({ relation: "DISTRACTED" as Relation }));
+    root.querySelector("[data-offline]")!.addEventListener("click", () => {
+      const mock = mockSupervisorOffline();
+      connected = mock.connected;
+      semantic = mock.semantic;
+    });
+    root.querySelector("[data-stale]")!.addEventListener("click", () => {
+      const mock = mockActivityWatchStale();
+      connected = mock.connected;
+      semantic = mock.semantic;
+    });
+    root.querySelector("[data-clickthrough]")!.addEventListener("click", async () => {
+      clickThrough = !clickThrough;
+      try { await invoke("set_click_through", { enabled: clickThrough }); } catch { /* browser dev mode has no Tauri host */ }
+      root.querySelector<HTMLButtonElement>("[data-clickthrough]")!.textContent = `穿透:${clickThrough ? "开" : "关"}`;
+    });
+  }
   supervisorPoll?.start(snapshot => {
     connected = snapshot.connected;
     semantic = snapshot.semantic;

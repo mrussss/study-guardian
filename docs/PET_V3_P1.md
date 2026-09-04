@@ -8,7 +8,10 @@ the Supervisor API, `scripts/build-windows.sh`, `scripts/deploy-windows.sh`,
 
 - Tauri 2 / Rust shell with a transparent, undecorated, always-on-top,
   non-resizable 220px window bounded to 160–260px;
-- draggable window region and tray menu;
+- explicit native left-button `startDragging()` handling for the pet, state,
+  and task surfaces, with interactive-control exclusion and a tray menu;
+- transparent CSS/reset and native `shadow: false`/`set_shadow(false)`;
+- development mock controls gated behind `DEV + VITE_PET_DEV_PANEL=1`;
 - reversible click-through command, with the tray menu as the recovery path;
 - exact `CurrentActivityView` TypeScript contract and local mock controls;
   transport `connected` is separate from semantic `fresh`;
@@ -28,15 +31,15 @@ the Supervisor API, `scripts/build-windows.sh`, `scripts/deploy-windows.sh`,
   `fillRect` is only the final emergency fallback;
 - offline visual state and placeholder pixel canvas.
 
-The dev panel still uses local mocks. The native shell now owns the real
-Supervisor transport; ActivityWatch, Sensor, Text AI, and Vision AI remain
-behind Supervisor and are not called directly by the Pet.
+When explicitly enabled, the dev panel uses local mocks. The native shell now
+owns the real Supervisor transport; ActivityWatch, Sensor, Text AI, and Vision
+AI remain behind Supervisor and are not called directly by the Pet.
 
 ## Verification
 
 ```text
 npm ci                                PASS
-npm test                              PASS (updated count in final report)
+npm test                              PASS (15 tests)
 npm run build                         PASS (strict tsc + Vite)
 tauri CLI --version                   PASS (2.11.4)
 native supervisor_snapshot tests      PASS (cargo check/test; 5 Rust tests)
@@ -49,3 +52,7 @@ copy. `npm run tauri dev` reaches the Vite dev server and a responding
 current CUA surface did not enumerate that native window, so visual/UI
 interaction acceptance remains a manual Windows check; no visual PASS is
 claimed from process liveness alone.
+
+The current Fix Pack is coded and automatically verified. Study Center and
+Review remain PENDING because the existing safe entry is owned by the legacy
+PyQt Pet; no second Review UI was introduced.

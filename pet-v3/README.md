@@ -3,12 +3,13 @@
 This directory is an isolated Tauri 2 / Rust / Vite / TypeScript foundation
 for the next Pet. The production PyQt Pet in `../pet/` is unchanged.
 
-The development panel still exposes `src/mock/semantic.ts` controls, but the
-native Tauri shell now also exposes `supervisor_snapshot`. That command reads
-the existing runtime `config/auth.token`, calls the localhost Supervisor
-`/v1/activity/current` endpoint, and returns only the sanitized semantic
-contract. ActivityWatch, Sensor, Text AI, and Vision AI remain behind
-Supervisor and are not called by the Pet.
+When explicitly enabled for browser development, the development panel
+exposes `src/mock/semantic.ts` controls; ordinary native dev and production
+builds keep it hidden. The native Tauri shell exposes
+`supervisor_snapshot`, which reads the existing runtime `config/auth.token`,
+calls the localhost Supervisor `/v1/activity/current` endpoint, and returns
+only the sanitized semantic contract. ActivityWatch, Sensor, Text AI, and
+Vision AI remain behind Supervisor and are not called directly by the Pet.
 
 The desktop shell is configured as a transparent, undecorated, always-on-top,
 non-resizable 220px window bounded to 160–260px. It exposes a tray menu for
@@ -24,6 +25,12 @@ npm install
 npm test
 npm run build
 npm run tauri dev   # requires Rust/Cargo and Windows WebView2
+```
+
+To opt into the mock controls during browser development only:
+
+```text
+VITE_PET_DEV_PANEL=1 npm run dev
 ```
 
 The Windows toolchain is now available. In an NTFS verification copy,
