@@ -2,6 +2,15 @@
 
 > v0.4 审计说明：下方原有 v0.3 记录是历史交接材料，不代表本轮 Windows 真机项目全部 PASS。当前逐项结果以 `docs/WINDOWS_E2E_REPORT.md` 和本节为准。
 
+## 2026-09-04 接力复核（当前状态）
+
+- Source of Truth：WSL `~/projects/study-guardian`；当前 `main` 与 `origin/main` 已核对为 `0 0`，工作区干净。
+- `go test ./...`、`go vet ./...`、Python 单元/集成测试和 `bash scripts/test-all.sh` 均通过；集成测试已改为等待 Supervisor/状态达到 readiness，避免固定 sleep 竞态。
+- `bash scripts/build-windows.sh`、`bash scripts/deploy-windows.sh` 和两次 deploy safety 均通过；`config/data/logs/run/handoff` 与 token 保持不变。
+- Collector 当前快照的 41 项 Node 测试在 NTFS 验证副本中 41/41 通过；Pet v3 测试 12/12 通过且 TypeScript 检查通过，UNC 上的 Vite/esbuild 构建仍受 Windows/WSL 文件映射环境限制。
+- Review Task 92–100 已根据当前代码和测试校准为完成；新增 raw chat / semantic retention 的启动与每日清理 worker，并补充存储保护测试。
+- 仍保持未完成/阻塞：真实 Chrome E2E、完整 Windows 用户旅程、7-day trial、Collector miss audit、Review factuality audit、物理热插拔、Sleep/Resume、最终桌宠美术，以及 Tauri Rust/MSVC/Windows SDK runtime。
+
 ## v0.6 当前审计结论
 
 - Source of Truth：WSL `~/projects/study-guardian`，符合要求。

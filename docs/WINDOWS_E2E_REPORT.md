@@ -1,5 +1,14 @@
 # Windows E2E Report
 
+## 2026-09-04 接力复核
+
+- 当前 WSL `main` 与 `origin/main` 已核对为 `0 0`，工作区干净。
+- `bash scripts/test-all.sh` 通过：Go、Python 单元、7 个 Phase 0–4 集成测试和两次 deploy safety 均 PASS；`go vet ./...` 与部署后 PowerShell 脚本语法检查也 PASS。
+- 最新 `build-windows.sh` 与 `deploy-windows.sh` 已成功执行；Supervisor `:17321` 与 Sensor `:17322` 健康，ActivityWatch 与 MSS 均报告可用。
+- 轻量 watchdog 已包含在最新部署中，停止脚本先停 watchdog 再停 Supervisor/Sensor/Pet；真实崩溃恢复证据仍以既有实机记录为准。
+- Daily Review 92–100 已完成；retention worker 仅清理过期 raw chat / semantic snapshots，不删除 daily reviews、sessions、Study Forest 或配置。
+- Collector 41 项测试在 NTFS 验证副本中 41/41 通过；Pet v3 12/12 通过且 TypeScript 检查通过。直接从 WSL UNC 工作目录运行 Node 会遇到文件读取/esbuild spawn 限制，不作为代码失败证据。
+
 ## Environment
 
 - Windows: Windows 11 desktop environment
@@ -97,7 +106,7 @@ The Pet launcher/interpreter pair and Sensor launcher/interpreter pair are expec
 ## Known Limitations
 
 - The installed real machine has one physical monitor; negative-coordinate dual-monitor and unplug/replug behavior were not available to validate.
-- Crash auto-restart/watchdog is not implemented; `start-all.ps1` is a reliable one-shot/idempotent launcher only.
+- Lightweight bounded crash recovery/watchdog is implemented in `scripts/watchdog.ps1`; full seven-day observation and every recovery edge case remain outside this report's current automated run.
 - Per the current acceptance decision, Windows lock-screen and Sleep/Hibernate/Resume remain explicitly deferred and are not blockers for this 1–3 day daily trial. Core lock/long-gap rules pass with deterministic clocks.
 - The existing user config intentionally enables `provider: fake`; the repository default is now `enabled: false, provider: none`.
 - Final visual artwork is still pending; placeholder skin assets are not presented as final product art.
