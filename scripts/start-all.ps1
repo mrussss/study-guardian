@@ -1,4 +1,8 @@
 # StudyGuardian 一键启动脚本 (Windows PowerShell)
+param(
+    [switch]$NoWatchdog
+)
+
 $ErrorActionPreference = "Stop"
 
 $RootDir = "D:\StudyGuardianDev"
@@ -74,3 +78,18 @@ if (-not $petRunning) {
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host "  StudyGuardian is now running in background!" -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Green
+
+if (-not $NoWatchdog) {
+    $watchdogScript = "$RootDir\scripts\watchdog.ps1"
+    $watchdogRunning = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $_.ProcessId -ne $PID -and $_.Name -eq "powershell.exe" -and $_.CommandLine -like "*watchdog.ps1*"
+    }).Count -gt 0
+    if (-not $watchdogRunning -and (Test-Path -LiteralPath $watchdogScript)) {
+        Write-Host "[watchdog] Starting lightweight crash recovery..." -ForegroundColor Yellow
+        Start-Process -FilePath (Get-Command powershell.exe).Source `
+            -ArgumentList @("-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $watchdogScript) `
+            -WorkingDirectory $RootDir -WindowStyle Hidden
+    } else {
+        Write-Host "[watchdog] Already running or unavailable." -ForegroundColor DarkGray
+    }
+}

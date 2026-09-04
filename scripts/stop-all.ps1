@@ -14,4 +14,13 @@ Get-CimInstance Win32_Process | Where-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
 }
 
+# Stop the lightweight crash-recovery loop before it can restart children.
+Get-CimInstance Win32_Process | Where-Object {
+    $_.ProcessId -ne $PID -and
+    ($_.Name -eq "powershell.exe" -or $_.Name -eq "pwsh.exe") -and
+    $_.CommandLine -like "*watchdog.ps1*"
+} | ForEach-Object {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host "StudyGuardian stopped." -ForegroundColor Green
