@@ -15,7 +15,6 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   isInteractiveTarget,
-  isClickGesture,
   shouldBeginNativeDrag,
   shouldStartDragging,
   type PointerPoint,
@@ -81,6 +80,7 @@ export function mountApp(root: HTMLElement): void {
   let animationRequest = 0;
   let panelOpen = false;
   let gesture: { pointerId: number; start: PointerPoint; dragging: boolean } | null = null;
+  let lastNativeDragAt = Number.NEGATIVE_INFINITY;
   root.innerHTML = `<section class="pet-shell">
     <div class="pet-hit-target" aria-hidden="true"></div>
     <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet"></canvas>
@@ -175,32 +175,67 @@ export function mountApp(root: HTMLElement): void {
 
   const clearGesture = (): void => {
     if (gesture) {
-      try { petShell.releasePointerCapture(gesture.pointerId); } catch { /* capture may already be released */ }
+      if (gesture.pointerId >= 0) {
+        try { petShell.releasePointerCapture(gesture.pointerId); } catch { /* capture may already be released */ }
+      }
     }
     gesture = null;
   };
 
-  petShell.addEventListener("pointerdown", event => {
-    if (event.button !== 0 || isInteractiveTarget(event.target)) return;
-    gesture = { pointerId: event.pointerId, start: { x: event.clientX, y: event.clientY }, dragging: false };
-    try { petShell.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
-  });
-  petShell.addEventListener("pointermove", event => {
-    if (!gesture || gesture.pointerId !== event.pointerId || gesture.dragging) return;
-    const current = { x: event.clientX, y: event.clientY };
+  const beginGesture = (pointerId: number, button: number, target: EventTarget | null, start: PointerPoint): void => {
+    if (gesture || !shouldStartDragging(button, nativeRuntime, isInteractiveTarget(target))) return;
+    gesture = { pointerId, start, dragging: false };
+  };
+
+  const handleMove = (pointerId: number, current: PointerPoint): void => {
+    if (!gesture || gesture.pointerId !== pointerId || gesture.dragging) return;
     if (!shouldStartDragging(0, nativeRuntime, false) || !shouldBeginNativeDrag(gesture.start, current)) return;
     gesture.dragging = true;
+    lastNativeDragAt = performance.now();
     setPanelOpen(false);
     void getCurrentWindow().startDragging().catch(() => {
       // Native drag failure must not leak raw IPC errors into the UI.
     });
+  };
+
+  const finishGesture = (pointerId: number): void => {
+    if (!gesture || gesture.pointerId !== pointerId) return;
+    clearGesture();
+  };
+
+  petShell.addEventListener("pointerdown", event => {
+    beginGesture(event.pointerId, event.button, event.target, { x: event.clientX, y: event.clientY });
+    if (gesture?.pointerId === event.pointerId) {
+      try { petShell.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
+    }
+  });
+  petShell.addEventListener("pointermove", event => {
+    handleMove(event.pointerId, { x: event.clientX, y: event.clientY });
   });
   petShell.addEventListener("pointerup", event => {
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    const completed = gesture;
-    const current = { x: event.clientX, y: event.clientY };
-    clearGesture();
-    if (!completed.dragging && isClickGesture(completed.start, current)) void openQuickPanel();
+    finishGesture(event.pointerId);
+  });
+  // WebView2 can expose mouse events without a complete Pointer Events
+  // sequence on transparent, undecorated windows. Keep the same gesture
+  // policy as a compatibility path for ordinary Windows mouse input.
+  petShell.addEventListener("mousedown", event => {
+    beginGesture(-1, event.button, event.target, { x: event.clientX, y: event.clientY });
+  });
+  window.addEventListener("mousemove", event => {
+    if (!gesture || event.buttons !== 1) return;
+    handleMove(gesture.pointerId, { x: event.clientX, y: event.clientY });
+  });
+  window.addEventListener("mouseup", event => {
+    if (!gesture || event.button !== 0) return;
+    finishGesture(gesture.pointerId);
+  });
+  petShell.addEventListener("click", event => {
+    if (isInteractiveTarget(event.target)) return;
+    // Native drag can cause a late synthetic click in some WebView2 builds.
+    // Suppress only that late click; ordinary clicks use the browser's stable
+    // click dispatch path and open the production panel.
+    if (performance.now() - lastNativeDragAt < 500) return;
+    void openQuickPanel();
   });
   petShell.addEventListener("pointercancel", clearGesture);
   window.addEventListener("blur", clearGesture);
