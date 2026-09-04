@@ -12,15 +12,6 @@ import {
   SupervisorPollLoop,
   type ControlErrorKind,
 } from "../transport/supervisor";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import {
-  classifyDragStartError,
-  isInteractiveTarget,
-  shouldBeginNativeDrag,
-  shouldStartDragging,
-  type DragDebugEvent,
-  type PointerPoint,
-} from "./drag";
 import legacyManifest from "../skins/studyguardian-pixel/manifest.json";
 import idleURL from "../skins/studyguardian-pixel/sprites/idle.png";
 import studyURL from "../skins/studyguardian-pixel/sprites/study.png";
@@ -72,7 +63,6 @@ export function mountApp(root: HTMLElement): void {
   const supervisorControl = nativeRuntime ? new NativeSupervisorControlAdapter() : null;
   const supervisorPoll = supervisorAdapter ? new SupervisorPollLoop(supervisorAdapter) : null;
   const showDevPanel = import.meta.env.DEV && import.meta.env.VITE_PET_DEV_PANEL === "1";
-  const dragDebugEnabled = import.meta.env.DEV;
   const emergencyFrames = splitHorizontal(96, 96, 24, 96);
   let semantic: CurrentActivityView = mockSemantic({});
   let connected = true;
@@ -82,21 +72,12 @@ export function mountApp(root: HTMLElement): void {
   let activeAnimation: LoadedAnimation | null = null;
   let animationRequest = 0;
   let panelOpen = false;
-  let gesture: { pointerId: number; start: PointerPoint; dragging: boolean } | null = null;
-  let lastNativeDragAt = Number.NEGATIVE_INFINITY;
-  let dragMoveReported = false;
-  let dragSafetyTimer: number | null = null;
-  const recordDragDebug = (event: DragDebugEvent): void => {
-    if (!dragDebugEnabled) return;
-    void invoke("record_pet_drag_debug", { event }).catch(() => {
-      // Diagnostics are best-effort and must never affect Pet interaction.
-    });
-  };
   root.innerHTML = `<section class="pet-shell">
-    <div class="pet-hit-target" aria-hidden="true"></div>
-    <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet"></canvas>
+    <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet，按住拖动" title="按住桌宠拖动；点击下方面板按钮打开控制"></canvas>
     <div class="pet-state" data-state>LEARNING</div>
     <div class="pet-task" data-task></div>
+    <button class="pet-panel-entry" data-open-panel type="button" aria-label="打开 StudyGuardian 快捷面板">学习面板 <span aria-hidden="true">↗</span></button>
+    <div class="pet-entry-error" data-entry-error role="status" hidden></div>
     <div class="pet-control-panel" data-control-panel data-no-drag hidden>
       <div class="pet-control-title" data-control-title></div>
       <input data-task-input maxlength="256" placeholder="当前学习任务" aria-label="当前学习任务" />
@@ -114,7 +95,8 @@ export function mountApp(root: HTMLElement): void {
       <button data-clickthrough type="button">穿透:关</button>
     </div>` : ""}
   </section>`;
-  const petShell = root.querySelector<HTMLElement>(".pet-shell")!;
+  const panelEntry = root.querySelector<HTMLButtonElement>("[data-open-panel]")!;
+  const entryError = root.querySelector<HTMLElement>("[data-entry-error]")!;
   const canvas = root.querySelector<HTMLCanvasElement>("canvas")!;
   const stateLabel = root.querySelector<HTMLElement>("[data-state]")!;
   const taskLabel = root.querySelector<HTMLElement>("[data-task]")!;
@@ -138,15 +120,20 @@ export function mountApp(root: HTMLElement): void {
   };
 
   const openQuickPanel = async (): Promise<void> => {
-    if (nativeRuntime) {
-      try {
-        await invoke("open_quick_panel");
-        return;
-      } catch {
-        // Keep the compact POC panel as a fail-soft browser/native fallback.
-      }
+    if (!nativeRuntime) {
+      setPanelOpen(!panelOpen);
+      return;
     }
-    setPanelOpen(!panelOpen);
+    panelEntry.disabled = true;
+    entryError.hidden = true;
+    try {
+      await invoke("open_quick_panel");
+    } catch {
+      entryError.textContent = "面板未能打开，请重试或使用托盘入口";
+      entryError.hidden = false;
+    } finally {
+      panelEntry.disabled = false;
+    }
   };
 
   const setControlBusy = (busy: boolean): void => {
@@ -184,93 +171,9 @@ export function mountApp(root: HTMLElement): void {
     }
   };
 
-  const clearGesture = (): void => {
-    if (gesture) {
-      recordDragDebug("drag:clear");
-      if (gesture.pointerId >= 0) {
-        try { petShell.releasePointerCapture(gesture.pointerId); } catch { /* capture may already be released */ }
-      }
-    }
-    gesture = null;
-    dragMoveReported = false;
-    if (dragSafetyTimer !== null) {
-      window.clearTimeout(dragSafetyTimer);
-      dragSafetyTimer = null;
-    }
-  };
-
-  const beginGesture = (pointerId: number, button: number, target: EventTarget | null, start: PointerPoint): void => {
-    if (gesture || !shouldStartDragging(button, nativeRuntime, isInteractiveTarget(target))) return;
-    gesture = { pointerId, start, dragging: false };
-    recordDragDebug("drag:down");
-  };
-
-  const handleMove = (pointerId: number, current: PointerPoint): void => {
-    if (!gesture || gesture.pointerId !== pointerId || gesture.dragging) return;
-    if (!dragMoveReported) {
-      dragMoveReported = true;
-      recordDragDebug("drag:move");
-    }
-    if (!shouldStartDragging(0, nativeRuntime, false) || !shouldBeginNativeDrag(gesture.start, current)) return;
-    gesture.dragging = true;
-    lastNativeDragAt = performance.now();
-    recordDragDebug("drag:threshold");
-    setPanelOpen(false);
-    recordDragDebug("drag:start-called");
-    void getCurrentWindow().startDragging()
-      .then(() => recordDragDebug("drag:start-ok"))
-      .catch(error => recordDragDebug(`drag:start-failed:${classifyDragStartError(error)}`))
-      .finally(() => clearGesture());
-    // If the native command or WebView2 loses the release event and never
-    // settles, recover the web gesture state after the native drag has had
-    // time to complete. Native window movement is already independent.
-    dragSafetyTimer = window.setTimeout(() => {
-      if (gesture?.dragging) clearGesture();
-    }, 2000);
-  };
-
-  const finishGesture = (pointerId: number): void => {
-    if (!gesture || gesture.pointerId !== pointerId) return;
-    clearGesture();
-  };
-
-  petShell.addEventListener("pointerdown", event => {
-    beginGesture(event.pointerId, event.button, event.target, { x: event.clientX, y: event.clientY });
-    if (gesture?.pointerId === event.pointerId) {
-      try { petShell.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
-    }
-  });
-  petShell.addEventListener("pointermove", event => {
-    handleMove(event.pointerId, { x: event.clientX, y: event.clientY });
-  });
-  petShell.addEventListener("pointerup", event => {
-    finishGesture(event.pointerId);
-  });
-  // WebView2 can expose mouse events without a complete Pointer Events
-  // sequence on transparent, undecorated windows. Keep the same gesture
-  // policy as a compatibility path for ordinary Windows mouse input.
-  petShell.addEventListener("mousedown", event => {
-    beginGesture(-1, event.button, event.target, { x: event.clientX, y: event.clientY });
-  });
-  window.addEventListener("mousemove", event => {
-    if (!gesture || event.buttons !== 1) return;
-    handleMove(gesture.pointerId, { x: event.clientX, y: event.clientY });
-  });
-  window.addEventListener("mouseup", event => {
-    if (!gesture || event.button !== 0) return;
-    finishGesture(gesture.pointerId);
-  });
-  petShell.addEventListener("click", event => {
-    if (isInteractiveTarget(event.target)) return;
-    // Native drag can cause a late synthetic click in some WebView2 builds.
-    // Suppress only that late click; ordinary clicks use the browser's stable
-    // click dispatch path and open the production panel.
-    if (performance.now() - lastNativeDragAt < 500) return;
-    recordDragDebug("drag:click");
-    void openQuickPanel();
-  });
-  petShell.addEventListener("pointercancel", clearGesture);
-  window.addEventListener("blur", clearGesture);
+  // Windows/WebView2 owns the CSS non-client drag region. The explicit
+  // no-drag button is the only click entry: no capture, move IPC or timer.
+  panelEntry.addEventListener("click", () => { void openQuickPanel(); });
   startStudy.addEventListener("click", () => { void runMode("STUDY"); });
   startBreak.addEventListener("click", () => { void runMode("BREAK"); });
   closePanel.addEventListener("click", () => setPanelOpen(false));

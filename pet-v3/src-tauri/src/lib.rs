@@ -19,6 +19,29 @@ use tauri::{
 
 struct ClickThroughState(Arc<Mutex<bool>>);
 struct ControlCenterRouteState(Arc<Mutex<String>>);
+// Only auxiliary-window workers acquire this mutex; the UI thread never does.
+struct AuxiliaryWindowState(Arc<Mutex<()>>);
+
+enum AuxiliaryWindowAction {
+    QuickPanel,
+    ControlCenter(String),
+    HideQuickPanel(&'static str),
+    HideControlCenter,
+}
+
+#[derive(Serialize)]
+struct NativeWindowDiagnostic {
+    label: &'static str,
+    exists: bool,
+    visible: bool,
+    focused: bool,
+}
+
+#[derive(Serialize)]
+struct PetWindowDiagnostics {
+    windows: Vec<NativeWindowDiagnostic>,
+    control_center_route: String,
+}
 
 fn next_click_through(current: bool) -> bool { !current }
 
@@ -157,10 +180,12 @@ fn configured_aux_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, 
     window.on_window_event(move |event| match event {
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                if is_quick_panel {
-                    record_quick_panel_debug_event("quick-panel:hide-reason:close-request");
-                }
-                let _ = window_for_events.hide();
+                let action = if is_quick_panel {
+                    AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:close-request")
+                } else {
+                    AuxiliaryWindowAction::HideControlCenter
+                };
+                schedule_aux_window(window_for_events.app_handle().clone(), action);
             }
             WindowEvent::Focused(true) if is_quick_panel => {
                 record_quick_panel_debug_event("quick-panel:focused-true");
@@ -234,7 +259,13 @@ fn runtime_root() -> PathBuf {
 
 fn bounded_pet_drag_debug_event(event: &str) -> Option<&str> {
     match event {
-        "drag:down" | "drag:move" | "drag:threshold" | "drag:start-called" | "drag:start-ok" | "drag:click" | "drag:clear"
+        "drag:down" | "drag:move" | "drag:threshold" | "drag:manual-start" | "drag:position-request" | "drag:position-ok"
+        | "drag:quick-panel-called" | "drag:quick-panel-ok" | "drag:quick-panel-failed"
+        | "drag:start-called" | "drag:start-ok" | "drag:click" | "drag:clear"
+        | "drag:position-failed:ipc_rejected"
+        | "drag:position-failed:window_unavailable"
+        | "drag:position-failed:permission_denied"
+        | "drag:position-failed:unknown"
         | "drag:start-failed:ipc_rejected"
         | "drag:start-failed:window_unavailable"
         | "drag:start-failed:permission_denied"
@@ -262,12 +293,14 @@ fn write_pet_drag_debug_event(event: &str) -> Result<(), String> {
 fn bounded_quick_panel_debug_event(event: &str) -> Option<&str> {
     match event {
         "quick-panel:created"
+        | "quick-panel:open-command"
         | "quick-panel:show-request"
         | "quick-panel:show-ok"
         | "quick-panel:show-failed"
         | "quick-panel:focus-request"
         | "quick-panel:focus-ok"
         | "quick-panel:focus-failed"
+        | "quick-panel:position-failed"
         | "quick-panel:focused-true"
         | "quick-panel:focused-false"
         | "quick-panel:hide-reason:explicit"
@@ -901,8 +934,16 @@ fn sanitize_semantic(value: &Value) -> Result<Value, NativeErrorKind> {
     }))
 }
 
+// Supervisor requests use blocking sockets with bounded timeouts. Keep them
+// off both the native UI thread and async executor workers.
 #[tauri::command]
-fn supervisor_snapshot() -> SupervisorSnapshot {
+async fn supervisor_snapshot() -> SupervisorSnapshot {
+    tauri::async_runtime::spawn_blocking(supervisor_snapshot_blocking)
+        .await
+        .unwrap_or_else(|_| disconnected(NativeErrorKind::Unavailable))
+}
+
+fn supervisor_snapshot_blocking() -> SupervisorSnapshot {
     let (host, port, token) = match supervisor_credentials() {
         Ok(credentials) => credentials,
         Err(kind) => return disconnected(kind),
@@ -928,7 +969,13 @@ fn supervisor_snapshot() -> SupervisorSnapshot {
 }
 
 #[tauri::command]
-fn supervisor_dashboard_snapshot() -> SupervisorDashboardSnapshot {
+async fn supervisor_dashboard_snapshot() -> SupervisorDashboardSnapshot {
+    tauri::async_runtime::spawn_blocking(supervisor_dashboard_snapshot_blocking)
+        .await
+        .unwrap_or_else(|_| disconnected_dashboard(NativeErrorKind::Unavailable))
+}
+
+fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
     let (host, port, token) = match supervisor_credentials() {
         Ok(credentials) => credentials,
         Err(kind) => return disconnected_dashboard(kind),
@@ -977,7 +1024,13 @@ fn supervisor_dashboard_snapshot() -> SupervisorDashboardSnapshot {
 }
 
 #[tauri::command]
-fn supervisor_set_mode(mode: String, task: Option<String>) -> SupervisorControlResult {
+async fn supervisor_set_mode(mode: String, task: Option<String>) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || supervisor_set_mode_blocking(mode, task))
+        .await
+        .unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+fn supervisor_set_mode_blocking(mode: String, task: Option<String>) -> SupervisorControlResult {
     let request = match build_mode_request(&mode, task.as_deref()) {
         Ok(request) => request,
         Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
@@ -993,7 +1046,13 @@ fn supervisor_set_mode(mode: String, task: Option<String>) -> SupervisorControlR
 }
 
 #[tauri::command]
-fn supervisor_set_daily_target(minutes: i64) -> SupervisorControlResult {
+async fn supervisor_set_daily_target(minutes: i64) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || supervisor_set_daily_target_blocking(minutes))
+        .await
+        .unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+fn supervisor_set_daily_target_blocking(minutes: i64) -> SupervisorControlResult {
     let (host, port, token) = match supervisor_credentials() {
         Ok(credentials) => credentials,
         Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
@@ -1004,14 +1063,60 @@ fn supervisor_set_daily_target(minutes: i64) -> SupervisorControlResult {
     }
 }
 
+// WebView2 creation must not run in a synchronous IPC callback on Windows.
+// Serialize complete operations on blocking workers, including route updates,
+// so concurrent opens cannot create duplicate labels or reorder route events.
+async fn run_aux_window_operation<T, F>(gate: Arc<Mutex<()>>, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = gate.lock().map_err(|_| "auxiliary_window_state_poisoned".to_string())?;
+        operation()
+    })
+    .await
+    .map_err(|_| "auxiliary_window_worker_failed".to_string())?
+}
+
+// Tray handlers can dispatch this same operation through async_runtime::spawn.
+async fn dispatch_aux_window(app: AppHandle, action: AuxiliaryWindowAction) -> Result<(), String> {
+    let gate = app.state::<AuxiliaryWindowState>().0.clone();
+    run_aux_window_operation(gate, move || match action {
+        AuxiliaryWindowAction::QuickPanel => show_quick_panel(&app),
+        AuxiliaryWindowAction::ControlCenter(route) => show_control_center(&app, &route),
+        AuxiliaryWindowAction::HideQuickPanel(reason) => hide_quick_panel_with_reason(&app, reason),
+        AuxiliaryWindowAction::HideControlCenter => {
+            if let Some(center) = app.get_webview_window("control-center") {
+                center.hide().map_err(|_| "control_center_hide_failed".to_string())?;
+            }
+            Ok(())
+        }
+    }).await
+}
+
+fn schedule_aux_window(app: AppHandle, action: AuxiliaryWindowAction) {
+    tauri::async_runtime::spawn(async move {
+        let _ = dispatch_aux_window(app, action).await;
+    });
+}
+
 #[tauri::command]
-fn open_quick_panel(app: AppHandle) -> Result<(), String> {
+async fn open_quick_panel(app: AppHandle) -> Result<(), String> {
+    record_quick_panel_debug_event("quick-panel:open-command");
+    dispatch_aux_window(app, AuxiliaryWindowAction::QuickPanel).await
+}
+
+fn show_quick_panel(app: &AppHandle) -> Result<(), String> {
     let panel = app
         .get_webview_window("quick-panel")
         .map(Ok)
-        .unwrap_or_else(|| configured_aux_window(&app, "quick-panel"))?;
+        .unwrap_or_else(|| configured_aux_window(app, "quick-panel"))?;
     if let Some(pet) = app.get_webview_window("main") {
-        position_quick_panel(&pet, &panel)?;
+        if let Err(error) = position_quick_panel(&pet, &panel) {
+            record_quick_panel_debug_event("quick-panel:position-failed");
+            return Err(error);
+        }
     }
     record_quick_panel_debug_event("quick-panel:show-request");
     if let Err(error) = panel.show() {
@@ -1037,29 +1142,61 @@ fn hide_quick_panel_with_reason(app: &AppHandle, reason: &'static str) -> Result
 }
 
 #[tauri::command]
-fn hide_quick_panel(app: AppHandle) -> Result<(), String> {
-    hide_quick_panel_with_reason(&app, "quick-panel:hide-reason:explicit")
+async fn hide_quick_panel(app: AppHandle) -> Result<(), String> {
+    dispatch_aux_window(app, AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:explicit")).await
 }
 
 #[tauri::command]
-fn open_control_center(
-    app: AppHandle,
-    route: Option<String>,
-    state: tauri::State<'_, ControlCenterRouteState>,
-) -> Result<(), String> {
+async fn open_control_center(app: AppHandle, route: Option<String>) -> Result<(), String> {
     let requested_route = route.as_deref().unwrap_or("overview");
     let route = bounded_control_center_route(requested_route)
         .ok_or_else(|| "invalid_control_center_route".to_string())?;
-    *state.0.lock().map_err(|_| "control center route state poisoned".to_string())? = route.to_string();
-    hide_quick_panel_with_reason(&app, "quick-panel:hide-reason:open-control-center")?;
+    dispatch_aux_window(app, AuxiliaryWindowAction::ControlCenter(route.to_string())).await
+}
+
+fn show_control_center(app: &AppHandle, route: &str) -> Result<(), String> {
+    // Drop the route lock before any window call: getters marshal to the UI
+    // thread, which also handles the control_center_route IPC command.
+    *app.state::<ControlCenterRouteState>().0.lock()
+        .map_err(|_| "control center route state poisoned".to_string())? = route.to_string();
+    hide_quick_panel_with_reason(app, "quick-panel:hide-reason:open-control-center")?;
     let center = app
         .get_webview_window("control-center")
         .map(Ok)
-        .unwrap_or_else(|| configured_aux_window(&app, "control-center"))?;
+        .unwrap_or_else(|| configured_aux_window(app, "control-center"))?;
     center.show().map_err(|error| error.to_string())?;
     center.set_focus().map_err(|error| error.to_string())?;
     let _ = app.emit_to("control-center", CONTROL_CENTER_ROUTE_EVENT, route);
     Ok(())
+}
+
+// Fixed, non-business diagnostics for the native input/lifecycle harness.
+// Release builds reject this command before reading any window state.
+#[tauri::command]
+async fn pet_window_diagnostics(app: AppHandle) -> Result<PetWindowDiagnostics, String> {
+    if !cfg!(debug_assertions) {
+        return Err("diagnostic_unavailable".to_string());
+    }
+    let gate = app.state::<AuxiliaryWindowState>().0.clone();
+    run_aux_window_operation(gate, move || {
+        let mut windows = Vec::with_capacity(3);
+        for label in ["main", "quick-panel", "control-center"] {
+            let status = if let Some(window) = app.get_webview_window(label) {
+                NativeWindowDiagnostic {
+                    label,
+                    exists: true,
+                    visible: window.is_visible().map_err(|_| "window_state_unavailable".to_string())?,
+                    focused: window.is_focused().map_err(|_| "window_state_unavailable".to_string())?,
+                }
+            } else {
+                NativeWindowDiagnostic { label, exists: false, visible: false, focused: false }
+            };
+            windows.push(status);
+        }
+        let control_center_route = app.state::<ControlCenterRouteState>().0.lock()
+            .map_err(|_| "control_center_route_unavailable".to_string())?.clone();
+        Ok(PetWindowDiagnostics { windows, control_center_route })
+    }).await
 }
 
 #[tauri::command]
@@ -1087,6 +1224,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ClickThroughState(Arc::new(Mutex::new(false))))
         .manage(ControlCenterRouteState(Arc::new(Mutex::new("overview".to_string()))))
+        .manage(AuxiliaryWindowState(Arc::new(Mutex::new(()))))
         .invoke_handler(tauri::generate_handler![
             set_click_through,
             record_pet_drag_debug,
@@ -1098,6 +1236,7 @@ pub fn run() {
             hide_quick_panel,
             open_control_center,
             control_center_route,
+            pet_window_diagnostics,
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").ok_or("main window missing")?;
@@ -1108,7 +1247,10 @@ pub fn run() {
             window.set_shadow(false)?;
             let toggle = MenuItem::with_id(app, "toggle-click-through", "切换鼠标穿透", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出 Pet", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &quit])?;
+            let quick_panel = MenuItem::with_id(app, "open-quick-panel", "打开快捷面板", true, None::<&str>)?;
+            let control_center = MenuItem::with_id(app, "open-control-center", "打开控制中心", true, None::<&str>)?;
+            let settings = MenuItem::with_id(app, "open-settings", "打开设置", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&quick_panel, &control_center, &settings, &toggle, &quit])?;
             let tray_state = app.state::<ClickThroughState>().inner().0.clone();
             let mut tray_builder = TrayIconBuilder::new().menu(&menu);
             if let Some(icon) = app.default_window_icon() {
@@ -1117,6 +1259,9 @@ pub fn run() {
             let _tray = tray_builder
                 .on_menu_event(move |app, event| {
                     match event.id.as_ref() {
+                        "open-quick-panel" => schedule_aux_window(app.clone(), AuxiliaryWindowAction::QuickPanel),
+                        "open-control-center" => schedule_aux_window(app.clone(), AuxiliaryWindowAction::ControlCenter("overview".to_string())),
+                        "open-settings" => schedule_aux_window(app.clone(), AuxiliaryWindowAction::ControlCenter("settings".to_string())),
                         "toggle-click-through" => {
                             if let Some(window) = app.get_webview_window("main") {
                                 if let Ok(mut current) = tray_state.lock() {
@@ -1149,6 +1294,46 @@ mod tests {
         NativeErrorKind,
         SupervisorSnapshot,
     };
+
+    #[test]
+    fn auxiliary_window_operations_run_off_caller_and_do_not_overlap() {
+        use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex};
+
+        let gate = Arc::new(Mutex::new(()));
+        let active = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let caller = std::thread::current().id();
+        let operations: Vec<_> = (0..12).map(|index| {
+            let gate = gate.clone();
+            let active = active.clone();
+            let completed = completed.clone();
+            tauri::async_runtime::spawn(super::run_aux_window_operation(gate, move || {
+                assert_ne!(std::thread::current().id(), caller);
+                assert_eq!(active.fetch_add(1, Ordering::SeqCst), 0, "window operations overlapped");
+                // Give another queued operation an opportunity to race the
+                // simulated create/show sequence if serialization is removed.
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                assert_eq!(active.fetch_sub(1, Ordering::SeqCst), 1);
+                completed.fetch_add(1, Ordering::SeqCst);
+                Ok(index)
+            }))
+        }).collect();
+        for (index, operation) in operations.into_iter().enumerate() {
+            assert_eq!(tauri::async_runtime::block_on(operation).unwrap().unwrap(), index);
+        }
+        assert_eq!(completed.load(Ordering::SeqCst), 12);
+    }
+
+    #[test]
+    fn auxiliary_window_failure_does_not_block_next_open() {
+        let gate = std::sync::Arc::new(std::sync::Mutex::new(()));
+        let failure = tauri::async_runtime::block_on(super::run_aux_window_operation(gate.clone(), || {
+            Err::<(), _>("window_creation_failed".to_string())
+        }));
+        assert_eq!(failure, Err("window_creation_failed".to_string()));
+        let retry = tauri::async_runtime::block_on(super::run_aux_window_operation(gate, || Ok("shown")));
+        assert_eq!(retry, Ok("shown"));
+    }
 
     #[test]
     fn tray_toggle_is_reversible_for_recovery() {
@@ -1199,6 +1384,9 @@ mod tests {
     #[test]
     fn pet_drag_debug_events_are_bounded() {
         assert_eq!(bounded_pet_drag_debug_event("drag:down"), Some("drag:down"));
+        assert_eq!(bounded_pet_drag_debug_event("drag:manual-start"), Some("drag:manual-start"));
+        assert_eq!(bounded_pet_drag_debug_event("drag:position-failed:unknown"), Some("drag:position-failed:unknown"));
+        assert_eq!(bounded_pet_drag_debug_event("drag:quick-panel-failed"), Some("drag:quick-panel-failed"));
         assert_eq!(bounded_pet_drag_debug_event("drag:start-failed:permission_denied"), Some("drag:start-failed:permission_denied"));
         assert_eq!(bounded_pet_drag_debug_event("drag:start-failed:raw-secret"), None);
     }
@@ -1206,6 +1394,7 @@ mod tests {
     #[test]
     fn quick_panel_lifecycle_events_are_bounded() {
         assert_eq!(bounded_quick_panel_debug_event("quick-panel:created"), Some("quick-panel:created"));
+        assert_eq!(bounded_quick_panel_debug_event("quick-panel:open-command"), Some("quick-panel:open-command"));
         assert_eq!(bounded_quick_panel_debug_event("quick-panel:hide-reason:explicit"), Some("quick-panel:hide-reason:explicit"));
         assert_eq!(bounded_quick_panel_debug_event("quick-panel:focus-failed:raw-secret"), None);
     }

@@ -57,3 +57,7 @@ pet-v3/node_modules/
 *.swp
 *.swo
 *~
+
+# Pet v3 native build outputs (Cargo.lock is tracked)
+pet-v3/src-tauri/target/
+pet-v3/src-tauri/gen/

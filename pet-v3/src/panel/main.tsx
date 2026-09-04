@@ -16,8 +16,9 @@ const invokeWindowCommand = (command: string, args?: Record<string, unknown>): v
   if (isTauriRuntime) void invoke(command, args).catch(() => { /* bounded window command failure */ });
 };
 const openControlCenter = (route: ControlCenterRoute): void => invokeWindowCommand("open_control_center", { route });
+const closeQuickPanel = (): void => invokeWindowCommand("hide_quick_panel");
 window.addEventListener("keydown", event => {
-  if (event.key === "Escape") invokeWindowCommand("hide_quick_panel");
+  if (event.key === "Escape") closeQuickPanel();
 });
 
 function formatElapsed(seconds: number): string {
@@ -97,9 +98,10 @@ function RuntimeQuickPanel(): ReactElement {
     onModeAction={handleModeAction}
     onOpenCenter={() => openControlCenter("overview")}
     onOpenSettings={() => openControlCenter("settings")}
+    onClose={closeQuickPanel}
   />;
 }
 
 createRoot(root).render(isTauriRuntime
   ? <RuntimeQuickPanel />
-  : <QuickPanel onOpenCenter={() => openControlCenter("overview")} onOpenSettings={() => openControlCenter("settings")} />);
+  : <QuickPanel onOpenCenter={() => openControlCenter("overview")} onOpenSettings={() => openControlCenter("settings")} onClose={closeQuickPanel} />);

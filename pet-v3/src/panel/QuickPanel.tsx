@@ -11,6 +11,7 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
+  X,
 } from "lucide-react";
 import { clampProgress, formatFocusMinutes } from "../shared/models/dashboard";
 
@@ -30,6 +31,7 @@ export interface QuickPanelProps {
   onModeAction?: (mode: "STUDY" | "BREAK" | "OFF") => void;
   onOpenCenter?: () => void;
   onOpenSettings?: () => void;
+  onClose?: () => void;
 }
 
 const modeCopy: Record<QuickPanelMode, { kicker: string; title: string; description: string }> = {
@@ -57,6 +59,7 @@ export function QuickPanel({
   onModeAction,
   onOpenCenter,
   onOpenSettings,
+  onClose,
 }: QuickPanelProps): ReactElement {
   const [localNotice, setLocalNotice] = useState("");
   const copy = modeCopy[mode];
@@ -81,7 +84,10 @@ export function QuickPanel({
             <div className="brand-caption">本地专注陪伴</div>
           </div>
         </div>
-        <div className={`health-chip ${connected ? "" : "is-warning"}`}><ShieldCheck size={14} />{connected ? "正常" : "待连接"}</div>
+        <div className="quick-panel-header-actions">
+          <div className={`health-chip ${connected ? "" : "is-warning"}`}><ShieldCheck size={14} />{connected ? "正常" : "待连接"}</div>
+          <button className="quick-panel-close" type="button" aria-label="关闭快捷面板" title="关闭 (Esc)" onClick={onClose}><X size={16} /></button>
+        </div>
       </header>
 
       <div className="quick-panel-content">

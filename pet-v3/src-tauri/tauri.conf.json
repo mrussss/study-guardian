@@ -25,7 +25,8 @@
         "shadow": false,
         "alwaysOnTop": true,
         "resizable": false,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "maximizable": false
       },
       {
         "label": "quick-panel",
@@ -63,7 +64,11 @@
         "skipTaskbar": false
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
-  "bundle": { "active": false }
+  "bundle": {
+    "active": false
+  }
 }

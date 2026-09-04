@@ -146,3 +146,11 @@
   motivation storage 写入、bounded result）与 Control Center 设置页；完整配置编辑、
   AI configured-only DTO 与其余设置项待完成
 - [ ] 110. Stage H/J tray unification、production cleanup 与现代 UI Windows visual acceptance
+
+
+### 2026-09-04 重启后输入修复补充
+
+- Task 107：已定位并修复同步 WebView 创建死锁、UI 线程网络阻塞、路由监听权限和重复路由请求；原生 Quick Panel 20 次显示/隐藏验证通过。
+- Pet 候选改为原生 CSS 拖动 + 独立“学习面板”按钮；完整真人 50 次拖动 / 20 次点击 / 10 次交替仍待验收，详见 `docs/PET_INPUT_ARCH_DECISION.md`。
+- Task 110 已增加托盘 UI 入口，但生产统一切换和完整视觉验收仍未完成。
+- Task 109 的完整设置范围没有在本轮宣称完成。

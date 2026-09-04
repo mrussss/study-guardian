@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "StudyGuardian Input transparent",
+        "width": 220,
+        "height": 220,
+        "minWidth": 160,
+        "minHeight": 160,
+        "maxWidth": 260,
+        "maxHeight": 260,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "url": "diagnostics/input.html",
+        "maximizable": false
+      },
+      {
+        "label": "quick-panel",
+        "url": "quick-panel.html",
+        "title": "StudyGuardian Quick Panel",
+        "width": 380,
+        "height": 430,
+        "minWidth": 360,
+        "minHeight": 400,
+        "maxWidth": 400,
+        "maxHeight": 470,
+        "create": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "shadow": false
+      },
+      {
+        "label": "control-center",
+        "url": "control-center.html",
+        "title": "StudyGuardian Control Center",
+        "width": 1040,
+        "height": 720,
+        "minWidth": 920,
+        "minHeight": 640,
+        "create": false,
+        "visible": false,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "resizable": true,
+        "skipTaskbar": false
+      }
+    ]
+  }
+}

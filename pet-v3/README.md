@@ -1,47 +1,31 @@
-# StudyGuardian Pet 3.0 — P1 Foundation
+# StudyGuardian Pet v3
 
-This directory is an isolated Tauri 2 / Rust / Vite / TypeScript foundation
-for the next Pet. The production PyQt Pet in `../pet/` is unchanged.
+Tauri 2 / React / TypeScript 桌面 UI：Pet、Quick Panel、Control Center 三个页面。业务状态仍来自 Supervisor；Rust 读取本地凭据、访问受限 localhost API，只返回脱敏 DTO。
 
-The frontend now has three Vite pages: the lightweight Pet (`index.html`), a
-React Quick Panel (`quick-panel.html`), and a React Control Center
-(`control-center.html`). The latter two are currently polished Stage B UI
-fixtures; Tauri window orchestration and canonical Supervisor data wiring are
-planned next. See `../docs/UI_PRODUCT_ARCHITECTURE.md` and
-`../docs/UI_ACCEPTANCE_CHECKLIST.md` for the exact status.
+## 当前交互
 
-When explicitly enabled for browser development, the development panel
-exposes `src/mock/semantic.ts` controls; ordinary native dev and production
-builds keep it hidden. The native Tauri shell exposes
-`supervisor_snapshot`, which reads the existing runtime `config/auth.token`,
-calls the localhost Supervisor `/v1/activity/current` endpoint, and returns
-only the sanitized semantic contract. ActivityWatch, Sensor, Text AI, and
-Vision AI remain behind Supervisor and are not called directly by the Pet.
+按住猫身体拖动；点击下方“学习面板”打开快捷面板。原生 CSS 拖动区域与按钮分离，没有 JS 手势定时器或逐帧窗口移动。面板可通过关闭按钮或 Escape 隐藏；托盘也可打开面板、控制中心和设置。
 
-The desktop shell is configured as a transparent, undecorated, always-on-top,
-non-resizable 220px window bounded to 160–260px. It exposes a tray menu for
-the reversible click-through toggle; the tray remains the recovery path when
-the window is click-through.
+辅助 WebView 必须在异步工作线程里创建。不要在同步 Tauri command 或 UI 事件回调里直接调用 `WebviewWindowBuilder::build()`，否则 Windows 可能死锁。Supervisor 网络请求也不能放回 UI 线程。
 
-## Local verification
+## 构建与验证
 
-From this directory:
-
-```text
-npm install
+```sh
+npm ci
 npm test
 npm run build
-npm run tauri dev   # requires Rust/Cargo and Windows WebView2
 ```
 
-To opt into the mock controls during browser development only:
+Windows 原生工具链中使用已提交的锁文件：
 
-```text
-VITE_PET_DEV_PANEL=1 npm run dev
+```powershell
+cargo check --locked --manifest-path src-tauri/Cargo.toml
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+npm run tauri build -- --debug --no-bundle
 ```
 
-The Windows toolchain is now available. In an NTFS verification copy,
-`npm ci`, `npm test`, `npm run build`, `cargo check`, and `cargo test` pass;
-`npm run tauri dev` also reaches a responding `StudyGuardian Pet v3` process.
-The CUA surface used in this environment did not enumerate the native window,
-so visual/UI interaction acceptance remains a manual Windows check.
+Windows 从 WSL 同步的构建副本必须包含最新 `src`、`src-tauri`、`dist` 和锁文件；不要仅更新前端后复用旧 exe。测试前核对实际进程路径、exe 时间与 SHA256。`STUDYGUARDIAN_RUNTIME_DIR` 可指向隔离运行目录，默认现有 `D:\StudyGuardianDev`。
+
+仅浏览器开发可用 `VITE_PET_DEV_PANEL=1 npm run dev` 开启旧模拟控制。正式 native 入口使用现代 Quick Panel。
+
+独立输入/面板实验见 [diagnostics/README.md](diagnostics/README.md)，当前实测与未通过的人工 Gate 见 [架构记录](../docs/PET_INPUT_ARCH_DECISION.md)。完整 Settings 与生产切换尚待后续开发验收。

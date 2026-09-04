@@ -22,6 +22,7 @@ export default defineConfig({
         pet: resolve(__dirname, "index.html"),
         quickPanel: resolve(__dirname, "quick-panel.html"),
         controlCenter: resolve(__dirname, "control-center.html"),
+        inputDiagnostics: resolve(__dirname, "diagnostics/input.html"),
       },
     },
   },

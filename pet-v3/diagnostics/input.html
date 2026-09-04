@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StudyGuardian Input Diagnostics</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+      body { padding: 8px; font: 12px "Segoe UI", sans-serif; color: #173144; user-select: none; }
+      main { height: 204px; border: 1px solid #81a0b4; border-radius: 9px; background: #eff6fb; overflow: hidden; }
+      .native-drag { height: 34px; display: grid; place-items: center; color: #fff; background: #24485e; app-region: drag; -webkit-app-region: drag; }
+      .controls, button, output { app-region: no-drag; -webkit-app-region: no-drag; }
+      .controls { padding: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+      button { min-height: 24px; padding: 3px; border: 1px solid #8ba7b9; border-radius: 5px; background: #fff; color: inherit; font: inherit; cursor: pointer; }
+      button:disabled { opacity: .5; cursor: wait; }
+      button:focus-visible { outline: 2px solid #1674ac; outline-offset: 1px; }
+      #count { grid-column: 1 / -1; background: #deeff8; font-weight: 600; }
+      #cycle-panel { grid-column: 1 / -1; }
+      #status { grid-column: 1 / -1; min-height: 32px; overflow-wrap: anywhere; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="native-drag">原生拖动区 · 长按拖动</div>
+      <div class="controls">
+        <button id="count" type="button">独立单击计数：0</button>
+        <button id="open-panel" type="button">打开面板</button>
+        <button id="hide-panel" type="button">隐藏面板</button>
+        <button id="open-settings" type="button">检查设置</button>
+        <button id="open-review" type="button">检查复盘</button>
+        <button id="cycle-panel" type="button">自动开关面板 20 次</button>
+        <output id="status" aria-live="polite">等待操作；计数不调用原生命令。</output>
+      </div>
+    </main>
+    <script type="module" src="./input.js"></script>
+  </body>
+</html>

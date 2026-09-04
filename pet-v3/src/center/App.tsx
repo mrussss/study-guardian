@@ -63,7 +63,7 @@ const missionRows = [
 
 const achievement = { title: "一周坚持", description: "连续打卡 7 天，保持稳定的节奏", progress: .71, detail: "5 / 7 天" };
 
-type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string };
+type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number };
 
 const modeTitle: Record<"STANDBY" | "STUDY" | "BREAK" | "OFF", string> = {
   STANDBY: "准备开始",
@@ -256,9 +256,9 @@ function LiveSection({ active, snapshot, live }: { active: string; snapshot?: Su
   }
 }
 
-export function ControlCenter({ snapshot, live = false, initialActive = "overview" }: DashboardProps): ReactElement {
+export function ControlCenter({ snapshot, live = false, initialActive = "overview", routeRevision = 0 }: DashboardProps): ReactElement {
   const [active, setActive] = useState(initialActive);
-  useEffect(() => setActive(initialActive), [initialActive]);
+  useEffect(() => setActive(initialActive), [initialActive, routeRevision]);
   const serviceLabel = live ? (snapshot?.connected ? "本地服务正常" : "正在连接本地服务") : "本地服务正常";
   return <div className="control-center-shell">
     <aside className="center-sidebar">

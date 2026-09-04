@@ -1,15 +1,15 @@
 :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; }
-html, body, #app, .pet-shell { background: rgba(0, 0, 0, .001) !important; border: 0; outline: 0; box-shadow: none; }
+html, body, #app, .pet-shell { background: transparent !important; border: 0; outline: 0; box-shadow: none; }
 html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #app { width: 100%; height: 100%; }
 body { user-select: none; }
-.pet-shell { width: 100%; height: 100%; display: grid; place-items: center; position: relative; cursor: grab; pointer-events: auto; touch-action: none; app-region: no-drag; -webkit-app-region: no-drag; }
+.pet-shell { width: 100%; height: 100%; display: grid; place-items: center; position: relative; cursor: grab; pointer-events: auto; }
 .pet-shell:active { cursor: grabbing; }
-.pet-hit-target { position: absolute; inset: 0; z-index: 1; pointer-events: auto; background: rgba(0, 0, 0, .001); app-region: no-drag; -webkit-app-region: no-drag; }
-.pet-canvas, .pet-state, .pet-task { pointer-events: none; }
+.pet-canvas { app-region: drag; -webkit-app-region: drag; }
+.pet-state, .pet-task { pointer-events: none; }
 .pet-canvas { width: 176px; height: 176px; image-rendering: pixelated; image-rendering: crisp-edges; }
 .pet-state { position: absolute; top: 4px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-shadow: 0 1px #10151d; }
-.pet-task { position: absolute; bottom: 8px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: #dbe8f3; text-shadow: 0 1px #10151d; }
+.pet-task { position: absolute; bottom: 38px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: #dbe8f3; text-shadow: 0 1px #10151d; }
 .pet-control-panel { position: absolute; z-index: 2; inset: 28px 8px 24px; display: flex; flex-direction: column; gap: 6px; padding: 10px; background: rgba(18, 26, 36, .94); border: 1px solid rgba(126, 171, 205, .55); border-radius: 10px; color: #e9f2fa; pointer-events: auto; cursor: default; }
 .pet-control-panel[hidden] { display: none; }
 .pet-control-title { font-size: 11px; font-weight: 700; }
@@ -22,3 +22,10 @@ body { user-select: none; }
 .pet-controls { position: absolute; left: 4px; right: 4px; bottom: 28px; display: none; gap: 2px; flex-wrap: wrap; justify-content: center; }
 .pet-shell:hover .pet-controls { display: flex; }
 .pet-controls button, .pet-controls select { font: 9px "Segoe UI"; background: #18202bd9; color: #e9f2fa; border: 1px solid #49657c; border-radius: 3px; }
+
+.pet-panel-entry { position: absolute; z-index: 3; bottom: 5px; min-height: 29px; padding: 4px 13px; display: flex; gap: 8px; align-items: center; border: 1px solid #a9bdcb; border-radius: 16px; background: #edf5fa; color: #224354; font: 600 12px "Segoe UI", sans-serif; cursor: pointer; app-region: no-drag; -webkit-app-region: no-drag; }
+.pet-panel-entry:hover { background: #dceef9; }
+.pet-panel-entry:focus-visible { outline: 2px solid #467d9b; outline-offset: 2px; }
+.pet-panel-entry:disabled { cursor: progress; opacity: .7; }
+.pet-entry-error { position: absolute; z-index: 4; left: 8px; right: 8px; bottom: 40px; padding: 8px; border-radius: 8px; background: #fff1e5; color: #754727; font-size: 12px; text-align: center; app-region: no-drag; -webkit-app-region: no-drag; }
+.pet-control-panel, .pet-controls, button, input, select { app-region: no-drag; -webkit-app-region: no-drag; }
