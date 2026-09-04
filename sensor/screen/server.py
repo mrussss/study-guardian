@@ -55,6 +55,16 @@ class SensorHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
 
+        if self.path == "/v1/monitors":
+            if not self._check_auth():
+                return
+            result = self.capturer.list_monitors()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode("utf-8"))
+            return
+
         self.send_response(404)
         self.send_header("Content-Type", "application/json")
         self.end_headers()

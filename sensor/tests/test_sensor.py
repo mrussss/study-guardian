@@ -74,6 +74,23 @@ class TestScreenSensor(unittest.TestCase):
             self.assertIn("hash", data)
             self.assertIn("changed", data)
 
+    def test_monitor_geometry_is_authenticated_and_sanitized(self):
+        url = "http://127.0.0.1:17395/v1/monitors"
+        req = urllib.request.Request(url)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(req)
+        self.assertEqual(ctx.exception.code, 401)
+
+        req = urllib.request.Request(url, headers={"Authorization": "Bearer test-token-456"})
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(data["count"], len(data["monitors"]))
+            for monitor in data["monitors"]:
+                self.assertIn("index", monitor)
+                self.assertIsInstance(monitor["width"], int)
+                self.assertIsInstance(monitor["height"], int)
+
 
 if __name__ == "__main__":
     unittest.main()

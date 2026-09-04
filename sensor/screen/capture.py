@@ -27,11 +27,49 @@ class ScreenCapturer:
         self.last_capture_time: Optional[float] = None
         self.change_threshold = change_threshold
         self.sct = None
-        if HAS_CAPTURE_DEPS:
-            try:
-                self.sct = mss.mss()
-            except Exception:
-                self.sct = None
+        self._refresh_capture_context()
+
+    def _refresh_capture_context(self) -> bool:
+        """Re-open MSS so display geometry is rediscovered after hotplug."""
+        if not HAS_CAPTURE_DEPS:
+            self.sct = None
+            return False
+        previous = self.sct
+        try:
+            # MSS snapshots monitor geometry on the capture context. Recreate
+            # that context instead of retaining a handle to a removed display.
+            self.sct = mss.mss()
+        except Exception:
+            self.sct = None
+            return False
+        if previous is not None and previous is not self.sct:
+            close = getattr(previous, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        return True
+
+    def list_monitors(self) -> Dict[str, Any]:
+        """Return the current sanitized virtual/physical monitor geometry."""
+        if not self._refresh_capture_context() or self.sct is None:
+            return {"monitors": [], "count": 0, "error": "capture unavailable"}
+        try:
+            monitors = []
+            for index, monitor in enumerate(self.sct.monitors):
+                monitors.append({
+                    "index": index,
+                    "left": int(monitor.get("left", 0)),
+                    "top": int(monitor.get("top", 0)),
+                    "width": int(monitor.get("width", 0)),
+                    "height": int(monitor.get("height", 0)),
+                    "is_virtual": index == 0,
+                    "is_primary": bool(monitor.get("is_primary", index == 1)),
+                })
+            return {"monitors": monitors, "count": len(monitors), "error": None}
+        except Exception as exc:
+            return {"monitors": [], "count": 0, "error": str(exc)}
 
     def is_available(self) -> bool:
         """Return whether a real MSS capture object is usable."""
@@ -78,15 +116,28 @@ class ScreenCapturer:
             }
 
         try:
-            monitors = self.sct.monitors
-            if monitor_idx >= len(monitors):
-                target_mon = monitors[1] if len(monitors) > 1 else monitors[0]
-            elif monitor_idx < 0:
-                target_mon = monitors[0] # All monitors virtual desktop
-            else:
-                target_mon = monitors[monitor_idx]
-
-            sct_img = self.sct.grab(target_mon)
+            # Re-discover geometry on every capture. This is intentionally
+            # bounded to one fresh context and one retry; a transient unplug
+            # remains a fail-soft sensor error instead of blocking Supervisor.
+            self._refresh_capture_context()
+            for attempt in range(2):
+                if self.sct is None:
+                    raise RuntimeError("capture unavailable")
+                monitors = self.sct.monitors
+                if not monitors:
+                    raise RuntimeError("no monitors available")
+                if monitor_idx >= len(monitors):
+                    target_mon = monitors[1] if len(monitors) > 1 else monitors[0]
+                elif monitor_idx < 0:
+                    target_mon = monitors[0] # All monitors virtual desktop
+                else:
+                    target_mon = monitors[monitor_idx]
+                try:
+                    sct_img = self.sct.grab(target_mon)
+                    break
+                except Exception:
+                    if attempt == 1 or not self._refresh_capture_context():
+                        raise
             img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
 
             current_hash = self.compute_dhash(img)
