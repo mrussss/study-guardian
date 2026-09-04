@@ -6,9 +6,20 @@ import { BehaviorEngine, type VisualState } from "../behavior/engine";
 import { mockActivityWatchStale, mockSemantic, mockSupervisorOffline } from "../mock/semantic";
 import type { Activity, CurrentActivityView, Relation, UserMode } from "../model/semantic";
 import { loadSkinManifest } from "../skin";
-import { NativeSupervisorAdapter, SupervisorPollLoop } from "../transport/supervisor";
+import {
+  NativeSupervisorAdapter,
+  NativeSupervisorControlAdapter,
+  SupervisorPollLoop,
+  type ControlErrorKind,
+} from "../transport/supervisor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isInteractiveTarget, shouldStartDragging } from "./drag";
+import {
+  isInteractiveTarget,
+  isClickGesture,
+  shouldBeginNativeDrag,
+  shouldStartDragging,
+  type PointerPoint,
+} from "./drag";
 import legacyManifest from "../skins/studyguardian-pixel/manifest.json";
 import idleURL from "../skins/studyguardian-pixel/sprites/idle.png";
 import studyURL from "../skins/studyguardian-pixel/sprites/study.png";
@@ -33,12 +44,32 @@ function isTauriRuntime(): boolean {
     && Object.prototype.hasOwnProperty.call(window, "__TAURI_INTERNALS__");
 }
 
+function modeLabel(mode: UserMode): string {
+  switch (mode) {
+    case "STUDY": return "学习中";
+    case "BREAK": return "休息中";
+    case "OFF": return "已结束";
+    case "STANDBY": return "待机";
+  }
+}
+
+function controlErrorMessage(kind: ControlErrorKind): string {
+  switch (kind) {
+    case "rejected": return "当前状态不允许该操作";
+    case "unauthorized": return "Supervisor 授权失败";
+    case "timeout": return "Supervisor 响应超时";
+    case "invalid_response": return "Supervisor 返回异常";
+    case "unavailable": return "Supervisor 暂不可用";
+  }
+}
+
 export function mountApp(root: HTMLElement): void {
   const engine = new BehaviorEngine();
   const animation = new AnimationEngine();
-  const supervisorPoll = isTauriRuntime()
-    ? new SupervisorPollLoop(new NativeSupervisorAdapter())
-    : null;
+  const nativeRuntime = isTauriRuntime();
+  const supervisorAdapter = nativeRuntime ? new NativeSupervisorAdapter() : null;
+  const supervisorControl = nativeRuntime ? new NativeSupervisorControlAdapter() : null;
+  const supervisorPoll = supervisorAdapter ? new SupervisorPollLoop(supervisorAdapter) : null;
   const showDevPanel = import.meta.env.DEV && import.meta.env.VITE_PET_DEV_PANEL === "1";
   const emergencyFrames = splitHorizontal(96, 96, 24, 96);
   let semantic: CurrentActivityView = mockSemantic({});
@@ -48,10 +79,22 @@ export function mountApp(root: HTMLElement): void {
   let requestedState: VisualState | null = null;
   let activeAnimation: LoadedAnimation | null = null;
   let animationRequest = 0;
-  root.innerHTML = `<section class="pet-shell" data-tauri-drag-region>
+  let panelOpen = false;
+  let gesture: { pointerId: number; start: PointerPoint; dragging: boolean } | null = null;
+  root.innerHTML = `<section class="pet-shell">
     <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet"></canvas>
     <div class="pet-state" data-state>LEARNING</div>
     <div class="pet-task" data-task></div>
+    <div class="pet-control-panel" data-control-panel data-no-drag hidden>
+      <div class="pet-control-title" data-control-title></div>
+      <input data-task-input maxlength="256" placeholder="当前学习任务" aria-label="当前学习任务" />
+      <div class="pet-control-actions">
+        <button data-start-study type="button">开始学习</button>
+        <button data-start-break type="button">开始休息</button>
+      </div>
+      <div class="pet-control-feedback" data-control-feedback role="status" aria-live="polite"></div>
+      <button data-close-panel type="button">关闭</button>
+    </div>
     ${showDevPanel ? `<div class="pet-controls" data-dev-panel>
       <select data-mode aria-label="mock mode"><option>STUDY</option><option>BREAK</option><option>STANDBY</option><option>OFF</option></select>
       <select data-activity aria-label="mock activity"><option>GENERAL_STUDY</option><option>CODING</option><option>ALGORITHM</option><option>READING</option><option>WRITING</option><option>WATCHING</option><option>AI_ASSISTED</option><option>BROWSING</option><option>UNKNOWN</option></select>
@@ -63,12 +106,94 @@ export function mountApp(root: HTMLElement): void {
   const canvas = root.querySelector<HTMLCanvasElement>("canvas")!;
   const stateLabel = root.querySelector<HTMLElement>("[data-state]")!;
   const taskLabel = root.querySelector<HTMLElement>("[data-task]")!;
+  const controlPanel = root.querySelector<HTMLElement>("[data-control-panel]")!;
+  const controlTitle = root.querySelector<HTMLElement>("[data-control-title]")!;
+  const taskInput = root.querySelector<HTMLInputElement>("[data-task-input]")!;
+  const controlFeedback = root.querySelector<HTMLElement>("[data-control-feedback]")!;
+  const startStudy = root.querySelector<HTMLButtonElement>("[data-start-study]")!;
+  const startBreak = root.querySelector<HTMLButtonElement>("[data-start-break]")!;
+  const closePanel = root.querySelector<HTMLButtonElement>("[data-close-panel]")!;
+
+  const renderPanel = (): void => {
+    controlTitle.textContent = !connected ? "Supervisor 离线" : `当前：${modeLabel(semantic.user_mode)}`;
+    if (document.activeElement !== taskInput) taskInput.value = semantic.task;
+  };
+
+  const setPanelOpen = (open: boolean): void => {
+    panelOpen = open;
+    controlPanel.hidden = !open;
+    if (open) renderPanel();
+  };
+
+  const setControlBusy = (busy: boolean): void => {
+    startStudy.disabled = busy;
+    startBreak.disabled = busy;
+    closePanel.disabled = busy;
+    taskInput.disabled = busy;
+  };
+
+  const runMode = async (mode: "STUDY" | "BREAK"): Promise<void> => {
+    if (!supervisorControl || !supervisorAdapter) {
+      controlFeedback.textContent = "仅支持原生 Tauri Pet";
+      return;
+    }
+    setControlBusy(true);
+    controlFeedback.textContent = "正在提交…";
+    try {
+      const result = mode === "STUDY"
+        ? await supervisorControl.setModeStudy(taskInput.value.trim())
+        : await supervisorControl.setModeBreak();
+      if (!result.ok) {
+        controlFeedback.textContent = controlErrorMessage(result.error_kind ?? "invalid_response");
+        return;
+      }
+      controlFeedback.textContent = "已提交，正在刷新…";
+      const snapshot = await supervisorAdapter.poll();
+      connected = snapshot.connected;
+      semantic = snapshot.semantic;
+      renderPanel();
+      controlFeedback.textContent = snapshot.connected
+        ? "已更新"
+        : controlErrorMessage(snapshot.last_error_kind ?? "unavailable");
+    } finally {
+      setControlBusy(false);
+    }
+  };
+
+  const clearGesture = (): void => {
+    if (gesture) {
+      try { petShell.releasePointerCapture(gesture.pointerId); } catch { /* capture may already be released */ }
+    }
+    gesture = null;
+  };
+
   petShell.addEventListener("pointerdown", event => {
-    if (!shouldStartDragging(event.button, isTauriRuntime(), isInteractiveTarget(event.target))) return;
+    if (event.button !== 0 || isInteractiveTarget(event.target)) return;
+    gesture = { pointerId: event.pointerId, start: { x: event.clientX, y: event.clientY }, dragging: false };
+    try { petShell.setPointerCapture(event.pointerId); } catch { /* pointer capture is optional */ }
+  });
+  petShell.addEventListener("pointermove", event => {
+    if (!gesture || gesture.pointerId !== event.pointerId || gesture.dragging) return;
+    const current = { x: event.clientX, y: event.clientY };
+    if (!shouldStartDragging(0, nativeRuntime, false) || !shouldBeginNativeDrag(gesture.start, current)) return;
+    gesture.dragging = true;
+    setPanelOpen(false);
     void getCurrentWindow().startDragging().catch(() => {
       // Native drag failure must not leak raw IPC errors into the UI.
     });
   });
+  petShell.addEventListener("pointerup", event => {
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    const completed = gesture;
+    const current = { x: event.clientX, y: event.clientY };
+    clearGesture();
+    if (!completed.dragging && isClickGesture(completed.start, current)) setPanelOpen(!panelOpen);
+  });
+  petShell.addEventListener("pointercancel", clearGesture);
+  window.addEventListener("blur", clearGesture);
+  startStudy.addEventListener("click", () => { void runMode("STUDY"); });
+  startBreak.addEventListener("click", () => { void runMode("BREAK"); });
+  closePanel.addEventListener("click", () => setPanelOpen(false));
 
   const drawEmergencyPlaceholder = (state: VisualState): void => {
     const ctx = canvas.getContext("2d")!;
@@ -117,6 +242,7 @@ export function mountApp(root: HTMLElement): void {
     stateLabel.textContent = state;
     stateLabel.style.color = colors[state];
     taskLabel.textContent = !connected ? "Supervisor offline" : !semantic.fresh ? "活动状态不可用" : semantic.task;
+    if (panelOpen) renderPanel();
     draw(state);
     lastFrame = now;
     requestAnimationFrame(refresh);
@@ -150,6 +276,7 @@ export function mountApp(root: HTMLElement): void {
   supervisorPoll?.start(snapshot => {
     connected = snapshot.connected;
     semantic = snapshot.semantic;
+    if (panelOpen) renderPanel();
   });
   requestAnimationFrame(refresh);
 }

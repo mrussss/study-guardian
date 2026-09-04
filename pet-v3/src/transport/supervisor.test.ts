@@ -1,7 +1,16 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { mockSemantic } from "../mock/semantic";
-import { normalizeNativeSnapshot, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter } from "./supervisor";
+import { normalizeControlResult, normalizeNativeSnapshot, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter } from "./supervisor";
+
+test("control results expose only bounded success or error kinds", () => {
+  assert.deepEqual(normalizeControlResult({ ok: true, token: "ignored", path: "ignored" }), { ok: true });
+  assert.deepEqual(normalizeControlResult({ ok: false, error_kind: "rejected", detail: "ignored" }), { ok: false, error_kind: "rejected" });
+  assert.deepEqual(normalizeControlResult({ ok: false, error_kind: "timeout" }), { ok: false, error_kind: "timeout" });
+  assert.deepEqual(normalizeControlResult({ ok: false, error_kind: "raw-supervisor-error" }), { ok: false, error_kind: "invalid_response" });
+  assert.deepEqual(normalizeControlResult({ ok: false, token: "never returned" }), { ok: false, error_kind: "invalid_response" });
+  assert.deepEqual(normalizeControlResult(null), { ok: false, error_kind: "invalid_response" });
+});
 
 test("native snapshot accepts only a complete sanitized semantic contract", () => {
   const semantic = mockSemantic({}, "2026-09-03T00:00:00.000Z");

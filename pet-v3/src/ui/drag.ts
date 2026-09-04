@@ -21,6 +21,25 @@ export function shouldStartDragging(button: number, nativeRuntime: boolean, inte
   return nativeRuntime && button === 0 && !interactiveTarget;
 }
 
+export interface PointerPoint {
+  x: number;
+  y: number;
+}
+
+export const PET_DRAG_THRESHOLD = 5;
+
+export function movementDistance(start: PointerPoint, current: PointerPoint): number {
+  return Math.hypot(current.x - start.x, current.y - start.y);
+}
+
+export function isClickGesture(start: PointerPoint, current: PointerPoint, threshold = PET_DRAG_THRESHOLD): boolean {
+  return movementDistance(start, current) < threshold;
+}
+
+export function shouldBeginNativeDrag(start: PointerPoint, current: PointerPoint, threshold = PET_DRAG_THRESHOLD): boolean {
+  return movementDistance(start, current) >= threshold;
+}
+
 export function isInteractiveTarget(target: EventTarget | null): boolean {
   if (typeof Element === "undefined" || !(target instanceof Element)) return false;
   const ancestorTags: string[] = [];

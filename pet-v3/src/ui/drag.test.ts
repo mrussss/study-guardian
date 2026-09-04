@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { isInteractiveTargetShape, shouldStartDragging, type DragTargetShape } from "./drag";
+import { isClickGesture, isInteractiveTargetShape, movementDistance, shouldBeginNativeDrag, shouldStartDragging, type DragTargetShape } from "./drag";
 
 const target = (tagName: string, options: Partial<DragTargetShape> = {}): DragTargetShape => ({ tagName, ...options });
 
@@ -24,4 +24,12 @@ test("only a native left-button press starts dragging", () => {
   assert.equal(shouldStartDragging(1, true, false), false);
   assert.equal(shouldStartDragging(2, true, false), false);
   assert.equal(shouldStartDragging(0, false, false), false);
+});
+
+test("click and drag gestures use the five pixel boundary", () => {
+  const start = { x: 10, y: 10 };
+  assert.equal(movementDistance(start, { x: 13, y: 14 }), 5);
+  assert.equal(isClickGesture(start, { x: 13, y: 13 }), true);
+  assert.equal(isClickGesture(start, { x: 13, y: 14 }), false);
+  assert.equal(shouldBeginNativeDrag(start, { x: 13, y: 14 }), true);
 });

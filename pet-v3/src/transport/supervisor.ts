@@ -3,6 +3,7 @@ import { mockSemantic, mockSupervisorOffline } from "../mock/semantic";
 import { isCurrentActivityView, type CurrentActivityView } from "../model/semantic";
 
 export type TransportErrorKind = "timeout" | "unauthorized" | "unavailable" | "invalid_response";
+export type ControlErrorKind = TransportErrorKind | "rejected";
 
 export interface PetTransportSnapshot {
   connected: boolean;
@@ -65,6 +66,63 @@ export class NativeSupervisorAdapter implements SupervisorAdapter {
       // Do not expose the native error text to the UI. Only a bounded kind is
       // allowed across the transport boundary; tokens and paths stay native.
       return disconnected(classifyNativeError(error));
+    }
+  }
+}
+
+export interface ControlResult {
+  ok: boolean;
+  error_kind?: ControlErrorKind;
+}
+
+const CONTROL_ERROR_KINDS: ControlErrorKind[] = ["timeout", "unauthorized", "unavailable", "invalid_response", "rejected"];
+
+export function normalizeControlResult(raw: unknown): ControlResult {
+  if (!raw || typeof raw !== "object") return { ok: false, error_kind: "invalid_response" };
+  const value = raw as Record<string, unknown>;
+  if (value.ok === true) return { ok: true };
+  const kind = value.error_kind;
+  return {
+    ok: false,
+    error_kind: typeof kind === "string" && CONTROL_ERROR_KINDS.includes(kind as ControlErrorKind)
+      ? kind as ControlErrorKind
+      : "invalid_response",
+  };
+}
+
+function classifyControlError(error: unknown): ControlErrorKind {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/401|403|unauthorized/i.test(message)) return "unauthorized";
+  if (/400|409|rejected/i.test(message)) return "rejected";
+  if (/timeout|timed out|deadline/i.test(message)) return "timeout";
+  return "unavailable";
+}
+
+export interface SupervisorControlAdapter {
+  setModeStudy(task: string): Promise<ControlResult>;
+  setModeBreak(): Promise<ControlResult>;
+  setModeOff(): Promise<ControlResult>;
+}
+
+export class NativeSupervisorControlAdapter implements SupervisorControlAdapter {
+  setModeStudy(task: string): Promise<ControlResult> {
+    return this.call("STUDY", task);
+  }
+
+  setModeBreak(): Promise<ControlResult> {
+    return this.call("BREAK");
+  }
+
+  setModeOff(): Promise<ControlResult> {
+    return this.call("OFF");
+  }
+
+  private async call(mode: "STUDY" | "BREAK" | "OFF", task?: string): Promise<ControlResult> {
+    try {
+      return normalizeControlResult(await invoke<unknown>("supervisor_set_mode", { mode, task: task ?? null }));
+    } catch (error) {
+      // Native errors are normalized before they cross into UI state.
+      return { ok: false, error_kind: classifyControlError(error) };
     }
   }
 }

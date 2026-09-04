@@ -25,6 +25,7 @@ const DEFAULT_SUPERVISOR_PORT: u16 = 17321;
 enum NativeErrorKind {
     Timeout,
     Unauthorized,
+    Rejected,
     Unavailable,
     InvalidResponse,
 }
@@ -34,6 +35,7 @@ impl NativeErrorKind {
         match self {
             Self::Timeout => "timeout",
             Self::Unauthorized => "unauthorized",
+            Self::Rejected => "rejected",
             Self::Unavailable => "unavailable",
             Self::InvalidResponse => "invalid_response",
         }
@@ -49,6 +51,13 @@ struct SupervisorSnapshot {
     last_success_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_error_kind: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+struct SupervisorControlResult {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_kind: Option<&'static str>,
 }
 
 fn disconnected(kind: NativeErrorKind) -> SupervisorSnapshot {
@@ -126,7 +135,16 @@ fn classify_http_status(status: u16) -> Result<(), NativeErrorKind> {
     }
 }
 
-fn parse_http_response(response: &[u8]) -> Result<Value, NativeErrorKind> {
+fn classify_control_status(status: u16) -> Result<(), NativeErrorKind> {
+    match status {
+        200..=299 => Ok(()),
+        401 | 403 => Err(NativeErrorKind::Unauthorized),
+        400 | 409 => Err(NativeErrorKind::Rejected),
+        _ => Err(NativeErrorKind::Unavailable),
+    }
+}
+
+fn response_parts(response: &[u8]) -> Result<(usize, u16), NativeErrorKind> {
     let separator = find_bytes(response, b"\r\n\r\n").ok_or(NativeErrorKind::InvalidResponse)?;
     let header = &response[..separator];
     let status_line_end = find_bytes(header, b"\r\n").unwrap_or(header.len());
@@ -137,8 +155,13 @@ fn parse_http_response(response: &[u8]) -> Result<Value, NativeErrorKind> {
         .nth(1)
         .and_then(|value| value.parse::<u16>().ok())
         .ok_or(NativeErrorKind::InvalidResponse)?;
+    Ok((separator + 4, status))
+}
+
+fn parse_http_response(response: &[u8]) -> Result<Value, NativeErrorKind> {
+    let (body_start, status) = response_parts(response)?;
     classify_http_status(status)?;
-    serde_json::from_slice(&response[separator + 4..])
+    serde_json::from_slice(&response[body_start..])
         .map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
@@ -179,6 +202,77 @@ fn fetch_current_activity(host: &str, port: u16, token: &str) -> Result<Value, N
         }
     }
     parse_http_response(&response)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ModeRequest {
+    path: &'static str,
+    body: Vec<u8>,
+}
+
+fn build_mode_request(mode: &str, task: Option<&str>) -> Result<ModeRequest, NativeErrorKind> {
+    match mode {
+        "STUDY" => {
+            let task = task.unwrap_or_default();
+            if task.chars().count() > 256 {
+                return Err(NativeErrorKind::Rejected);
+            }
+            let body = serde_json::to_vec(&json!({ "task": task }))
+                .map_err(|_| NativeErrorKind::InvalidResponse)?;
+            Ok(ModeRequest { path: "/v1/mode/study", body })
+        }
+        "BREAK" if task.is_none() => Ok(ModeRequest { path: "/v1/mode/break", body: Vec::new() }),
+        "OFF" if task.is_none() => Ok(ModeRequest { path: "/v1/mode/off", body: Vec::new() }),
+        _ => Err(NativeErrorKind::Rejected),
+    }
+}
+
+fn post_supervisor_mode(host: &str, port: u16, token: &str, request: &ModeRequest) -> Result<Value, NativeErrorKind> {
+    if host.contains('\r') || host.contains('\n') {
+        return Err(NativeErrorKind::Unavailable);
+    }
+    if token.is_empty() || token.contains('\r') || token.contains('\n') {
+        return Err(NativeErrorKind::Unauthorized);
+    }
+    let address = loopback_address(host, port)?;
+    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
+        .map_err(|error| map_io_error(&error))?;
+    stream
+        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|error| map_io_error(&error))?;
+    stream
+        .set_write_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|error| map_io_error(&error))?;
+
+    let request_head = format!(
+        "POST {} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        request.path,
+        request.body.len(),
+    );
+    stream
+        .write_all(request_head.as_bytes())
+        .and_then(|_| stream.write_all(&request.body))
+        .map_err(|error| map_io_error(&error))?;
+    stream.flush().map_err(|error| map_io_error(&error))?;
+
+    let mut response = Vec::with_capacity(16 * 1024);
+    let mut chunk = [0_u8; 8192];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                if response.len() + read > MAX_RESPONSE_BYTES {
+                    return Err(NativeErrorKind::InvalidResponse);
+                }
+                response.extend_from_slice(&chunk[..read]);
+            }
+            Err(error) => return Err(map_io_error(&error)),
+        }
+    }
+    let (body_start, status) = response_parts(&response)?;
+    classify_control_status(status)?;
+    serde_json::from_slice(&response[body_start..])
+        .map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
 fn enum_field(object: &serde_json::Map<String, Value>, key: &str, allowed: &[&str]) -> Result<String, NativeErrorKind> {
@@ -273,6 +367,25 @@ fn supervisor_snapshot() -> SupervisorSnapshot {
 }
 
 #[tauri::command]
+fn supervisor_set_mode(mode: String, task: Option<String>) -> SupervisorControlResult {
+    let request = match build_mode_request(&mode, task.as_deref()) {
+        Ok(request) => request,
+        Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+    };
+    let root = runtime_root();
+    let token_path = root.join("config").join("auth.token");
+    let token = match fs::read_to_string(token_path) {
+        Ok(token) => token.trim().to_string(),
+        Err(_) => return SupervisorControlResult { ok: false, error_kind: Some(NativeErrorKind::Unavailable.as_str()) },
+    };
+    let (host, port) = runtime_endpoint(&root);
+    match post_supervisor_mode(&host, port, &token, &request) {
+        Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
+        Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+    }
+}
+
+#[tauri::command]
 fn set_click_through(window: Window, state: tauri::State<'_, ClickThroughState>, enabled: bool) -> Result<bool, String> {
     window.set_ignore_cursor_events(enabled).map_err(|err| err.to_string())?;
     *state.0.lock().map_err(|_| "click-through state poisoned".to_string())? = enabled;
@@ -282,7 +395,7 @@ fn set_click_through(window: Window, state: tauri::State<'_, ClickThroughState>,
 pub fn run() {
     tauri::Builder::default()
         .manage(ClickThroughState(Arc::new(Mutex::new(false))))
-        .invoke_handler(tauri::generate_handler![set_click_through, supervisor_snapshot])
+        .invoke_handler(tauri::generate_handler![set_click_through, supervisor_snapshot, supervisor_set_mode])
         .setup(|app| {
             let window = app.get_webview_window("main").ok_or("main window missing")?;
             window.set_always_on_top(true)?;
@@ -321,10 +434,10 @@ pub fn run() {
 mod tests {
     use std::io;
 
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::{
-        classify_http_status, disconnected, map_io_error, parse_http_response, sanitize_semantic,
+        build_mode_request, classify_control_status, classify_http_status, disconnected, map_io_error, parse_http_response, sanitize_semantic,
         next_click_through, NativeErrorKind, SupervisorSnapshot,
     };
 
@@ -366,6 +479,10 @@ mod tests {
     fn native_http_error_mapping_is_bounded() {
         assert_eq!(classify_http_status(401), Err(NativeErrorKind::Unauthorized));
         assert_eq!(classify_http_status(504), Err(NativeErrorKind::Unavailable));
+        assert_eq!(classify_control_status(400), Err(NativeErrorKind::Rejected));
+        assert_eq!(classify_control_status(409), Err(NativeErrorKind::Rejected));
+        assert_eq!(classify_control_status(401), Err(NativeErrorKind::Unauthorized));
+        assert_eq!(classify_control_status(403), Err(NativeErrorKind::Unauthorized));
         assert_eq!(map_io_error(&io::Error::new(io::ErrorKind::TimedOut, "hidden detail")), NativeErrorKind::Timeout);
         assert_eq!(map_io_error(&io::Error::new(io::ErrorKind::ConnectionRefused, "hidden detail")), NativeErrorKind::Unavailable);
     }
@@ -395,5 +512,20 @@ mod tests {
         assert!(sanitized.get("secret").is_none());
         assert_eq!(sanitized.as_object().expect("object").len(), 10);
         assert_eq!(disconnected(NativeErrorKind::Timeout).last_error_kind, Some("timeout"));
+    }
+
+    #[test]
+    fn mode_requests_use_fixed_paths_and_json_encoding() {
+        let study = build_mode_request("STUDY", Some("quote \" and newline\n"))
+            .expect("study request");
+        assert_eq!(study.path, "/v1/mode/study");
+        let body: Value = serde_json::from_slice(&study.body).expect("study JSON");
+        assert_eq!(body["task"], "quote \" and newline\n");
+
+        assert_eq!(build_mode_request("BREAK", None).expect("break request").path, "/v1/mode/break");
+        assert_eq!(build_mode_request("OFF", None).expect("off request").path, "/v1/mode/off");
+        assert_eq!(build_mode_request("NOPE", None), Err(NativeErrorKind::Rejected));
+        assert_eq!(build_mode_request("BREAK", Some("unexpected")), Err(NativeErrorKind::Rejected));
+        assert_eq!(build_mode_request("STUDY", Some(&"x".repeat(257))), Err(NativeErrorKind::Rejected));
     }
 }
