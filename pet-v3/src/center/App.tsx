@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
+import { NativeSupervisorControlAdapter } from "../transport/supervisor";
 import type { NativeAchievement, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
@@ -219,6 +220,24 @@ function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): R
   return <DataPage title="系统状态" description="查看本地 Supervisor 与受限功能的健康状态。"><section className="surface-section data-card"><div className="section-header"><div><h2>本地服务</h2><p>不会显示 token、路径或原始错误</p></div><Activity className="section-icon" size={20} /></div><div className="system-status-grid"><div><span>Supervisor</span><strong>{snapshot?.connected ? "已连接" : "连接中"}</strong></div><div><span>ActivityWatch</span><strong>{status?.activitywatch_ok ? "正常" : "待检查"}</strong></div><div><span>Screen Sensor</span><strong>{status?.screen_sensor_ok ? "正常" : "待检查"}</strong></div><div><span>AI</span><strong>{ai?.enabled && ai.text_configured ? "已配置" : "规则模式"}</strong></div></div></section></DataPage>;
 }
 
+function SettingsPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
+  const [targetInput, setTargetInput] = useState("");
+  const [notice, setNotice] = useState("");
+  const currentTarget = snapshot?.motivation?.daily_target_minutes;
+  const inputValue = targetInput !== "" ? targetInput : currentTarget?.toString() ?? "";
+  const save = async (): Promise<void> => {
+    const minutes = Number(inputValue);
+    if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
+      setNotice("请输入 1–1440 分钟");
+      return;
+    }
+    const result = await new NativeSupervisorControlAdapter().setDailyTarget(minutes);
+    setNotice(result.ok ? "每日目标已保存" : "每日目标暂时无法保存");
+    if (result.ok) setTargetInput("");
+  };
+  return <DataPage title="设置" description="设置保存在本机；token 和 AI secret 只在 native 端读取。"><section className="surface-section data-card settings-card"><div className="section-header"><div><h2>每日专注目标</h2><p>目标会写入 canonical motivation storage</p></div><Settings2 className="section-icon" size={20} /></div><label className="setting-field"><span>目标分钟数</span><input type="number" min={1} max={1440} value={inputValue} onChange={event => setTargetInput(event.target.value)} /><small>范围 1–1440 分钟</small></label><div className="setting-actions"><button className="primary-button" type="button" onClick={() => void save()}>保存设置</button>{notice && <span role="status">{notice}</span>}</div></section></DataPage>;
+}
+
 function ComingSoon({ title }: { title: string }): ReactElement {
   return <div className="coming-page"><div className="coming-icon"><Sparkles size={24} /></div><h1>{title}</h1><p>这个入口已经为 Control Center 预留，当前阶段先完成总览与视觉基础。</p><button className="secondary-button" type="button"><Play size={16} />回到总览</button></div>;
 }
@@ -232,6 +251,7 @@ function LiveSection({ active, snapshot, live }: { active: string; snapshot?: Su
     case "review": return <ReviewPage review={snapshot?.review} />;
     case "history": return <HistoryPage history={snapshot?.history} />;
     case "system": return <SystemPage snapshot={snapshot} />;
+    case "settings": return <SettingsPage snapshot={snapshot} />;
     default: return <ComingSoon title={displayTitle(active)} />;
   }
 }

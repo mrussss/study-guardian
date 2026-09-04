@@ -339,6 +339,7 @@ export interface SupervisorControlAdapter {
   setModeStudy(task: string): Promise<ControlResult>;
   setModeBreak(): Promise<ControlResult>;
   setModeOff(): Promise<ControlResult>;
+  setDailyTarget(minutes: number): Promise<ControlResult>;
 }
 
 export class NativeSupervisorControlAdapter implements SupervisorControlAdapter {
@@ -354,11 +355,26 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
     return this.call("OFF");
   }
 
+  setDailyTarget(minutes: number): Promise<ControlResult> {
+    if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
+      return Promise.resolve({ ok: false, error_kind: "rejected" });
+    }
+    return this.callDailyTarget(minutes);
+  }
+
   private async call(mode: "STUDY" | "BREAK" | "OFF", task?: string): Promise<ControlResult> {
     try {
       return normalizeControlResult(await invoke<unknown>("supervisor_set_mode", { mode, task: task ?? null }));
     } catch (error) {
       // Native errors are normalized before they cross into UI state.
+      return { ok: false, error_kind: classifyControlError(error) };
+    }
+  }
+
+  private async callDailyTarget(minutes: number): Promise<ControlResult> {
+    try {
+      return normalizeControlResult(await invoke<unknown>("supervisor_set_daily_target", { minutes }));
+    } catch (error) {
       return { ok: false, error_kind: classifyControlError(error) };
     }
   }

@@ -30,8 +30,7 @@ achievements、missions、rewards 和 AI status 的脱敏 DTO。Stage C 的 Wind
 ## 后续顺序
 
 1. 完成 Stage C Windows 原生窗口视觉/交互 Gate（当前自动化和浏览器页面复查已通过）。
-2. 完成 Stage D/E：补齐 review、Study Center parity 和真实页面 actions，并保持
+2. 完成 Stage D/E：补齐 Study Center parity 和真实页面 actions，并保持
    受限 native client 的固定路径/脱敏边界。
-3. Stage E/F：完成 Control Center parity，再实现 typed settings API、原子配置
-   保存与 secret configured-only DTO。
+3. Stage F/G：补齐 typed settings API、完整配置原子保存与 secret configured-only DTO。
 4. Stage H/I/J：托盘统一、生产清理、全量回归和 Windows 视觉验收。

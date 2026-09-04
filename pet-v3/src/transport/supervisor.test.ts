@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { mockSemantic } from "../mock/semantic";
-import { normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter } from "./supervisor";
+import { NativeSupervisorControlAdapter, normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter } from "./supervisor";
 
 test("control results expose only bounded success or error kinds", () => {
   assert.deepEqual(normalizeControlResult({ ok: true, token: "ignored", path: "ignored" }), { ok: true });
@@ -10,6 +10,12 @@ test("control results expose only bounded success or error kinds", () => {
   assert.deepEqual(normalizeControlResult({ ok: false, error_kind: "raw-supervisor-error" }), { ok: false, error_kind: "invalid_response" });
   assert.deepEqual(normalizeControlResult({ ok: false, token: "never returned" }), { ok: false, error_kind: "invalid_response" });
   assert.deepEqual(normalizeControlResult(null), { ok: false, error_kind: "invalid_response" });
+});
+
+test("daily target control rejects values outside the typed range before native invoke", async () => {
+  const control = new NativeSupervisorControlAdapter();
+  assert.deepEqual(await control.setDailyTarget(0), { ok: false, error_kind: "rejected" });
+  assert.deepEqual(await control.setDailyTarget(1441), { ok: false, error_kind: "rejected" });
 });
 
 test("native snapshot accepts only a complete sanitized semantic contract", () => {

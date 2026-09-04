@@ -141,5 +141,7 @@
 - [~] 108. Stage D/E 已接入受限 native Supervisor dashboard DTO（status、motivation、history、
   achievements、missions、rewards、AI status）与 Quick Panel 实时 mode/task/进度/模式控制；
   Control Center 其余页面、Review/Study Center parity 与原生窗口人工 Gate 待完成
-- [ ] 109. Stage F/G typed settings API、atomic persistence、secret configured-only DTO
+- [~] 109. Stage F/G 已完成每日目标 typed native control（1–1440 校验、atomic
+  motivation storage 写入、bounded result）与 Control Center 设置页；完整配置编辑、
+  AI configured-only DTO 与其余设置项待完成
 - [ ] 110. Stage H/J tray unification、production cleanup 与现代 UI Windows visual acceptance

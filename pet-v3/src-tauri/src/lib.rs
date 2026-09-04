@@ -26,6 +26,7 @@ const SUPERVISOR_GET_PATHS: &[&str] = &[
     "/v1/activity/current",
     "/v1/status",
     "/v1/motivation/status",
+    "/v1/motivation/settings",
     "/v1/motivation/history?days=7",
     "/v1/motivation/achievements",
     "/v1/missions",
@@ -362,6 +363,14 @@ fn build_mode_request(mode: &str, task: Option<&str>) -> Result<ModeRequest, Nat
     }
 }
 
+fn build_daily_target_body(minutes: i64) -> Result<Vec<u8>, NativeErrorKind> {
+    if !(1..=1440).contains(&minutes) {
+        return Err(NativeErrorKind::Rejected);
+    }
+    serde_json::to_vec(&json!({ "daily_target_minutes": minutes }))
+        .map_err(|_| NativeErrorKind::InvalidResponse)
+}
+
 fn post_supervisor_mode(host: &str, port: u16, token: &str, request: &ModeRequest) -> Result<Value, NativeErrorKind> {
     if host.contains('\r') || host.contains('\n') {
         return Err(NativeErrorKind::Unavailable);
@@ -408,6 +417,51 @@ fn post_supervisor_mode(host: &str, port: u16, token: &str, request: &ModeReques
     classify_control_status(status)?;
     serde_json::from_slice(&response[body_start..])
         .map_err(|_| NativeErrorKind::InvalidResponse)
+}
+
+fn put_daily_target(host: &str, port: u16, token: &str, minutes: i64) -> Result<Value, NativeErrorKind> {
+    let body = build_daily_target_body(minutes)?;
+    if host.contains('\r') || host.contains('\n') {
+        return Err(NativeErrorKind::Unavailable);
+    }
+    if token.is_empty() || token.contains('\r') || token.contains('\n') {
+        return Err(NativeErrorKind::Unauthorized);
+    }
+    let address = loopback_address(host, port)?;
+    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
+        .map_err(|error| map_io_error(&error))?;
+    stream
+        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|error| map_io_error(&error))?;
+    stream
+        .set_write_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|error| map_io_error(&error))?;
+    let request_head = format!(
+        "PUT /v1/motivation/settings HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len(),
+    );
+    stream
+        .write_all(request_head.as_bytes())
+        .and_then(|_| stream.write_all(&body))
+        .map_err(|error| map_io_error(&error))?;
+    stream.flush().map_err(|error| map_io_error(&error))?;
+    let mut response = Vec::with_capacity(16 * 1024);
+    let mut chunk = [0_u8; 8192];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                if response.len() + read > MAX_RESPONSE_BYTES {
+                    return Err(NativeErrorKind::InvalidResponse);
+                }
+                response.extend_from_slice(&chunk[..read]);
+            }
+            Err(error) => return Err(map_io_error(&error)),
+        }
+    }
+    let (body_start, status) = response_parts(&response)?;
+    classify_control_status(status)?;
+    serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
 fn enum_field(object: &serde_json::Map<String, Value>, key: &str, allowed: &[&str]) -> Result<String, NativeErrorKind> {
@@ -848,6 +902,18 @@ fn supervisor_set_mode(mode: String, task: Option<String>) -> SupervisorControlR
 }
 
 #[tauri::command]
+fn supervisor_set_daily_target(minutes: i64) -> SupervisorControlResult {
+    let (host, port, token) = match supervisor_credentials() {
+        Ok(credentials) => credentials,
+        Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+    };
+    match put_daily_target(&host, port, &token, minutes) {
+        Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
+        Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+    }
+}
+
+#[tauri::command]
 fn open_quick_panel(app: AppHandle) -> Result<(), String> {
     let panel = app
         .get_webview_window("quick-panel")
@@ -893,6 +959,7 @@ pub fn run() {
             supervisor_snapshot,
             supervisor_dashboard_snapshot,
             supervisor_set_mode,
+            supervisor_set_daily_target,
             open_quick_panel,
             hide_quick_panel,
             open_control_center,
@@ -938,7 +1005,7 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        bounded_panel_position, build_mode_request, classify_control_status, classify_http_status,
+        bounded_panel_position, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
         sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status,
         NativeErrorKind,
@@ -1031,6 +1098,11 @@ mod tests {
         assert_eq!(build_mode_request("NOPE", None), Err(NativeErrorKind::Rejected));
         assert_eq!(build_mode_request("BREAK", Some("unexpected")), Err(NativeErrorKind::Rejected));
         assert_eq!(build_mode_request("STUDY", Some(&"x".repeat(257))), Err(NativeErrorKind::Rejected));
+        let daily_target = build_daily_target_body(120).expect("daily target JSON");
+        let target: Value = serde_json::from_slice(&daily_target).expect("daily target body");
+        assert_eq!(target["daily_target_minutes"], 120);
+        assert_eq!(build_daily_target_body(0), Err(NativeErrorKind::Rejected));
+        assert_eq!(build_daily_target_body(1441), Err(NativeErrorKind::Rejected));
     }
 
     #[test]

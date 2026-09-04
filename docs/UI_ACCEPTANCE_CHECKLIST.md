@@ -28,6 +28,12 @@
 - [x] Control Center native runtime 接入 status、motivation、7 天 history、achievements、missions、rewards 和 AI status；空/异常可选数据以空态显示。
 - [x] 源 WSL 与 NTFS 验证副本 Node 测试均为 21/21，Rust `cargo check` 与单测均为 8/8，Vite 三入口构建通过。
 
+## Stage F/G 当前自动化 Gate
+
+- [x] 每日目标设置使用 typed native control，Rust 与 TypeScript 均拒绝 0 或大于 1440 的值。
+- [x] 保存请求固定为 `/v1/motivation/settings`，由 Supervisor 的事务存储完成；WebView 不读取配置 token 或 AI secret。
+- [ ] 完整配置项编辑、AI configured-only DTO 与设置变更后的全窗口刷新。
+
 ## 尚未通过的后续 Gate
 
 - [ ] Control Center Review、History actions 与 Study Center parity。

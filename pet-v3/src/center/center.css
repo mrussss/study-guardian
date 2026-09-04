@@ -130,6 +130,12 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .system-status-grid > div { display: grid; gap: 6px; padding: 16px; background: var(--sg-surface); }
 .system-status-grid span { color: var(--sg-text-tertiary); font-size: 12px; }
 .system-status-grid strong { color: var(--sg-text); font-size: 14px; }
+.settings-card { max-width: 620px; }
+.setting-field { display: grid; gap: 7px; margin-top: 24px; color: var(--sg-text); font-size: 13px; font-weight: 650; }
+.setting-field input { width: 180px; min-height: 40px; padding: 0 12px; color: var(--sg-text); background: var(--sg-surface-raised); border: 1px solid var(--sg-border-strong); border-radius: var(--sg-radius-button); font: inherit; font-weight: 500; }
+.setting-field small { color: var(--sg-text-tertiary); font-size: 12px; font-weight: 500; }
+.setting-actions { display: flex; align-items: center; gap: 14px; margin-top: 22px; }
+.setting-actions > span { color: var(--sg-text-secondary); font-size: 12px; }
 .coming-page { display: grid; max-width: 450px; min-height: calc(100vh - 70px); place-content: center; justify-items: center; gap: 12px; margin: 0 auto; padding: 32px; text-align: center; }
 .coming-icon { display: grid; width: 54px; height: 54px; place-items: center; color: var(--sg-accent); background: var(--sg-accent-soft); border-radius: 16px; }
 .coming-page h1 { margin: 4px 0 0; font-size: 24px; font-weight: 650; }
