@@ -36,7 +36,7 @@
 - [x] 29. 基础 TaskRelation 规则引擎 (白名单/黑名单/学习任务关键词匹配)
 - [x] 30. ActivityWatch offline fail-soft 处理
 - [x] 31. Phase 2 单元测试与集成测试
-- [~] 32. Phase 2 Windows 验证（ActivityWatch fresh/stale 已通过；完整矩阵待完成）
+- [~] 32. Phase 2 Windows 验证（ActivityWatch fresh/stale、临时停止恢复、动态 rediscovery 已自动覆盖；完整真实 Windows 矩阵待完成）
 
 ## Phase 3: Screen Sensor 正式接入
 - [x] 33. mss 正式 capture 实现与双端口服务
