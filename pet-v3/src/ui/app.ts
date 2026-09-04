@@ -125,6 +125,18 @@ export function mountApp(root: HTMLElement): void {
     if (open) renderPanel();
   };
 
+  const openQuickPanel = async (): Promise<void> => {
+    if (nativeRuntime) {
+      try {
+        await invoke("open_quick_panel");
+        return;
+      } catch {
+        // Keep the compact POC panel as a fail-soft browser/native fallback.
+      }
+    }
+    setPanelOpen(!panelOpen);
+  };
+
   const setControlBusy = (busy: boolean): void => {
     startStudy.disabled = busy;
     startBreak.disabled = busy;
@@ -187,7 +199,7 @@ export function mountApp(root: HTMLElement): void {
     const completed = gesture;
     const current = { x: event.clientX, y: event.clientY };
     clearGesture();
-    if (!completed.dragging && isClickGesture(completed.start, current)) setPanelOpen(!panelOpen);
+    if (!completed.dragging && isClickGesture(completed.start, current)) void openQuickPanel();
   });
   petShell.addEventListener("pointercancel", clearGesture);
   window.addEventListener("blur", clearGesture);

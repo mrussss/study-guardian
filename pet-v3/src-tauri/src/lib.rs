@@ -10,7 +10,11 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
-use tauri::{menu::{Menu, MenuItem}, tray::TrayIconBuilder, Manager, Window};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    AppHandle, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
+};
 
 struct ClickThroughState(Arc<Mutex<bool>>);
 
@@ -67,6 +71,81 @@ fn disconnected(kind: NativeErrorKind) -> SupervisorSnapshot {
         last_success_at: None,
         last_error_kind: Some(kind.as_str()),
     }
+}
+
+fn configured_aux_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, String> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == label)
+        .cloned()
+        .ok_or_else(|| format!("window configuration missing: {label}"))?;
+    let hide_on_focus_loss = label == "quick-panel";
+    let window = WebviewWindowBuilder::from_config(app, &config)
+        .map_err(|error| format!("window configuration rejected: {error}"))?
+        .build()
+        .map_err(|error| format!("window creation failed: {error}"))?;
+    let window_for_events = window.clone();
+    window.on_window_event(move |event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                let _ = window_for_events.hide();
+            }
+            WindowEvent::Focused(false) if hide_on_focus_loss => {
+                let _ = window_for_events.hide();
+            }
+            _ => {}
+        });
+    Ok(window)
+}
+
+fn bounded_panel_position(
+    desired_x: i64,
+    desired_y: i64,
+    work_x: i64,
+    work_y: i64,
+    work_width: i64,
+    work_height: i64,
+    panel_width: i64,
+    panel_height: i64,
+) -> (i32, i32) {
+    let max_x = (work_x + work_width - panel_width).max(work_x);
+    let max_y = (work_y + work_height - panel_height).max(work_y);
+    (desired_x.clamp(work_x, max_x) as i32, desired_y.clamp(work_y, max_y) as i32)
+}
+
+fn position_quick_panel(pet: &WebviewWindow, panel: &WebviewWindow) -> Result<(), String> {
+    let monitor = pet
+        .current_monitor()
+        .map_err(|error| format!("monitor lookup failed: {error}"))?
+        .ok_or_else(|| "pet monitor unavailable".to_string())?;
+    let work_area = monitor.work_area();
+    let pet_position = pet.outer_position().map_err(|error| error.to_string())?;
+    let pet_size = pet.outer_size().map_err(|error| error.to_string())?;
+    let panel_size = panel.outer_size().map_err(|error| error.to_string())?;
+    let gap = 12_i64;
+    let work_x = i64::from(work_area.position.x);
+    let work_y = i64::from(work_area.position.y);
+    let work_width = i64::from(work_area.size.width);
+    let work_height = i64::from(work_area.size.height);
+    let panel_width = i64::from(panel_size.width);
+    let panel_height = i64::from(panel_size.height);
+    let pet_x = i64::from(pet_position.x);
+    let pet_y = i64::from(pet_position.y);
+    let pet_width = i64::from(pet_size.width);
+    let pet_height = i64::from(pet_size.height);
+    let right = (pet_x + pet_width + gap, pet_y);
+    let left = (pet_x - panel_width - gap, pet_y);
+    let below = (pet_x, pet_y + pet_height + gap);
+    let above = (pet_x, pet_y - panel_height - gap);
+    let work_right = work_x + work_width;
+    let work_bottom = work_y + work_height;
+    let fits = |(x, y): (i64, i64)| x >= work_x && y >= work_y && x + panel_width <= work_right && y + panel_height <= work_bottom;
+    let (desired_x, desired_y) = [right, left, below, above].into_iter().find(|candidate| fits(*candidate)).unwrap_or(right);
+    let (x, y) = bounded_panel_position(desired_x, desired_y, work_x, work_y, work_width, work_height, panel_width, panel_height);
+    panel.set_position(PhysicalPosition::new(x, y)).map_err(|error| error.to_string())
 }
 
 fn runtime_root() -> PathBuf {
@@ -386,6 +465,37 @@ fn supervisor_set_mode(mode: String, task: Option<String>) -> SupervisorControlR
 }
 
 #[tauri::command]
+fn open_quick_panel(app: AppHandle) -> Result<(), String> {
+    let panel = app
+        .get_webview_window("quick-panel")
+        .map(Ok)
+        .unwrap_or_else(|| configured_aux_window(&app, "quick-panel"))?;
+    if let Some(pet) = app.get_webview_window("main") {
+        position_quick_panel(&pet, &panel)?;
+    }
+    panel.show().map_err(|error| error.to_string())?;
+    panel.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn hide_quick_panel(app: AppHandle) -> Result<(), String> {
+    if let Some(panel) = app.get_webview_window("quick-panel") {
+        panel.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_control_center(app: AppHandle) -> Result<(), String> {
+    let center = app
+        .get_webview_window("control-center")
+        .map(Ok)
+        .unwrap_or_else(|| configured_aux_window(&app, "control-center"))?;
+    center.show().map_err(|error| error.to_string())?;
+    center.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn set_click_through(window: Window, state: tauri::State<'_, ClickThroughState>, enabled: bool) -> Result<bool, String> {
     window.set_ignore_cursor_events(enabled).map_err(|err| err.to_string())?;
     *state.0.lock().map_err(|_| "click-through state poisoned".to_string())? = enabled;
@@ -395,7 +505,14 @@ fn set_click_through(window: Window, state: tauri::State<'_, ClickThroughState>,
 pub fn run() {
     tauri::Builder::default()
         .manage(ClickThroughState(Arc::new(Mutex::new(false))))
-        .invoke_handler(tauri::generate_handler![set_click_through, supervisor_snapshot, supervisor_set_mode])
+        .invoke_handler(tauri::generate_handler![
+            set_click_through,
+            supervisor_snapshot,
+            supervisor_set_mode,
+            open_quick_panel,
+            hide_quick_panel,
+            open_control_center,
+        ])
         .setup(|app| {
             let window = app.get_webview_window("main").ok_or("main window missing")?;
             window.set_always_on_top(true)?;
@@ -437,7 +554,7 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        build_mode_request, classify_control_status, classify_http_status, disconnected, map_io_error, parse_http_response, sanitize_semantic,
+        bounded_panel_position, build_mode_request, classify_control_status, classify_http_status, disconnected, map_io_error, parse_http_response, sanitize_semantic,
         next_click_through, NativeErrorKind, SupervisorSnapshot,
     };
 
@@ -527,5 +644,12 @@ mod tests {
         assert_eq!(build_mode_request("NOPE", None), Err(NativeErrorKind::Rejected));
         assert_eq!(build_mode_request("BREAK", Some("unexpected")), Err(NativeErrorKind::Rejected));
         assert_eq!(build_mode_request("STUDY", Some(&"x".repeat(257))), Err(NativeErrorKind::Rejected));
+    }
+
+    #[test]
+    fn quick_panel_position_stays_inside_negative_or_positive_work_areas() {
+        assert_eq!(bounded_panel_position(1900, 900, 0, 0, 1920, 1080, 380, 430), (1540, 650));
+        assert_eq!(bounded_panel_position(-600, -400, -1280, 0, 1280, 1024, 380, 430), (-600, 0));
+        assert_eq!(bounded_panel_position(-2000, 1200, -1280, 0, 1280, 1024, 380, 430), (-1280, 594));
     }
 }

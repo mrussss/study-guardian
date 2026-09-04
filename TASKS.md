@@ -135,8 +135,9 @@
 
 - [x] 106. Stage B React multi-page foundation：独立 Quick Panel / Control Center、
   design tokens、Lucide、Recharts、静态 Dashboard 与 UI acceptance/design docs
-- [~] 107. Stage C Quick Panel / Control Center Tauri window orchestration（单实例、
-  定位、Escape、focus-loss hide 与多显示器边界待实现）
+- [~] 107. Stage C Quick Panel / Control Center Tauri window orchestration（窗口配置、
+  延迟创建/单实例复用、Pet 相邻定位、Escape/focus-loss hide 与多显示器边界自动验证已完成；
+  原生 Windows 窗口视觉/交互仍待人工 Gate）
 - [ ] 108. Stage D/E Control Center canonical Supervisor data 与 Study Center parity
 - [ ] 109. Stage F/G typed settings API、atomic persistence、secret configured-only DTO
 - [ ] 110. Stage H/J tray unification、production cleanup 与现代 UI Windows visual acceptance

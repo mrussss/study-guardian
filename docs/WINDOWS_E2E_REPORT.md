@@ -10,6 +10,7 @@
 - Collector 41 项测试在 NTFS 验证副本中 41/41 通过；Pet v3 在 WSL 原生 Node 22 与 NTFS 验证副本中均完成测试/TypeScript 检查，NTFS 副本用于 Tauri Windows runtime 验收。
 - Tauri `supervisor_snapshot` 已补齐：复用 `D:\StudyGuardianDev\config\auth.token` 与 `config.yaml`，仅允许 loopback Supervisor、2 秒有界 HTTP、白名单 semantic 字段和四类脱敏错误；NTFS 验证副本的 `npm ci`、`npm test`（17/17）、`npm run build`、`cargo check`、`cargo test`（6 tests）均通过，`npm run tauri dev` 已启动并保持 `StudyGuardian Pet v3` 响应。Fix Pack 的 native `startDragging()`、shadow 关闭、开发面板 gating 与 CSS hit-target 已编码并完成自动验证。当前 CUA 未枚举该原生窗口，视觉/UI 交互验收仍需人工完成。
 - Interaction Fix Pack v1 已完成自动验证：生产面板与 dev mock panel 分离；小于 5px 的左键手势切换面板，达到阈值后仅调用一次 Tauri native `startDragging()`；Study/Break 通过 Rust `supervisor_set_mode` 访问固定 loopback Supervisor 路径，任务 JSON 由 Rust 编码，token 不进入 WebView。源 WSL 与 NTFS 副本的 Node 测试统一为 17/17，NTFS `cargo check` 与 `cargo test` 为 6/6，重新启动的 `StudyGuardian Pet v3` 临时进程响应正常。当前 CUA 未枚举该原生窗口，因此真实 click/drag/mode 仍为人工 PENDING，未宣称 UI PASS。
+- Modern UI Stage B/C 已完成自动复核：源 WSL 与 NTFS 验证副本的 Node 测试均为 20/20，TypeScript 检查与 Vite 三入口构建均 PASS；Quick Panel 与 Control Center 的本地浏览器页面已完成视觉复查。NTFS 副本的 Tauri 配置包含延迟创建、单实例复用、Quick Panel Pet 相邻定位、Escape/focus-loss hide 和多显示器边界夹紧；`cargo check` 与 Rust 7/7 单测 PASS，`npm run tauri dev` 成功启动并保持 `StudyGuardian Pet v3` 响应。当前 CUA 仍未枚举 Tauri 原生辅助窗口，因此原生窗口显示/交互仍为人工 PENDING，未宣称 UI PASS。
 - 传感器 monitor listing 新增 fake MSS context rediscovery/负坐标/几何变化回归；真实物理显示器热插拔仍保留为人工验收。
 
 ## Environment
