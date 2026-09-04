@@ -3,6 +3,13 @@
 This directory is an isolated Tauri 2 / Rust / Vite / TypeScript foundation
 for the next Pet. The production PyQt Pet in `../pet/` is unchanged.
 
+The frontend now has three Vite pages: the lightweight Pet (`index.html`), a
+React Quick Panel (`quick-panel.html`), and a React Control Center
+(`control-center.html`). The latter two are currently polished Stage B UI
+fixtures; Tauri window orchestration and canonical Supervisor data wiring are
+planned next. See `../docs/UI_PRODUCT_ARCHITECTURE.md` and
+`../docs/UI_ACCEPTANCE_CHECKLIST.md` for the exact status.
+
 When explicitly enabled for browser development, the development panel
 exposes `src/mock/semantic.ts` controls; ordinary native dev and production
 builds keep it hidden. The native Tauri shell exposes
