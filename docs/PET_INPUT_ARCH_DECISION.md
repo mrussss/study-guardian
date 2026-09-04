@@ -2,7 +2,7 @@
 
 日期：2026-09-04，Asia/Shanghai。状态：**暂保留 Tauri 候选；完整物理压力 Gate 为 PENDING，尚未批准正式透明 Pet 的稳定性验收。**
 
-本轮已把“单击后辅助窗口创建卡死”和“透明 Pet 拖动是否长期稳定”分开验证。已有证据支持修复同步 WebView 创建、阻塞网络请求及路由监听权限；这些修复不等于透明窗口的 50 次拖动已通过。现代 Quick Panel / Control Center / Settings 继续保留，完整 Settings、托盘和发布验收不在本记录中宣称完成。
+本轮已把“单击后辅助窗口创建卡死”和“透明 Pet 拖动是否长期稳定”分开验证。已有证据支持修复同步 WebView 创建、阻塞网络请求及路由监听权限；这些修复不等于透明窗口的 50 次拖动已通过。现代 Quick Panel / Control Center / Settings 继续保留，完整 Settings、生产托盘统一和发布验收不在本记录中宣称完成。
 
 ## 源码与环境
 
@@ -43,7 +43,7 @@ Tauri 2.11.5 的 `WebviewWindowBuilder::new` / `from_config` 官方说明明确�
 | B | 同一最小页，真正透明背景；同一原生 CSS 路径 | PID 43916 的 2 次真实窗口位移：原点 `(160,160) → (228,203) → (159,171)`；20 次点击计数为 20。 | **PENDING**：完整 50 次拖动和 10 次交替循环未完成。 |
 | C | 真实 Pet DOM/皮肤；原生 CSS 拖动与独立点击热点 | 已移除旧手势栈，Pet 画布使用 CSS 原生拖动，底部显式“学习面板”按钮使用 no-drag；PID 20900 已连接现有 Supervisor；实际 Pet 原点 `(288,288) → (357,351) → (288,289)`，重复拖动后底部按钮可打开带真实状态的 Quick Panel。 | **PENDING** |
 
-完整 Gate 对每一候选分别要求：50 次连续拖动、20 次连续点击、10 次点击/拖动交替循环；无增长性延迟、无卡住、无丢输入、测试中无进程重启。应包含超过 3 秒的长拖、失焦后起拖、释放后立即点击，以及透明边缘与 125%/150% DPI 检查。上表中的真实桌面输入与窗口坐标证明了基础原生路径；未执行的物理压力观察仍保持 PENDING。
+完整 Gate 对每一候选分别要求：50 次连续拖动、20 次连续点击、10 次点击/拖动交替循环；无增长性延迟、无卡住、无丢输入、测试中无进程重启。应包含超过 3 秒的长拖、失焦后起拖、释放后立即点击，以及透明边缘与 125%/150% DPI 检查。上述位移与点击计数来自 Windows CUA/SendInput 自动输入及窗口观测，不是用户物理鼠标记录；它们证明了基础原生路径；未执行的物理压力观察仍保持 PENDING。
 
 若 A 通过而 B 失败，才进一步定位透明合成/命中边界；若 A/B 均通过而 C 失败，优先定位真实 Pet DOM 与交互集成；若 A/B 都失败，则检查原生拖动路径或测试环境。任何一格都不能仅凭编译成功、DOM 事件、IPC Promise 返回或 `start-ok` 标记 PASS。
 
@@ -70,8 +70,8 @@ A/B 的完整记录分别为 `candidate-opaque/build-proof.json`、`candidate-op
 | 创建、显示、聚焦与命令返回 | A 候选已观察完成 |
 | 打开/原生可见/显式隐藏/原生隐藏 20 轮 | **PASS**：更新的不透明候选 PID 46524 实际运行诊断序列显示 20/20；日志 created 1、open-command 20、show-ok 20、focus-ok 20、explicit hide 20，过程中没有重启。证据在 `work/runtime-lifecycle`。 |
 | Escape 隐藏及手动重复入口 | **PASS（基础操作）**：真实 Pet 点击打开后发送 Escape，窗口列表中面板消失，原生日志记录 explicit hide；完整连续点击压力仍待人工。 |
-| settings/review 首次及现有实例路由 | **PASS（基础路由）**：PID 46524 的设置页及复盘页已通过真实窗口截图/可访问性标题核验。overview、重复同路由回到目标页仍待最终候选复测。 |
-| 控制中心复用、不出现重复窗口 | **PASS（设置→复盘）**：同一 Control Center 窗口切页。 |
+| settings/review 首次及现有实例路由 | **PASS（基础路由）**：PID 46524 的设置页及复盘页已通过真实窗口截图/可访问性标题核验。最终候选 PID 13692 又通过设置→内部历史→面板再次请求设置的同路由回归；overview 仍只按既有受限路由单测验证。 |
+| 控制中心复用、不出现重复窗口 | **PASS（基础操作）**：同一 Control Center 窗口切页；最终候选重复设置请求仍复用同一个窗口。 |
 
 保留显式打开/隐藏、Escape 隐藏、打开 Control Center 时隐藏 Quick Panel 的策略。没有恢复无条件 `Focused(false) -> hide()`；失焦行为不能继续掩盖创建或显示问题。
 
@@ -113,4 +113,21 @@ A/B 的完整记录分别为 `candidate-opaque/build-proof.json`、`candidate-op
 
 Hybrid 的 PyQt 仅承担宠物绘制、拖动、点击/右击、小状态和提醒气泡；Quick Panel、Control Center、Settings 继续由 Tauri/React 承担。桥接只接受有限本地 UI 命令，不接受任意 URL、shell 执行或秘密参数；Supervisor 保持唯一业务状态机。尚未在本轮实现或验证该备用桥接，不将方案设计称为交付完成。
 
-下一次更新必须补全 A/B 的完整压力 Gate、C 候选、Escape 及真实页面路由结果，并刷新对应构建/进程证明。已完成的 20 轮生命周期检查不代替这些缺项；只有必要证据完成后才能推进完整 Settings/Tray 与发布验收。
+下一次更新必须补全 A/B/C 的完整物理压力 Gate，并刷新对应构建/进程证明。已完成的 20 轮生命周期检查不代替这些缺项；只有必要证据完成后才能推进完整 Settings/Tray 与发布验收。
+
+
+## 最终可复测候选（22:34 更新）
+
+- 已提交代码：`fe2ebc74fb024d473d3512837240bc211f000aef`，分支 `codex/fix-pet-input-stability`。后续验证记录提交不改变已编译源代码。
+- 从 WSL 源码复制的 54 个构建输入逐文件 SHA256 一致；清理临时构建副本中过期 JS 后，只打包本次生成的 16 个前端文件。
+- 构建输出保存在 WSL `dist/windows/pet-v3/`，由该目录复制到 Windows `D:\StudyGuardianDev\pet-v3\studyguardian-pet-v3.exe`。已有 PyQt 启动/看门狗脚本仍未切换为 Tauri，避免把待压力验收的候选写入生产自启。
+- 当前测试进程 PID `13692`，启动于 `2026-09-04T22:31:01+08:00`；exe 最后修改时间 `2026-09-04T22:28:25+08:00`。
+- exe SHA256：`8BCBA0D970135E31EA5D843FDC8F883931D39F701ACA999D21917406C8815056`。本轮结束前只存在这一个 Tauri Pet 候选进程。
+- 已连上现有 Supervisor 与 Sensor，ActivityWatch 继续运行。未执行学习模式切换或修改用户设置。
+- 380×430 实际窗口：面板填满窗口，正文独立滚动，学习中心/设置页脚与关闭 X 常驻；Windows 截图核验通过。
+- 实际流程：桌宠按钮→Quick Panel→设置→内部历史→再次通过 Quick Panel 请求设置，正确返回设置且无重复 Control Center；打开 Control Center 会隐藏 Quick Panel。
+- Escape 与显式 X 关闭均有原生日志和窗口观察；控制中心 Alt+F4 隐藏后保留进程。
+- 多次面板/控制中心操作后，最终 Pet 再次产生原生位移 `(320,320) → (389,383) → (320,321)`，基础输入正常。
+- 尚未收到用户物理鼠标压力测试反馈。**50 次拖动、20 次人工点击、10 次交替循环与长拖动仍为 PENDING，不据此标记正式稳定或推进完整 Settings。**
+
+完整本机身份文件位于会话 `work/candidate-pet-final/` 的 `build-proof.json`、`runtime-proof.json`、`source-manifest.json` 与 `asset-manifest.json`。这些为脱敏构建身份文件，不含 token、业务记录或屏幕内容。
