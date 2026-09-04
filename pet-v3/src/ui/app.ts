@@ -6,6 +6,7 @@ import { BehaviorEngine, type VisualState } from "../behavior/engine";
 import { mockActivityWatchStale, mockSemantic, mockSupervisorOffline } from "../mock/semantic";
 import type { Activity, CurrentActivityView, Relation, UserMode } from "../model/semantic";
 import { loadSkinManifest } from "../skin";
+import { NativeSupervisorAdapter, SupervisorPollLoop } from "../transport/supervisor";
 import legacyManifest from "../skins/studyguardian-pixel/manifest.json";
 import idleURL from "../skins/studyguardian-pixel/sprites/idle.png";
 import studyURL from "../skins/studyguardian-pixel/sprites/study.png";
@@ -25,9 +26,17 @@ const skinAssets: Record<string, string> = {
   idle: idleURL, study: studyURL, distracted: distractedURL, rest: restURL, talk: talkURL, celebrate: celebrateURL,
 };
 
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined"
+    && Object.prototype.hasOwnProperty.call(window, "__TAURI_INTERNALS__");
+}
+
 export function mountApp(root: HTMLElement): void {
   const engine = new BehaviorEngine();
   const animation = new AnimationEngine();
+  const supervisorPoll = isTauriRuntime()
+    ? new SupervisorPollLoop(new NativeSupervisorAdapter())
+    : null;
   const emergencyFrames = splitHorizontal(96, 96, 24, 96);
   let semantic: CurrentActivityView = mockSemantic({});
   let connected = true;
@@ -125,6 +134,10 @@ export function mountApp(root: HTMLElement): void {
     clickThrough = !clickThrough;
     try { await invoke("set_click_through", { enabled: clickThrough }); } catch { /* browser dev mode has no Tauri host */ }
     root.querySelector<HTMLButtonElement>("[data-clickthrough]")!.textContent = `穿透:${clickThrough ? "开" : "关"}`;
+  });
+  supervisorPoll?.start(snapshot => {
+    connected = snapshot.connected;
+    semantic = snapshot.semantic;
   });
   requestAnimationFrame(refresh);
 }

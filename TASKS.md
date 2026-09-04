@@ -122,7 +122,7 @@
 - [x] 99. DAILY_REVIEW_READY ui_event
 - [x] 100. Pet / Study Center Review UI（含安全 evidence exclusion）
 - [x] Retention cleanup（启动时及每日 worker 原子清理；保留 daily reviews、sessions 与 Study Forest 数据）
-- [~] 101. Full Windows E2E（Tauri `supervisor_snapshot` native transport 已实现并加入边界单测；Rust/Cargo/MSVC/SDK 编译与真实 Tauri runtime 仍 BLOCKED）
+- [~] 101. Full Windows E2E（Tauri native transport、Node/Rust checks 与 `tauri dev` 进程启动已通过；原生窗口视觉/UI、真实 Supervisor/error 与完整 Windows E2E 待人工验收）
 
 ## Phase 9: Trial
 

@@ -26,7 +26,8 @@ npm run build
 npm run tauri dev   # requires Rust/Cargo and Windows WebView2
 ```
 
-The current development machine has Node/npm but no Rust/Cargo, MSVC, or
-Windows SDK. The Node checks are available now; `npm run tauri dev`, `cargo
-test`, and a native Supervisor polling smoke must be rerun after those Windows
-toolchain prerequisites are installed.
+The Windows toolchain is now available. In an NTFS verification copy,
+`npm ci`, `npm test`, `npm run build`, `cargo check`, and `cargo test` pass;
+`npm run tauri dev` also reaches a responding `StudyGuardian Pet v3` process.
+The CUA surface used in this environment did not enumerate the native window,
+so visual/UI interaction acceptance remains a manual Windows check.

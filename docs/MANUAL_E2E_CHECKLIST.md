@@ -27,7 +27,7 @@ fake display context、localhost fixture 和部署 smoke 不能替代下列项�
 - [ ] 记录 DevTools / Supervisor API 的脱敏证据；若仍出现 Debugger
   unattached，记录 BLOCKED 原因，不伪造 PASS。
 
-## B. 锁屏与 Sleep/Resume（Tasks 17 / 68 / 86）
+## B. 锁屏与 Sleep/Resume（Tasks 17 / 50 / 68 / 101）
 
 - [ ] STUDY 中记录操作前 `raw_time`、`credited_time` 和 session 状态。
 - [ ] 执行 `Win+L`，等待后解锁；确认 lock 期间不计入用户专注时间，解锁后

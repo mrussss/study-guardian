@@ -7,11 +7,11 @@
 - Source of Truth：WSL `~/projects/study-guardian`；当前 `main` 与 `origin/main` 已核对为 `0 0`，工作区干净。
 - `go test ./...`、`go vet ./...`、Python 单元/集成测试和 `bash scripts/test-all.sh` 均通过；集成测试已改为等待 Supervisor/状态达到 readiness，避免固定 sleep 竞态。
 - `bash scripts/build-windows.sh`、`bash scripts/deploy-windows.sh` 和两次 deploy safety 均通过；`config/data/logs/run/handoff` 与 token 保持不变。
-- Collector 当前快照的 41 项 Node 测试在 NTFS 验证副本中 41/41 通过；Pet v3 测试 12/12 通过且 TypeScript 检查通过，UNC 上的 Vite/esbuild 构建仍受 Windows/WSL 文件映射环境限制。
+- Collector 当前快照的 41 项 Node 测试在 NTFS 验证副本中 41/41 通过；Pet v3 的 `npm ci`、测试 12/12 和 TypeScript/Vite 构建均通过。
 - Review Task 92–100 已根据当前代码和测试校准为完成；新增 raw chat / semantic retention 的启动与每日清理 worker，并补充存储保护测试。
-- 已补充 Pet v3 Rust `supervisor_snapshot` native transport：复用运行时 token/config、loopback HTTP、2 秒超时、semantic 白名单和有限错误类型；Rust/Cargo/MSVC/Windows SDK 缺失，编译与 Tauri runtime 仍 BLOCKED。
+- 已补充 Pet v3 Rust `supervisor_snapshot` native transport：复用运行时 token/config、loopback HTTP、2 秒超时、semantic 白名单和有限错误类型；NTFS 验证副本 `cargo check/test` 已通过，`tauri dev` 已启动并保持原生进程响应；当前 CUA 未枚举原生窗口，视觉/UI 交互验收仍待人工完成。
 - Sensor monitor rediscovery 自动回归已覆盖负坐标、virtual desktop、物理 monitor 几何变化与旧 context 关闭；真实热插拔仍需 Windows 人工验收。
-- 仍保持未完成/阻塞：真实 Chrome E2E、完整 Windows 用户旅程、7-day trial、Collector miss audit、Review factuality audit、物理热插拔、Sleep/Resume、最终桌宠美术，以及 Tauri Rust/MSVC/Windows SDK runtime。
+- 仍保持未完成/阻塞：真实 Chrome E2E、完整 Windows 用户旅程、7-day trial、Collector miss audit、Review factuality audit、物理热插拔、Sleep/Resume、最终桌宠美术，以及 Tauri 原生窗口的视觉/UI 交互证据。
 
 ## v0.6 当前审计结论
 

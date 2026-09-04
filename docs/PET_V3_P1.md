@@ -39,11 +39,13 @@ npm ci                                PASS
 npm test                              PASS (updated count in final report)
 npm run build                         PASS (strict tsc + Vite)
 tauri CLI --version                   PASS (2.11.4)
-native supervisor_snapshot tests      CODED; compile/test BLOCKED: rustc/Cargo and MSVC/SDK absent
-tauri info                            BLOCKED: rustc/Cargo and MSVC/SDK absent
+native supervisor_snapshot tests      PASS (cargo check/test; 5 Rust tests)
+tauri info                            PASS (Windows Rust/MSVC/SDK environment)
 ```
 
-The Tauri startup smoke and Rust unit tests were not run because this Windows
-machine has WebView2 and Node but no Rust toolchain or Visual Studio Build
-Tools. No compile/runtime PASS is claimed until those dependencies are
-installed.
+The Rust unit tests and the full Node checks pass in the NTFS verification
+copy. `npm run tauri dev` reaches the Vite dev server and a responding
+`StudyGuardian Pet v3` Windows process after the Rust executable starts. The
+current CUA surface did not enumerate that native window, so visual/UI
+interaction acceptance remains a manual Windows check; no visual PASS is
+claimed from process liveness alone.
