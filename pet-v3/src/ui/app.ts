@@ -14,9 +14,11 @@ import {
 } from "../transport/supervisor";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  classifyDragStartError,
   isInteractiveTarget,
   shouldBeginNativeDrag,
   shouldStartDragging,
+  type DragDebugEvent,
   type PointerPoint,
 } from "./drag";
 import legacyManifest from "../skins/studyguardian-pixel/manifest.json";
@@ -70,6 +72,7 @@ export function mountApp(root: HTMLElement): void {
   const supervisorControl = nativeRuntime ? new NativeSupervisorControlAdapter() : null;
   const supervisorPoll = supervisorAdapter ? new SupervisorPollLoop(supervisorAdapter) : null;
   const showDevPanel = import.meta.env.DEV && import.meta.env.VITE_PET_DEV_PANEL === "1";
+  const dragDebugEnabled = import.meta.env.DEV;
   const emergencyFrames = splitHorizontal(96, 96, 24, 96);
   let semantic: CurrentActivityView = mockSemantic({});
   let connected = true;
@@ -81,6 +84,14 @@ export function mountApp(root: HTMLElement): void {
   let panelOpen = false;
   let gesture: { pointerId: number; start: PointerPoint; dragging: boolean } | null = null;
   let lastNativeDragAt = Number.NEGATIVE_INFINITY;
+  let dragMoveReported = false;
+  let dragSafetyTimer: number | null = null;
+  const recordDragDebug = (event: DragDebugEvent): void => {
+    if (!dragDebugEnabled) return;
+    void invoke("record_pet_drag_debug", { event }).catch(() => {
+      // Diagnostics are best-effort and must never affect Pet interaction.
+    });
+  };
   root.innerHTML = `<section class="pet-shell">
     <div class="pet-hit-target" aria-hidden="true"></div>
     <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet"></canvas>
@@ -175,27 +186,47 @@ export function mountApp(root: HTMLElement): void {
 
   const clearGesture = (): void => {
     if (gesture) {
+      recordDragDebug("drag:clear");
       if (gesture.pointerId >= 0) {
         try { petShell.releasePointerCapture(gesture.pointerId); } catch { /* capture may already be released */ }
       }
     }
     gesture = null;
+    dragMoveReported = false;
+    if (dragSafetyTimer !== null) {
+      window.clearTimeout(dragSafetyTimer);
+      dragSafetyTimer = null;
+    }
   };
 
   const beginGesture = (pointerId: number, button: number, target: EventTarget | null, start: PointerPoint): void => {
     if (gesture || !shouldStartDragging(button, nativeRuntime, isInteractiveTarget(target))) return;
     gesture = { pointerId, start, dragging: false };
+    recordDragDebug("drag:down");
   };
 
   const handleMove = (pointerId: number, current: PointerPoint): void => {
     if (!gesture || gesture.pointerId !== pointerId || gesture.dragging) return;
+    if (!dragMoveReported) {
+      dragMoveReported = true;
+      recordDragDebug("drag:move");
+    }
     if (!shouldStartDragging(0, nativeRuntime, false) || !shouldBeginNativeDrag(gesture.start, current)) return;
     gesture.dragging = true;
     lastNativeDragAt = performance.now();
+    recordDragDebug("drag:threshold");
     setPanelOpen(false);
-    void getCurrentWindow().startDragging().catch(() => {
-      // Native drag failure must not leak raw IPC errors into the UI.
-    });
+    recordDragDebug("drag:start-called");
+    void getCurrentWindow().startDragging()
+      .then(() => recordDragDebug("drag:start-ok"))
+      .catch(error => recordDragDebug(`drag:start-failed:${classifyDragStartError(error)}`))
+      .finally(() => clearGesture());
+    // If the native command or WebView2 loses the release event and never
+    // settles, recover the web gesture state after the native drag has had
+    // time to complete. Native window movement is already independent.
+    dragSafetyTimer = window.setTimeout(() => {
+      if (gesture?.dragging) clearGesture();
+    }, 2000);
   };
 
   const finishGesture = (pointerId: number): void => {
@@ -235,6 +266,7 @@ export function mountApp(root: HTMLElement): void {
     // Suppress only that late click; ordinary clicks use the browser's stable
     // click dispatch path and open the production panel.
     if (performance.now() - lastNativeDragAt < 500) return;
+    recordDragDebug("drag:click");
     void openQuickPanel();
   });
   petShell.addEventListener("pointercancel", clearGesture);

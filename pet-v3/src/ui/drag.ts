@@ -1,5 +1,25 @@
 const INTERACTIVE_TAGS = new Set(["BUTTON", "SELECT", "INPUT", "TEXTAREA", "A"]);
 
+export type DragStartErrorKind = "ipc_rejected" | "window_unavailable" | "permission_denied" | "unknown";
+export type DragDebugEvent =
+  | "drag:down"
+  | "drag:move"
+  | "drag:threshold"
+  | "drag:start-called"
+  | "drag:start-ok"
+  | `drag:start-failed:${DragStartErrorKind}`
+  | "drag:click"
+  | "drag:clear";
+
+/** Convert a native drag failure into a bounded diagnostic category. */
+export function classifyDragStartError(error: unknown): DragStartErrorKind {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (message.includes("permission") || message.includes("denied")) return "permission_denied";
+  if (message.includes("window") || message.includes("not found") || message.includes("closed")) return "window_unavailable";
+  if (message.includes("invoke") || message.includes("ipc") || message.includes("command")) return "ipc_rejected";
+  return "unknown";
+}
+
 export interface DragTargetShape {
   tagName?: string;
   ancestorTags?: readonly string[];

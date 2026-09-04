@@ -1,6 +1,7 @@
 use std::{
     env,
     fs,
+    fs::OpenOptions,
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
@@ -208,6 +209,33 @@ fn runtime_root() -> PathBuf {
         }
     }
     PathBuf::from(r"D:\StudyGuardianDev")
+}
+
+fn bounded_pet_drag_debug_event(event: &str) -> Option<&str> {
+    match event {
+        "drag:down" | "drag:move" | "drag:threshold" | "drag:start-called" | "drag:start-ok" | "drag:click" | "drag:clear"
+        | "drag:start-failed:ipc_rejected"
+        | "drag:start-failed:window_unavailable"
+        | "drag:start-failed:permission_denied"
+        | "drag:start-failed:unknown" => Some(event),
+        _ => None,
+    }
+}
+
+fn write_pet_drag_debug_event(event: &str) -> Result<(), String> {
+    let bounded = bounded_pet_drag_debug_event(event).ok_or_else(|| "invalid_debug_event".to_string())?;
+    let path = runtime_root().join("logs").join("pet-v3-drag-debug.log");
+    let parent = path.parent().ok_or_else(|| "debug_log_unavailable".to_string())?;
+    fs::create_dir_all(parent).map_err(|_| "debug_log_unavailable".to_string())?;
+    if fs::metadata(&path).map(|metadata| metadata.len() > 64 * 1024).unwrap_or(false) {
+        fs::write(&path, b"").map_err(|_| "debug_log_unavailable".to_string())?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|_| "debug_log_unavailable".to_string())?;
+    writeln!(file, "{bounded}").map_err(|_| "debug_log_unavailable".to_string())
 }
 
 fn config_scalar(config: &str, key: &str) -> Option<String> {
@@ -951,11 +979,17 @@ fn set_click_through(window: Window, state: tauri::State<'_, ClickThroughState>,
     Ok(enabled)
 }
 
+#[tauri::command]
+fn record_pet_drag_debug(event: String) -> Result<(), String> {
+    write_pet_drag_debug_event(&event)
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(ClickThroughState(Arc::new(Mutex::new(false))))
         .invoke_handler(tauri::generate_handler![
             set_click_through,
+            record_pet_drag_debug,
             supervisor_snapshot,
             supervisor_dashboard_snapshot,
             supervisor_set_mode,
@@ -1010,7 +1044,7 @@ mod tests {
     use super::{
         bounded_panel_position, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
-        sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status,
+        sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event,
         NativeErrorKind,
         SupervisorSnapshot,
     };
@@ -1059,6 +1093,13 @@ mod tests {
         assert_eq!(classify_control_status(403), Err(NativeErrorKind::Unauthorized));
         assert_eq!(map_io_error(&io::Error::new(io::ErrorKind::TimedOut, "hidden detail")), NativeErrorKind::Timeout);
         assert_eq!(map_io_error(&io::Error::new(io::ErrorKind::ConnectionRefused, "hidden detail")), NativeErrorKind::Unavailable);
+    }
+
+    #[test]
+    fn pet_drag_debug_events_are_bounded() {
+        assert_eq!(bounded_pet_drag_debug_event("drag:down"), Some("drag:down"));
+        assert_eq!(bounded_pet_drag_debug_event("drag:start-failed:permission_denied"), Some("drag:start-failed:permission_denied"));
+        assert_eq!(bounded_pet_drag_debug_event("drag:start-failed:raw-secret"), None);
     }
 
     #[test]

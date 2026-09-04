@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { isClickGesture, isInteractiveTargetShape, movementDistance, shouldBeginNativeDrag, shouldStartDragging, type DragTargetShape } from "./drag";
+import { classifyDragStartError, isClickGesture, isInteractiveTargetShape, movementDistance, shouldBeginNativeDrag, shouldStartDragging, type DragTargetShape } from "./drag";
 
 const target = (tagName: string, options: Partial<DragTargetShape> = {}): DragTargetShape => ({ tagName, ...options });
 
@@ -32,4 +32,11 @@ test("click and drag gestures use the five pixel boundary", () => {
   assert.equal(isClickGesture(start, { x: 13, y: 13 }), true);
   assert.equal(isClickGesture(start, { x: 13, y: 14 }), false);
   assert.equal(shouldBeginNativeDrag(start, { x: 13, y: 14 }), true);
+});
+
+test("native drag failures are classified without exposing raw errors", () => {
+  assert.equal(classifyDragStartError(new Error("permission denied")), "permission_denied");
+  assert.equal(classifyDragStartError(new Error("window is closed")), "window_unavailable");
+  assert.equal(classifyDragStartError(new Error("invoke command failed")), "ipc_rejected");
+  assert.equal(classifyDragStartError("secret token and filesystem path"), "unknown");
 });
