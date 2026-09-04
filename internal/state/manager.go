@@ -14,6 +14,8 @@ import (
 
 var sessionSequence atomic.Uint64
 
+const maxTickGap = 30 * time.Second
+
 func newSessionID(now time.Time) string {
 	return fmt.Sprintf("sess-%d-%d", now.UnixNano(), sessionSequence.Add(1))
 }
@@ -355,11 +357,12 @@ func (m *Manager) TickWithClassification(
 	if delta < 0 {
 		return TickOutcome{Now: now}
 	}
-	if delta > 30*time.Second {
-		delta = 5 * time.Second
-	}
 	deltaSec := int64(delta.Seconds())
-	if deltaSec <= 0 {
+	if delta > maxTickGap {
+		// A long gap is most likely suspend/hibernate or a stopped process.
+		// Advance the clock anchor but fail closed instead of crediting downtime.
+		deltaSec = 0
+	} else if deltaSec <= 0 {
 		deltaSec = 1
 	}
 

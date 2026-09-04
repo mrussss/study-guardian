@@ -216,8 +216,15 @@ func TestManagerLockAndLongGapDoNotAddUserTime(t *testing.T) {
 	clock.Set(now)
 	mgr.Tick(now, "code.exe", "main.go", "", false, true, false)
 	afterResume := mgr.GetStatus()
-	if afterResume.StudySeconds != beforeLock+5 {
-		t.Fatalf("long resume gap should be clamped to one recovery tick, got %d want %d", afterResume.StudySeconds, beforeLock+5)
+	if afterResume.StudySeconds != beforeLock {
+		t.Fatalf("long resume gap must not add user time, got %d want %d", afterResume.StudySeconds, beforeLock)
+	}
+
+	now = now.Add(4 * time.Second)
+	clock.Set(now)
+	resumed := mgr.Tick(now, "code.exe", "main.go", "", false, true, false)
+	if resumed.DeltaSeconds != 4 || mgr.GetStatus().StudySeconds != beforeLock+4 {
+		t.Fatalf("normal ticks after resume should recover timing, outcome=%+v status=%+v", resumed, mgr.GetStatus())
 	}
 }
 

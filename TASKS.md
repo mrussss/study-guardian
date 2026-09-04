@@ -19,7 +19,7 @@
 - [x] 14. Clock abstraction (RealClock / FakeClock)
 - [x] 15. SQLite migration skeleton (modernc.org/sqlite, CGO-free)
 - [x] 16. UserMode state machine + transition tests
-- [~] 17. 跨日 / restart / sleep / lock 时间规则与会话管理（自动测试与 restart 已通过；按本轮验收决定 lock/sleep 延后且不阻塞）
+- [~] 17. 跨日 / restart / sleep / lock 时间规则与会话管理（长 resume gap 已 fail-closed 且有 FakeClock 回归测试；真实 lock/sleep 仍待手动验收）
 - [x] 18. Supervisor /v1/status 与 mode API (/v1/mode/study, /v1/mode/break, /v1/mode/off, /v1/task, /v1/feedback)
 - [x] 19. FakeActivitySource / FakeScreenSource 驱动单测与集成测试
 - [x] 20. Pet 精简为 UI Shell (去除独立业务逻辑，保留透明置顶、动画、托盘、气泡与菜单)
