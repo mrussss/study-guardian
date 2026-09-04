@@ -14,10 +14,11 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
 };
 
 struct ClickThroughState(Arc<Mutex<bool>>);
+struct ControlCenterRouteState(Arc<Mutex<String>>);
 
 fn next_click_through(current: bool) -> bool { !current }
 
@@ -37,6 +38,17 @@ const SUPERVISOR_GET_PATHS: &[&str] = &[
 ];
 const DEFAULT_SUPERVISOR_HOST: &str = "127.0.0.1";
 const DEFAULT_SUPERVISOR_PORT: u16 = 17321;
+const CONTROL_CENTER_ROUTE_EVENT: &str = "studyguardian://control-center-route";
+const CONTROL_CENTER_ROUTES: &[&str] = &[
+    "overview",
+    "missions",
+    "achievements",
+    "rewards",
+    "review",
+    "history",
+    "settings",
+    "system",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeErrorKind {
@@ -133,19 +145,28 @@ fn configured_aux_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, 
         .find(|window| window.label == label)
         .cloned()
         .ok_or_else(|| format!("window configuration missing: {label}"))?;
-    let hide_on_focus_loss = label == "quick-panel";
+    let is_quick_panel = label == "quick-panel";
     let window = WebviewWindowBuilder::from_config(app, &config)
         .map_err(|error| format!("window configuration rejected: {error}"))?
         .build()
         .map_err(|error| format!("window creation failed: {error}"))?;
+    if is_quick_panel {
+        record_quick_panel_debug_event("quick-panel:created");
+    }
     let window_for_events = window.clone();
     window.on_window_event(move |event| match event {
             WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
+                if is_quick_panel {
+                    record_quick_panel_debug_event("quick-panel:hide-reason:close-request");
+                }
                 let _ = window_for_events.hide();
             }
-            WindowEvent::Focused(false) if hide_on_focus_loss => {
-                let _ = window_for_events.hide();
+            WindowEvent::Focused(true) if is_quick_panel => {
+                record_quick_panel_debug_event("quick-panel:focused-true");
+            }
+            WindowEvent::Focused(false) if is_quick_panel => {
+                record_quick_panel_debug_event("quick-panel:focused-false");
             }
             _ => {}
         });
@@ -236,6 +257,48 @@ fn write_pet_drag_debug_event(event: &str) -> Result<(), String> {
         .open(path)
         .map_err(|_| "debug_log_unavailable".to_string())?;
     writeln!(file, "{bounded}").map_err(|_| "debug_log_unavailable".to_string())
+}
+
+fn bounded_quick_panel_debug_event(event: &str) -> Option<&str> {
+    match event {
+        "quick-panel:created"
+        | "quick-panel:show-request"
+        | "quick-panel:show-ok"
+        | "quick-panel:show-failed"
+        | "quick-panel:focus-request"
+        | "quick-panel:focus-ok"
+        | "quick-panel:focus-failed"
+        | "quick-panel:focused-true"
+        | "quick-panel:focused-false"
+        | "quick-panel:hide-reason:explicit"
+        | "quick-panel:hide-reason:open-control-center"
+        | "quick-panel:hide-reason:close-request" => Some(event),
+        _ => None,
+    }
+}
+
+fn write_quick_panel_debug_event(event: &str) -> Result<(), String> {
+    let bounded = bounded_quick_panel_debug_event(event).ok_or_else(|| "invalid_debug_event".to_string())?;
+    let path = runtime_root().join("logs").join("pet-v3-quick-panel-debug.log");
+    let parent = path.parent().ok_or_else(|| "debug_log_unavailable".to_string())?;
+    fs::create_dir_all(parent).map_err(|_| "debug_log_unavailable".to_string())?;
+    if fs::metadata(&path).map(|metadata| metadata.len() > 64 * 1024).unwrap_or(false) {
+        fs::write(&path, b"").map_err(|_| "debug_log_unavailable".to_string())?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|_| "debug_log_unavailable".to_string())?;
+    writeln!(file, "{bounded}").map_err(|_| "debug_log_unavailable".to_string())
+}
+
+fn record_quick_panel_debug_event(event: &str) {
+    let _ = write_quick_panel_debug_event(event);
+}
+
+fn bounded_control_center_route(route: &str) -> Option<&'static str> {
+    CONTROL_CENTER_ROUTES.iter().copied().find(|allowed| *allowed == route)
 }
 
 fn config_scalar(config: &str, key: &str) -> Option<String> {
@@ -950,26 +1013,62 @@ fn open_quick_panel(app: AppHandle) -> Result<(), String> {
     if let Some(pet) = app.get_webview_window("main") {
         position_quick_panel(&pet, &panel)?;
     }
-    panel.show().map_err(|error| error.to_string())?;
-    panel.set_focus().map_err(|error| error.to_string())
+    record_quick_panel_debug_event("quick-panel:show-request");
+    if let Err(error) = panel.show() {
+        record_quick_panel_debug_event("quick-panel:show-failed");
+        return Err(error.to_string());
+    }
+    record_quick_panel_debug_event("quick-panel:show-ok");
+    record_quick_panel_debug_event("quick-panel:focus-request");
+    if let Err(error) = panel.set_focus() {
+        record_quick_panel_debug_event("quick-panel:focus-failed");
+        return Err(error.to_string());
+    }
+    record_quick_panel_debug_event("quick-panel:focus-ok");
+    Ok(())
 }
 
-#[tauri::command]
-fn hide_quick_panel(app: AppHandle) -> Result<(), String> {
+fn hide_quick_panel_with_reason(app: &AppHandle, reason: &'static str) -> Result<(), String> {
     if let Some(panel) = app.get_webview_window("quick-panel") {
+        record_quick_panel_debug_event(reason);
         panel.hide().map_err(|error| error.to_string())?;
     }
     Ok(())
 }
 
 #[tauri::command]
-fn open_control_center(app: AppHandle) -> Result<(), String> {
+fn hide_quick_panel(app: AppHandle) -> Result<(), String> {
+    hide_quick_panel_with_reason(&app, "quick-panel:hide-reason:explicit")
+}
+
+#[tauri::command]
+fn open_control_center(
+    app: AppHandle,
+    route: Option<String>,
+    state: tauri::State<'_, ControlCenterRouteState>,
+) -> Result<(), String> {
+    let requested_route = route.as_deref().unwrap_or("overview");
+    let route = bounded_control_center_route(requested_route)
+        .ok_or_else(|| "invalid_control_center_route".to_string())?;
+    *state.0.lock().map_err(|_| "control center route state poisoned".to_string())? = route.to_string();
+    hide_quick_panel_with_reason(&app, "quick-panel:hide-reason:open-control-center")?;
     let center = app
         .get_webview_window("control-center")
         .map(Ok)
         .unwrap_or_else(|| configured_aux_window(&app, "control-center"))?;
     center.show().map_err(|error| error.to_string())?;
-    center.set_focus().map_err(|error| error.to_string())
+    center.set_focus().map_err(|error| error.to_string())?;
+    let _ = app.emit_to("control-center", CONTROL_CENTER_ROUTE_EVENT, route);
+    Ok(())
+}
+
+#[tauri::command]
+fn control_center_route(state: tauri::State<'_, ControlCenterRouteState>) -> Result<String, String> {
+    state
+        .0
+        .lock()
+        .map(|route| route.clone())
+        .map_err(|_| "control center route state poisoned".to_string())
 }
 
 #[tauri::command]
@@ -987,6 +1086,7 @@ fn record_pet_drag_debug(event: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(ClickThroughState(Arc::new(Mutex::new(false))))
+        .manage(ControlCenterRouteState(Arc::new(Mutex::new("overview".to_string()))))
         .invoke_handler(tauri::generate_handler![
             set_click_through,
             record_pet_drag_debug,
@@ -997,6 +1097,7 @@ pub fn run() {
             open_quick_panel,
             hide_quick_panel,
             open_control_center,
+            control_center_route,
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").ok_or("main window missing")?;
@@ -1042,7 +1143,7 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        bounded_panel_position, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
+        bounded_control_center_route, bounded_panel_position, bounded_quick_panel_debug_event, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
         sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event,
         NativeErrorKind,
@@ -1100,6 +1201,21 @@ mod tests {
         assert_eq!(bounded_pet_drag_debug_event("drag:down"), Some("drag:down"));
         assert_eq!(bounded_pet_drag_debug_event("drag:start-failed:permission_denied"), Some("drag:start-failed:permission_denied"));
         assert_eq!(bounded_pet_drag_debug_event("drag:start-failed:raw-secret"), None);
+    }
+
+    #[test]
+    fn quick_panel_lifecycle_events_are_bounded() {
+        assert_eq!(bounded_quick_panel_debug_event("quick-panel:created"), Some("quick-panel:created"));
+        assert_eq!(bounded_quick_panel_debug_event("quick-panel:hide-reason:explicit"), Some("quick-panel:hide-reason:explicit"));
+        assert_eq!(bounded_quick_panel_debug_event("quick-panel:focus-failed:raw-secret"), None);
+    }
+
+    #[test]
+    fn control_center_routes_are_bounded() {
+        assert_eq!(bounded_control_center_route("overview"), Some("overview"));
+        assert_eq!(bounded_control_center_route("settings"), Some("settings"));
+        assert_eq!(bounded_control_center_route("review"), Some("review"));
+        assert_eq!(bounded_control_center_route("javascript:alert(1)"), None);
     }
 
     #[test]

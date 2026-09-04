@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { QuickPanel, type QuickPanelMode } from "./QuickPanel";
 import { NativeSupervisorControlAdapter, NativeSupervisorDashboardAdapter, type SupervisorDashboardSnapshot } from "../transport/supervisor";
+import type { ControlCenterRoute } from "../center/route";
 import "../shared/theme/tokens.css";
 import "./panel.css";
 
@@ -11,9 +12,10 @@ if (!root) throw new Error("Quick Panel root is missing");
 
 const isTauriRuntime = typeof window !== "undefined"
   && Object.prototype.hasOwnProperty.call(window, "__TAURI_INTERNALS__");
-const invokeWindowCommand = (command: string): void => {
-  if (isTauriRuntime) void invoke(command).catch(() => { /* bounded window command failure */ });
+const invokeWindowCommand = (command: string, args?: Record<string, unknown>): void => {
+  if (isTauriRuntime) void invoke(command, args).catch(() => { /* bounded window command failure */ });
 };
+const openControlCenter = (route: ControlCenterRoute): void => invokeWindowCommand("open_control_center", { route });
 window.addEventListener("keydown", event => {
   if (event.key === "Escape") invokeWindowCommand("hide_quick_panel");
 });
@@ -93,11 +95,11 @@ function RuntimeQuickPanel(): ReactElement {
     motivationAvailable={motivationAvailable}
     notice={notice}
     onModeAction={handleModeAction}
-    onOpenCenter={() => invokeWindowCommand("open_control_center")}
-    onOpenSettings={() => invokeWindowCommand("open_control_center")}
+    onOpenCenter={() => openControlCenter("overview")}
+    onOpenSettings={() => openControlCenter("settings")}
   />;
 }
 
 createRoot(root).render(isTauriRuntime
   ? <RuntimeQuickPanel />
-  : <QuickPanel onOpenCenter={() => invokeWindowCommand("open_control_center")} onOpenSettings={() => invokeWindowCommand("open_control_center")} />);
+  : <QuickPanel onOpenCenter={() => openControlCenter("overview")} onOpenSettings={() => openControlCenter("settings")} />);
