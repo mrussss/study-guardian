@@ -45,7 +45,7 @@
 - [x] 36. Privacy Gate 截图前门禁校验 (sensitive apps / domains)
 - [x] 37. InteractionState 综合判定 (ACTIVE / IDLE_STATIC / IDLE_DYNAMIC / UNKNOWN)
 - [x] 38. Sensor timeout / crash fallback fail-soft
-- [~] 39. Phase 3 自动测试与 Windows 实测（MSS/真实捕获已通过；多显示器热插拔待完成）
+- [~] 39. Phase 3 自动测试与 Windows 实测（MSS/真实捕获、上下文 rediscovery 与几何回归已覆盖；真实多显示器热插拔待完成）
 
 ## Phase 4: AI Classification
 - [x] 40. TaskRelationProvider 接口定义与模型适配

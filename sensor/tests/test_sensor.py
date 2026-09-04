@@ -13,6 +13,31 @@ from capture import ScreenCapturer, hamming_distance
 from server import ThreadedHTTPServer, SensorHandler
 
 
+class FakeMSSContext:
+    def __init__(self, monitors):
+        self.monitors = monitors
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class RediscoveringCapturer(ScreenCapturer):
+    def __init__(self, contexts):
+        self.contexts = iter(contexts)
+        self.sct = None
+        self.refresh_count = 0
+        super().__init__()
+
+    def _refresh_capture_context(self):
+        previous = self.sct
+        self.sct = next(self.contexts)
+        self.refresh_count += 1
+        if previous is not None:
+            previous.close()
+        return True
+
+
 class TestScreenSensor(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -90,6 +115,33 @@ class TestScreenSensor(unittest.TestCase):
                 self.assertIn("index", monitor)
                 self.assertIsInstance(monitor["width"], int)
                 self.assertIsInstance(monitor["height"], int)
+
+    def test_monitor_listing_rediscoveries_geometry_after_display_change(self):
+        first = FakeMSSContext([
+            {"left": 0, "top": 0, "width": 3840, "height": 2160},
+            {"left": -1920, "top": 0, "width": 1920, "height": 1080, "is_primary": False},
+        ])
+        second = FakeMSSContext([
+            {"left": 0, "top": 0, "width": 3840, "height": 2160},
+            {"left": -1920, "top": 0, "width": 1920, "height": 1080, "is_primary": False},
+        ])
+        third = FakeMSSContext([
+            {"left": 0, "top": 0, "width": 2560, "height": 1440},
+            {"left": 2560, "top": 0, "width": 1920, "height": 1080, "is_primary": False},
+        ])
+        capturer = RediscoveringCapturer([first, second, third])
+
+        initial = capturer.list_monitors()
+        updated = capturer.list_monitors()
+
+        self.assertEqual(initial["count"], 2)
+        self.assertEqual(initial["monitors"][1]["left"], -1920)
+        self.assertTrue(initial["monitors"][0]["is_virtual"])
+        self.assertEqual(updated["monitors"][0]["width"], 2560)
+        self.assertEqual(updated["monitors"][1]["left"], 2560)
+        self.assertEqual(capturer.refresh_count, 3)
+        self.assertTrue(first.closed)
+        self.assertTrue(second.closed)
 
 
 if __name__ == "__main__":
