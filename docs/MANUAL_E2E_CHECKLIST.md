@@ -53,7 +53,7 @@ fake display context、localhost fixture 和部署 smoke 不能替代下列项�
 - [ ] 记录 watchdog 重新拉起进程的时间、PID 变化、healthz 恢复和日志脱敏。
 - [ ] 确认不会重复启动、不会触碰 `config/data/logs/run/handoff` 或 venv。
 
-## E. Tauri Pet native transport（Task 101 前置）
+## E. Tauri Pet native transport and interaction（Task 101）
 
 - [ ] `pet-v3` 执行 `npm ci`、`npm test`、`npm run build`，再执行 `npm run
   tauri dev` 或构建后的 Tauri binary。
@@ -62,8 +62,19 @@ fake display context、localhost fixture 和部署 smoke 不能替代下列项�
   native error 原文。
 - [ ] 关闭 Supervisor / 使用错误 token / 制造超时 / 返回坏 JSON，确认前端只
   看到 `unauthorized`、`timeout`、`unavailable` 或 `invalid_response`。
-- [ ] 通过托盘菜单恢复 click-through；确认 Pet 仍保持 always-on-top、可拖动，
-  并有明确的 Study Center / Review 入口。
+- [ ] 单击小猫（移动距离小于 5 CSS px）打开生产控制面板；重复 10 次确认窗口
+  不移动且不会被 native drag 吞掉。
+- [ ] 在面板输入任务并点击“开始学习”，确认真实 Supervisor 状态变为
+  `STUDY`，任务值正确；点击“开始休息”，确认状态变为 `BREAK` 或显示有界的
+  `当前状态不允许该操作`。
+- [ ] 明显拖动小猫 100px 以上，确认调用 native drag、窗口移动且不打开面板；
+  交替执行 click / drag / click / drag，确认没有误触。
+- [ ] 点击面板 input、Study、Break、关闭按钮并输入文字，确认窗口不跟随移动。
+- [ ] 关闭 Supervisor 后打开面板并点击模式按钮，确认 Pet 不崩溃且只显示有界
+  的 `unavailable` / `timeout` / `unauthorized` / `invalid_response` 文案。
+- [ ] 通过托盘菜单恢复 click-through；确认 Pet 仍保持 always-on-top、透明背景、
+  shadow=false 和可拖动。Study Center / Review 入口仍记为 PENDING，除非单独
+  验证 legacy PyQt Pet 的安全入口。
 
 ## F. Final Art / Review Provider
 

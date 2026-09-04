@@ -8,7 +8,8 @@
 - 轻量 watchdog 已包含在最新部署中，停止脚本先停 watchdog 再停 Supervisor/Sensor/Pet；本轮已分别终止 D 盘 Supervisor、Screen Sensor、生产 Pet 的精确进程目标，watchdog 按 5/10/20 秒退避自动拉起，最终 Supervisor/Sensor health 均为 `ok`、Pet 进程恢复。
 - Daily Review 92–100 已完成；retention worker 仅清理过期 raw chat / semantic snapshots，不删除 daily reviews、sessions、Study Forest 或配置。
 - Collector 41 项测试在 NTFS 验证副本中 41/41 通过；Pet v3 在 WSL 原生 Node 22 与 NTFS 验证副本中均完成测试/TypeScript 检查，NTFS 副本用于 Tauri Windows runtime 验收。
-- Tauri `supervisor_snapshot` 已补齐：复用 `D:\StudyGuardianDev\config\auth.token` 与 `config.yaml`，仅允许 loopback Supervisor、2 秒有界 HTTP、白名单 semantic 字段和四类脱敏错误；NTFS 验证副本的 `npm ci`、`npm test`（15/15）、`npm run build`、`cargo check`、`cargo test`（5 tests）均通过，`npm run tauri dev` 已启动并保持 `StudyGuardian Pet v3` 响应。Fix Pack 的 native `startDragging()`、shadow 关闭、开发面板 gating 与 CSS hit-target 已编码并完成自动验证。当前 CUA 未枚举该原生窗口，视觉/UI 交互验收仍需人工完成。
+- Tauri `supervisor_snapshot` 已补齐：复用 `D:\StudyGuardianDev\config\auth.token` 与 `config.yaml`，仅允许 loopback Supervisor、2 秒有界 HTTP、白名单 semantic 字段和四类脱敏错误；NTFS 验证副本的 `npm ci`、`npm test`（17/17）、`npm run build`、`cargo check`、`cargo test`（6 tests）均通过，`npm run tauri dev` 已启动并保持 `StudyGuardian Pet v3` 响应。Fix Pack 的 native `startDragging()`、shadow 关闭、开发面板 gating 与 CSS hit-target 已编码并完成自动验证。当前 CUA 未枚举该原生窗口，视觉/UI 交互验收仍需人工完成。
+- Interaction Fix Pack v1 已完成自动验证：生产面板与 dev mock panel 分离；小于 5px 的左键手势切换面板，达到阈值后仅调用一次 Tauri native `startDragging()`；Study/Break 通过 Rust `supervisor_set_mode` 访问固定 loopback Supervisor 路径，任务 JSON 由 Rust 编码，token 不进入 WebView。源 WSL 与 NTFS 副本的 Node 测试统一为 17/17，NTFS `cargo check` 与 `cargo test` 为 6/6，重新启动的 `StudyGuardian Pet v3` 临时进程响应正常。当前 CUA 未枚举该原生窗口，因此真实 click/drag/mode 仍为人工 PENDING，未宣称 UI PASS。
 - 传感器 monitor listing 新增 fake MSS context rediscovery/负坐标/几何变化回归；真实物理显示器热插拔仍保留为人工验收。
 
 ## Environment
@@ -115,6 +116,10 @@ The Pet launcher/interpreter pair and Sensor launcher/interpreter pair are expec
 - Tauri runtime process startup is verified in the NTFS copy, but the current
   CUA surface did not expose its native window for visual/UI interaction
   evidence.
+- Pet v3 Interaction Fix Pack automatic checks pass, but the native window is
+  still not exposed through the current CUA surface; production panel click,
+  native drag, Supervisor STUDY/BREAK, and bounded offline/error behavior are
+  therefore not yet Windows-manually accepted.
 
 ## Not Tested
 
@@ -124,3 +129,4 @@ The Pet launcher/interpreter pair and Sensor launcher/interpreter pair are expec
 - Toast banner animation timing and cooldown behavior beyond the triggered notification-center record
 - Automatic child-process crash recovery
 - Visual pixel-skin artwork comparison beyond process startup; the original placeholder skin is loaded from the manifest path and no user skin is installed on this machine.
+- Pet v3 production panel and click/drag/mode interaction on the native window.
