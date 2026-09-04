@@ -82,6 +82,7 @@ export function mountApp(root: HTMLElement): void {
   let panelOpen = false;
   let gesture: { pointerId: number; start: PointerPoint; dragging: boolean } | null = null;
   root.innerHTML = `<section class="pet-shell">
+    <div class="pet-hit-target" aria-hidden="true"></div>
     <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet"></canvas>
     <div class="pet-state" data-state>LEARNING</div>
     <div class="pet-task" data-task></div>

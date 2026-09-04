@@ -966,6 +966,9 @@ pub fn run() {
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").ok_or("main window missing")?;
+            // A previous dev-panel toggle can leave the native window click-through
+            // until the process exits; always start the Pet in an interactive state.
+            window.set_ignore_cursor_events(false)?;
             window.set_always_on_top(true)?;
             window.set_shadow(false)?;
             let toggle = MenuItem::with_id(app, "toggle-click-through", "切换鼠标穿透", true, None::<&str>)?;
