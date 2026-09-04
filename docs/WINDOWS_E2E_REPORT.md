@@ -8,6 +8,8 @@
 - 轻量 watchdog 已包含在最新部署中，停止脚本先停 watchdog 再停 Supervisor/Sensor/Pet；真实崩溃恢复证据仍以既有实机记录为准。
 - Daily Review 92–100 已完成；retention worker 仅清理过期 raw chat / semantic snapshots，不删除 daily reviews、sessions、Study Forest 或配置。
 - Collector 41 项测试在 NTFS 验证副本中 41/41 通过；Pet v3 12/12 通过且 TypeScript 检查通过。直接从 WSL UNC 工作目录运行 Node 会遇到文件读取/esbuild spawn 限制，不作为代码失败证据。
+- Tauri `supervisor_snapshot` 已补齐：复用 `D:\StudyGuardianDev\config\auth.token` 与 `config.yaml`，仅允许 loopback Supervisor、2 秒有界 HTTP、白名单 semantic 字段和四类脱敏错误；Rust compile/test/runtime 尚未执行，因为本机缺 Rust/Cargo、MSVC 和 Windows SDK。
+- 传感器 monitor listing 新增 fake MSS context rediscovery/负坐标/几何变化回归；真实物理显示器热插拔仍保留为人工验收。
 
 ## Environment
 

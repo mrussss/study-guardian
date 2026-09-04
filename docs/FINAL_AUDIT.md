@@ -9,6 +9,8 @@
 - `bash scripts/build-windows.sh`、`bash scripts/deploy-windows.sh` 和两次 deploy safety 均通过；`config/data/logs/run/handoff` 与 token 保持不变。
 - Collector 当前快照的 41 项 Node 测试在 NTFS 验证副本中 41/41 通过；Pet v3 测试 12/12 通过且 TypeScript 检查通过，UNC 上的 Vite/esbuild 构建仍受 Windows/WSL 文件映射环境限制。
 - Review Task 92–100 已根据当前代码和测试校准为完成；新增 raw chat / semantic retention 的启动与每日清理 worker，并补充存储保护测试。
+- 已补充 Pet v3 Rust `supervisor_snapshot` native transport：复用运行时 token/config、loopback HTTP、2 秒超时、semantic 白名单和有限错误类型；Rust/Cargo/MSVC/Windows SDK 缺失，编译与 Tauri runtime 仍 BLOCKED。
+- Sensor monitor rediscovery 自动回归已覆盖负坐标、virtual desktop、物理 monitor 几何变化与旧 context 关闭；真实热插拔仍需 Windows 人工验收。
 - 仍保持未完成/阻塞：真实 Chrome E2E、完整 Windows 用户旅程、7-day trial、Collector miss audit、Review factuality audit、物理热插拔、Sleep/Resume、最终桌宠美术，以及 Tauri Rust/MSVC/Windows SDK runtime。
 
 ## v0.6 当前审计结论

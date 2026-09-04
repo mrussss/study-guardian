@@ -12,6 +12,9 @@ the Supervisor API, `scripts/build-windows.sh`, `scripts/deploy-windows.sh`,
 - reversible click-through command, with the tray menu as the recovery path;
 - exact `CurrentActivityView` TypeScript contract and local mock controls;
   transport `connected` is separate from semantic `fresh`;
+- native `supervisor_snapshot` command that reads the existing runtime token,
+  calls localhost Supervisor `/v1/activity/current`, validates the bounded
+  response, and exposes only the sanitized contract plus a bounded error kind;
 - pure behavior engine with event/offline/break/distraction/semantic priority,
   normal hysteresis, quick distraction transition, and UI-only THINKING;
 - horizontal sprite-sheet frame splitter, FPS animation loop/one-shot/fallback
@@ -25,9 +28,9 @@ the Supervisor API, `scripts/build-windows.sh`, `scripts/deploy-windows.sh`,
   `fillRect` is only the final emergency fallback;
 - offline visual state and placeholder pixel canvas.
 
-No real Supervisor HTTP, main token, ActivityWatch, Sensor, Text AI, or Vision
-AI is used in the Pet dev panel. Real transport and production integration
-remain later scope items.
+The dev panel still uses local mocks. The native shell now owns the real
+Supervisor transport; ActivityWatch, Sensor, Text AI, and Vision AI remain
+behind Supervisor and are not called directly by the Pet.
 
 ## Verification
 
@@ -36,9 +39,11 @@ npm ci                                PASS
 npm test                              PASS (updated count in final report)
 npm run build                         PASS (strict tsc + Vite)
 tauri CLI --version                   PASS (2.11.4)
+native supervisor_snapshot tests      CODED; compile/test BLOCKED: rustc/Cargo and MSVC/SDK absent
 tauri info                            BLOCKED: rustc/Cargo and MSVC/SDK absent
 ```
 
-The Tauri startup smoke was not run because this Windows machine has WebView2
-and Node but no Rust toolchain or Visual Studio Build Tools. No startup PASS
-is claimed until those dependencies are installed.
+The Tauri startup smoke and Rust unit tests were not run because this Windows
+machine has WebView2 and Node but no Rust toolchain or Visual Studio Build
+Tools. No compile/runtime PASS is claimed until those dependencies are
+installed.
