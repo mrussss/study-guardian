@@ -7,7 +7,7 @@
 - 最新 `build-windows.sh` 与 `deploy-windows.sh` 已成功执行；Supervisor `:17321` 与 Sensor `:17322` 健康，ActivityWatch 与 MSS 均报告可用。
 - 轻量 watchdog 已包含在最新部署中，停止脚本先停 watchdog 再停 Supervisor/Sensor/Pet；本轮已分别终止 D 盘 Supervisor、Screen Sensor、生产 Pet 的精确进程目标，watchdog 按 5/10/20 秒退避自动拉起，最终 Supervisor/Sensor health 均为 `ok`、Pet 进程恢复。
 - Daily Review 92–100 已完成；retention worker 仅清理过期 raw chat / semantic snapshots，不删除 daily reviews、sessions、Study Forest 或配置。
-- Collector 41 项测试在 NTFS 验证副本中 41/41 通过；Pet v3 12/12 通过且 TypeScript 检查通过。直接从 WSL UNC 工作目录运行 Node 会遇到文件读取/esbuild spawn 限制，不作为代码失败证据。
+- Collector 41 项测试在 NTFS 验证副本中 41/41 通过；Pet v3 在 WSL 原生 Node 22 与 NTFS 验证副本中均完成测试/TypeScript 检查，NTFS 副本用于 Tauri Windows runtime 验收。
 - Tauri `supervisor_snapshot` 已补齐：复用 `D:\StudyGuardianDev\config\auth.token` 与 `config.yaml`，仅允许 loopback Supervisor、2 秒有界 HTTP、白名单 semantic 字段和四类脱敏错误；NTFS 验证副本的 `npm ci`、`npm test`（12/12）、`npm run build`、`cargo check`、`cargo test`（5 tests）均通过，`npm run tauri dev` 已启动并保持 `StudyGuardian Pet v3` 响应。当前 CUA 未枚举该原生窗口，视觉/UI 交互验收仍需人工完成。
 - 传感器 monitor listing 新增 fake MSS context rediscovery/负坐标/几何变化回归；真实物理显示器热插拔仍保留为人工验收。
 
