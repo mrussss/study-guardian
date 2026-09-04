@@ -19,7 +19,7 @@
 - 自动测试：Go、Python 单元、Phase 0～4 集成和部署安全均通过。
 - 已执行 Windows 真机：ActivityWatch fresh/stale、MSS 实际截图、localhost 鉴权、STUDY/OFF 重启恢复、两次部署、Pet 进程启动。
 - Phase 6 自动回归、Windows staging 部署、AI/motivation API 与 Pet manifest skin 启动检查通过。
-- 尚未完成真机项目：Secure Desktop 锁屏、Sleep/Resume、双物理显示器热插拔、子进程自动崩溃拉起；按本轮用户决定不阻塞 1～3 天试运行。
+- 尚未完成真机项目：Secure Desktop 锁屏、Sleep/Resume、双物理显示器热插拔；本轮已实测 watchdog 对 Supervisor、Sensor、生产 Pet 的分别终止与自动拉起，按本轮用户决定不阻塞 1～3 天试运行。
 - 当前建议：YES，进入 1～3 天日常试运行，同时保留上述后续项目。
 - 详细证据：`docs/WINDOWS_E2E_REPORT.md`。
 
