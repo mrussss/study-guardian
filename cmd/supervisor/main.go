@@ -80,6 +80,29 @@ func main() {
 		store, _ = storage.OpenSQLite(":memory:")
 	}
 	defer store.Close()
+	runRetentionCleanup := func(ctx context.Context) {
+		retentionStats, err := store.PruneRetention(ctx, time.Now(), cfg.Review.Retention.RawChatDays, cfg.Review.Retention.SemanticDays)
+		if err != nil {
+			log.Printf("[Retention] cleanup failed: %v", err)
+		} else if retentionStats.RawMessagesDeleted > 0 || retentionStats.RawTurnsDeleted > 0 || retentionStats.RawConversationsDeleted > 0 || retentionStats.SemanticDeleted > 0 {
+			log.Printf("[Retention] removed raw_messages=%d raw_turns=%d conversations=%d semantic_snapshots=%d", retentionStats.RawMessagesDeleted, retentionStats.RawTurnsDeleted, retentionStats.RawConversationsDeleted, retentionStats.SemanticDeleted)
+		}
+	}
+	runRetentionCleanup(context.Background())
+	retentionCtx, cancelRetention := context.WithCancel(context.Background())
+	defer cancelRetention()
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				runRetentionCleanup(retentionCtx)
+			case <-retentionCtx.Done():
+				return
+			}
+		}
+	}()
 
 	clock := state.RealClock{}
 	privacyGate := rules.NewPrivacyGate(cfg)
@@ -309,6 +332,7 @@ func main() {
 	<-sigChan
 
 	log.Printf("[Supervisor] Shutting down...")
+	cancelRetention()
 	cancelTicker()
 	stateMgr.Close()
 

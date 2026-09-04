@@ -112,15 +112,16 @@
 
 - [x] 90. Daily Evidence Aggregator over existing + new data
 - [x] 91. Deterministic fallback report
-- [ ] 92. Conversation compaction
-- [ ] 93. Generic ReviewProvider + JSON schema
-- [ ] 94. Evidence-ref / accomplishment validator
-- [ ] 95. Cloud sanitizer
+- [x] 92. Conversation compaction
+- [x] 93. Generic ReviewProvider + JSON schema
+- [x] 94. Evidence-ref / accomplishment validator
+- [x] 95. Cloud sanitizer
 - [x] 96. Canonical daily review persistence + input hash
-- [ ] 97. OFF debounce / stale / restart / next-day backfill
+- [x] 97. OFF debounce / stale / restart / next-day backfill
 - [x] 98. Markdown atomic output
-- [ ] 99. DAILY_REVIEW_READY ui_event
-- [ ] 100. Pet / Study Center Review UI
+- [x] 99. DAILY_REVIEW_READY ui_event
+- [x] 100. Pet / Study Center Review UI（含安全 evidence exclusion）
+- [x] Retention cleanup（启动时及每日 worker 原子清理；保留 daily reviews、sessions 与 Study Forest 数据）
 - [ ] 101. Full Windows E2E
 
 ## Phase 9: Trial
