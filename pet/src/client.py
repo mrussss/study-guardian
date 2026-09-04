@@ -112,3 +112,10 @@ class SupervisorClient:
     def generate_daily_review(self, review_date: str = "") -> Optional[Dict[str, Any]]:
         review_date = review_date or date.today().isoformat()
         return self._make_request("POST", "/v1/review/generate", {"date": review_date}, timeout=35.0)
+
+    def exclude_review_evidence(self, review_date: str, source_type: str, source_id: str) -> Optional[Dict[str, Any]]:
+        return self._make_request(
+            "POST",
+            "/v1/review/exclude",
+            {"date": review_date, "source_type": source_type, "source_id": source_id},
+        )

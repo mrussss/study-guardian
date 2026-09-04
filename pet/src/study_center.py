@@ -1,9 +1,10 @@
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QWidget, QTabWidget, QVBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QInputDialog, QTextEdit,
+    QListWidget, QListWidgetItem, QInputDialog, QTextEdit, QLineEdit, QHBoxLayout,
 )
 import json
+from datetime import date
 
 from client import SupervisorClient
 
@@ -34,6 +35,8 @@ class StudyCenterWorker(QObject):
                     self.client.set_daily_target(*args)
                 elif kind == "review_generate":
                     self.client.generate_daily_review(*args)
+                elif kind == "review_exclude":
+                    self.client.exclude_review_evidence(*args)
             result.update({
                 "status": self.client.get_motivation_status(),
                 "settings": self.client.get_motivation_settings(),
@@ -66,6 +69,10 @@ class StudyCenter(QWidget):
         self.rewards = QListWidget()
         self.review = QTextEdit()
         self.review.setReadOnly(True)
+        self.review_exclusion = QLineEdit()
+        self.review_exclusion.setPlaceholderText("输入 chat_turn:... 或 chat_conversation:...")
+        self.review_action_status = QLabel("")
+        self.current_review_date = date.today().isoformat()
         self.current_target = 120
         self._thread = None
         self._worker = None
@@ -113,6 +120,13 @@ class StudyCenter(QWidget):
         generate_button = QPushButton("生成 / 刷新今日复盘")
         generate_button.clicked.connect(lambda: self.refresh(("review_generate", ())))
         review_layout.addWidget(generate_button)
+        exclude_row = QHBoxLayout()
+        exclude_row.addWidget(self.review_exclusion)
+        exclude_button = QPushButton("排除该证据")
+        exclude_button.clicked.connect(self.exclude_review_evidence)
+        exclude_row.addWidget(exclude_button)
+        review_layout.addLayout(exclude_row)
+        review_layout.addWidget(self.review_action_status)
         self.tabs.addTab(review_page, "学习复盘")
 
     def showEvent(self, event):
@@ -176,8 +190,10 @@ class StudyCenter(QWidget):
 
     def _apply_review(self, record):
         if not record:
+            self.current_review_date = date.today().isoformat()
             self.review.setPlainText("今日暂无复盘记录。点击“生成 / 刷新今日复盘”开始。")
             return
+        self.current_review_date = record.get("date") or date.today().isoformat()
         try:
             document = json.loads(record.get("review_json") or "{}")
         except (TypeError, ValueError):
@@ -207,7 +223,18 @@ class StudyCenter(QWidget):
         warnings = document.get("warnings") or []
         if warnings:
             lines.extend(["警告：", *[f"- {warning}" for warning in warnings]])
+        lines.extend(["", "排除错误证据：复制上方引用中的 chat_turn:... 或 chat_conversation:...，粘贴到下方后点击排除。"])
         self.review.setPlainText("\n".join(lines))
+
+    def exclude_review_evidence(self):
+        reference = self.review_exclusion.text().strip()
+        source_type, separator, source_id = reference.partition(":")
+        if not separator or source_type not in {"chat_turn", "chat_conversation"} or not source_id.strip():
+            self.review_action_status.setText("只支持 chat_turn:... 或 chat_conversation:... 引用。")
+            return
+        self.review_action_status.setText("正在排除并重新读取复盘状态…")
+        self.review_exclusion.clear()
+        self.refresh(("review_exclude", (self.current_review_date, source_type, source_id.strip())))
 
     def _clear_worker(self):
         self._thread = None
