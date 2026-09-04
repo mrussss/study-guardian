@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from client import SupervisorClient
 from server import ThreadedHTTPServer, SensorHandler
-from supervisor_test_utils import wait_for_supervisor
+from supervisor_test_utils import wait_for_status, wait_for_supervisor
 
 
 class MockAWHandlerForPhase3(BaseHTTPRequestHandler):
@@ -188,30 +188,22 @@ privacy:
         # 1. Active user -> ACTIVE
         MockAWHandlerForPhase3.current_app = "Code.exe"
         MockAWHandlerForPhase3.current_status = "not-afk"
-        time.sleep(2.5)
-        st = client.get_status()
-        self.assertEqual(st["interaction_state"], "ACTIVE")
+        st = wait_for_status(client, lambda status: status.get("interaction_state") == "ACTIVE")
 
         # 2. AFK + Screen Static -> IDLE_STATIC
         MockAWHandlerForPhase3.current_status = "afk"
         MockScreenSensorHandler.screen_changed = False
-        time.sleep(2.5)
-        st = client.get_status()
-        self.assertEqual(st["interaction_state"], "IDLE_STATIC")
+        st = wait_for_status(client, lambda status: status.get("interaction_state") == "IDLE_STATIC")
 
         # 3. AFK + Screen Dynamic (video playing) -> IDLE_DYNAMIC
         MockScreenSensorHandler.screen_changed = True
-        time.sleep(2.5)
-        st = client.get_status()
-        self.assertEqual(st["interaction_state"], "IDLE_DYNAMIC")
+        st = wait_for_status(client, lambda status: status.get("interaction_state") == "IDLE_DYNAMIC")
 
         # 4. Privacy Gate: Sensitive App (Bitwarden)
         init_capture_count = MockScreenSensorHandler.capture_count
         MockAWHandlerForPhase3.current_app = "Bitwarden.exe"
         MockAWHandlerForPhase3.current_title = "My Passwords"
-        time.sleep(2.5)
-        st = client.get_status()
-        self.assertEqual(st["privacy_state"], "SENSITIVE")
+        st = wait_for_status(client, lambda status: status.get("privacy_state") == "SENSITIVE")
         # Ensure capture was NOT called when sensitive
         self.assertEqual(MockScreenSensorHandler.capture_count, init_capture_count)
 

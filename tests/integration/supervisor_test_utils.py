@@ -27,3 +27,15 @@ def wait_for_supervisor(proc, port, timeout=5.0):
         time.sleep(0.05)
 
     raise RuntimeError(f"Supervisor did not become ready on port {port}: {last_error}")
+
+
+def wait_for_status(client, predicate, timeout=8.0):
+    """Wait for a status predicate without weakening the expected assertion."""
+    deadline = time.monotonic() + timeout
+    last_status = None
+    while time.monotonic() < deadline:
+        last_status = client.get_status()
+        if last_status is not None and predicate(last_status):
+            return last_status
+        time.sleep(0.1)
+    raise AssertionError(f"status did not reach expected state: {last_status}")
