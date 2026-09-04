@@ -138,6 +138,8 @@
 - [~] 107. Stage C Quick Panel / Control Center Tauri window orchestration（窗口配置、
   延迟创建/单实例复用、Pet 相邻定位、Escape/focus-loss hide 与多显示器边界自动验证已完成；
   原生 Windows 窗口视觉/交互仍待人工 Gate）
-- [ ] 108. Stage D/E Control Center canonical Supervisor data 与 Study Center parity
+- [~] 108. Stage D/E 已接入受限 native Supervisor dashboard DTO（status、motivation、history、
+  achievements、missions、rewards、AI status）与 Quick Panel 实时 mode/task/进度/模式控制；
+  Control Center 其余页面、Review/Study Center parity 与原生窗口人工 Gate 待完成
 - [ ] 109. Stage F/G typed settings API、atomic persistence、secret configured-only DTO
 - [ ] 110. Stage H/J tray unification、production cleanup 与现代 UI Windows visual acceptance

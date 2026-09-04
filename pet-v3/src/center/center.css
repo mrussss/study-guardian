@@ -79,6 +79,7 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .legend-dot-accent { background: var(--sg-accent); }
 .legend-line { display: inline-block; width: 14px; height: 0; border-top: 1px dashed var(--sg-border-strong); }
 .focus-chart { width: 100%; height: 204px; margin-top: 7px; }
+.chart-empty, .mission-empty { display: grid; min-height: 100%; place-items: center; color: var(--sg-text-tertiary); font-size: 13px; }
 .mission-section { min-height: 326px; }
 .icon-button { width: 28px; height: 28px; margin: -5px -5px 0 0; }
 .mission-list { display: grid; gap: 3px; margin-top: 18px; }

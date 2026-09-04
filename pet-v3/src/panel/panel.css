@@ -8,6 +8,7 @@ body:has(.quick-panel) { display: grid; min-width: 360px; min-height: 400px; pla
 .brand-caption { margin-top: 2px; color: var(--sg-text-tertiary); font-size: 12px; }
 .health-chip, .mode-status { display: inline-flex; align-items: center; gap: 5px; color: var(--sg-success); font-size: 12px; font-weight: 600; }
 .health-chip { padding: 6px 8px; background: var(--sg-success-soft); border-radius: 999px; }
+.health-chip.is-warning { color: var(--sg-warning); background: var(--sg-warning-soft); }
 .quick-panel-content { display: grid; gap: 18px; padding: 20px 18px 18px; }
 .focus-summary { padding: 2px 2px 0; }
 .focus-summary-topline, .section-heading-row, .progress-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

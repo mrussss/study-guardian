@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { mockSemantic } from "../mock/semantic";
-import { normalizeControlResult, normalizeNativeSnapshot, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter } from "./supervisor";
+import { normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter } from "./supervisor";
 
 test("control results expose only bounded success or error kinds", () => {
   assert.deepEqual(normalizeControlResult({ ok: true, token: "ignored", path: "ignored" }), { ok: true });
@@ -19,6 +19,51 @@ test("native snapshot accepts only a complete sanitized semantic contract", () =
   assert.equal(normalizeNativeSnapshot({ connected: true, semantic: { ...semantic, confidence: 2 } }).connected, false);
   assert.equal(normalizeNativeSnapshot({ connected: false, last_error_kind: "unauthorized", token: "never returned" }).last_error_kind, "unauthorized");
   assert.equal(normalizeNativeSnapshot({ connected: false, last_error_kind: "token-value" }).last_error_kind, "unavailable");
+});
+
+test("dashboard snapshot accepts canonical data and drops invalid optional sections", () => {
+  const status = {
+    user_mode: "STUDY",
+    interaction_state: "ACTIVE",
+    task_relation: "FOCUSED",
+    privacy_state: "NORMAL",
+    confidence: 0.9,
+    task: "Go context",
+    study_seconds: 2520,
+    break_seconds: 0,
+    active_seconds: 2520,
+    activitywatch_ok: true,
+    screen_sensor_ok: true,
+  } as const;
+  const motivation = {
+    today_credited_focus_minutes: 42,
+    total_credited_focus_minutes: 420,
+    today_earned_ap_milli: 700,
+    today_spent_ap_milli: 0,
+    balance_ap_milli: 7000,
+    checkin_completed: true,
+    daily_target_minutes: 120,
+    target_progress: 0.35,
+    streak_days: 5,
+  } as const;
+  const snapshot = normalizeNativeDashboardSnapshot({
+    connected: true,
+    status,
+    motivation,
+    history: [{ date: "2026-09-04", focus_minutes: 42, target_minutes: 120, checkin_completed: true, target_completed: false }],
+    achievements: [{ achievement_id: "FIRST_30", name: "初次专注", description: "累计有效专注 30 分钟", progress: 1, unlocked: true }],
+    missions: [{ id: "m-1", title: "Read", description: "", reward_milli_ap: 100, status: "OPEN", created_at: "2026-09-04T00:00:00Z" }],
+    rewards: [{ id: "r-1", name: "Break", type: "TIME", cost_milli_ap: 100, description: "", enabled: true }],
+    ai: { enabled: false, text_provider: "none", text_configured: false, vision_enabled: false },
+    secret: "must be ignored",
+  });
+  assert.equal(snapshot.connected, true);
+  assert.deepEqual(snapshot.status, status);
+  assert.deepEqual(snapshot.motivation, motivation);
+  assert.equal(snapshot.history?.length, 1);
+  assert.equal("secret" in snapshot, false);
+  assert.equal(normalizeNativeDashboardSnapshot({ connected: true, status: { ...status, confidence: 2 } }).connected, false);
+  assert.deepEqual(normalizeNativeDashboardSnapshot({ connected: true, status, missions: [{ ...snapshot.missions?.[0], status: "INVALID" }] }).missions, undefined);
 });
 
 test("poll loop prevents overlap and stops cleanly", async () => {

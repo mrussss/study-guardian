@@ -21,10 +21,16 @@
 
 - [ ] Windows 原生 Quick Panel / Control Center 的真实显示、Escape、失焦隐藏、重复打开复用与 Pet 相邻定位。
 
+## Stage D 自动化 Gate
+
+- [x] Rust native client 只访问固定 Supervisor GET 路径，并对白名单字段、字符串长度、数值范围和数组数量做验证。
+- [x] Quick Panel native runtime 接入 canonical status/motivation；mode/task、专注计时、目标、streak、AP 使用 Supervisor 返回值，模式控制继续走 Rust 固定 POST 路径。
+- [x] Control Center native runtime 接入 status、motivation、7 天 history、achievements、missions、rewards 和 AI status；空/异常可选数据以空态显示。
+- [x] 源 WSL 与 NTFS 验证副本 Node 测试均为 21/21，Rust `cargo check` 与单测均为 8/8，Vite 三入口构建通过。
+
 ## 尚未通过的后续 Gate
 
-- [ ] Quick Panel 真实 Supervisor 状态、Study/Break/Off、专注进度、streak、AP。
-- [ ] Control Center 真实 Dashboard、Missions、Achievements、Rewards、Review、History。
+- [ ] Control Center Review、History actions 与 Study Center parity。
 - [ ] Settings typed API、验证、atomic persistence、secret masking。
 - [ ] Tray 与 Pet/Quick Panel/Control Center 统一。
 - [ ] Windows 原生窗口的视觉/交互验收，包括 Light/Dark 主题。

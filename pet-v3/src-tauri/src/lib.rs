@@ -22,6 +22,16 @@ fn next_click_through(current: bool) -> bool { !current }
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_RESPONSE_BYTES: usize = 128 * 1024;
+const SUPERVISOR_GET_PATHS: &[&str] = &[
+    "/v1/activity/current",
+    "/v1/status",
+    "/v1/motivation/status",
+    "/v1/motivation/history?days=7",
+    "/v1/motivation/achievements",
+    "/v1/missions",
+    "/v1/rewards",
+    "/v1/ai/status",
+];
 const DEFAULT_SUPERVISOR_HOST: &str = "127.0.0.1";
 const DEFAULT_SUPERVISOR_PORT: u16 = 17321;
 
@@ -64,11 +74,46 @@ struct SupervisorControlResult {
     error_kind: Option<&'static str>,
 }
 
+#[derive(Serialize)]
+struct SupervisorDashboardSnapshot {
+    connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    motivation: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    history: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    achievements: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    missions: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rewards: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error_kind: Option<&'static str>,
+}
+
 fn disconnected(kind: NativeErrorKind) -> SupervisorSnapshot {
     SupervisorSnapshot {
         connected: false,
         semantic: None,
         last_success_at: None,
+        last_error_kind: Some(kind.as_str()),
+    }
+}
+
+fn disconnected_dashboard(kind: NativeErrorKind) -> SupervisorDashboardSnapshot {
+    SupervisorDashboardSnapshot {
+        connected: false,
+        status: None,
+        motivation: None,
+        history: None,
+        achievements: None,
+        missions: None,
+        rewards: None,
+        ai: None,
         last_error_kind: Some(kind.as_str()),
     }
 }
@@ -244,7 +289,10 @@ fn parse_http_response(response: &[u8]) -> Result<Value, NativeErrorKind> {
         .map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
-fn fetch_current_activity(host: &str, port: u16, token: &str) -> Result<Value, NativeErrorKind> {
+fn fetch_supervisor_get(host: &str, port: u16, token: &str, path: &str) -> Result<Value, NativeErrorKind> {
+    if !SUPERVISOR_GET_PATHS.contains(&path) || host.contains('\r') || host.contains('\n') {
+        return Err(NativeErrorKind::Unavailable);
+    }
     if token.is_empty() || token.contains('\r') || token.contains('\n') {
         return Err(NativeErrorKind::Unauthorized);
     }
@@ -259,7 +307,7 @@ fn fetch_current_activity(host: &str, port: u16, token: &str) -> Result<Value, N
         .map_err(|error| map_io_error(&error))?;
 
     let request = format!(
-        "GET /v1/activity/current HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     );
     stream
         .write_all(request.as_bytes())
@@ -281,6 +329,10 @@ fn fetch_current_activity(host: &str, port: u16, token: &str) -> Result<Value, N
         }
     }
     parse_http_response(&response)
+}
+
+fn fetch_current_activity(host: &str, port: u16, token: &str) -> Result<Value, NativeErrorKind> {
+    fetch_supervisor_get(host, port, token, "/v1/activity/current")
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -363,6 +415,227 @@ fn enum_field(object: &serde_json::Map<String, Value>, key: &str, allowed: &[&st
     Ok(value.to_string())
 }
 
+fn text_field(object: &serde_json::Map<String, Value>, key: &str, max_bytes: usize) -> Result<String, NativeErrorKind> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| value.len() <= max_bytes)
+        .map(str::to_string)
+        .ok_or(NativeErrorKind::InvalidResponse)
+}
+
+fn optional_text_field(object: &serde_json::Map<String, Value>, key: &str, max_bytes: usize) -> Result<Option<String>, NativeErrorKind> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if value.len() <= max_bytes => Ok(Some(value.clone())),
+        _ => Err(NativeErrorKind::InvalidResponse),
+    }
+}
+
+fn non_negative_i64_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<i64, NativeErrorKind> {
+    object
+        .get(key)
+        .and_then(Value::as_i64)
+        .filter(|value| *value >= 0)
+        .ok_or(NativeErrorKind::InvalidResponse)
+}
+
+fn bounded_progress_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<f64, NativeErrorKind> {
+    object
+        .get(key)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        .ok_or(NativeErrorKind::InvalidResponse)
+}
+
+fn bool_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<bool, NativeErrorKind> {
+    object
+        .get(key)
+        .and_then(Value::as_bool)
+        .ok_or(NativeErrorKind::InvalidResponse)
+}
+
+fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let user_mode = enum_field(object, "user_mode", &["STANDBY", "STUDY", "BREAK", "OFF"])?;
+    let interaction_state = enum_field(object, "interaction_state", &["ACTIVE", "IDLE_STATIC", "IDLE_DYNAMIC", "UNKNOWN"])?;
+    let task_relation = enum_field(object, "task_relation", &["FOCUSED", "DISTRACTED", "UNKNOWN"])?;
+    let privacy_state = enum_field(object, "privacy_state", &["NORMAL", "SENSITIVE"])?;
+    let confidence = bounded_progress_field(object, "confidence")?;
+    let task = text_field(object, "task", 4096)?;
+    let study_seconds = non_negative_i64_field(object, "study_seconds")?;
+    let break_seconds = non_negative_i64_field(object, "break_seconds")?;
+    let active_seconds = non_negative_i64_field(object, "active_seconds")?;
+    let activitywatch_ok = bool_field(object, "activitywatch_ok")?;
+    let screen_sensor_ok = bool_field(object, "screen_sensor_ok")?;
+    let mut output = json!({
+        "user_mode": user_mode,
+        "interaction_state": interaction_state,
+        "task_relation": task_relation,
+        "privacy_state": privacy_state,
+        "confidence": confidence,
+        "task": task,
+        "study_seconds": study_seconds,
+        "break_seconds": break_seconds,
+        "active_seconds": active_seconds,
+        "activitywatch_ok": activitywatch_ok,
+        "screen_sensor_ok": screen_sensor_ok,
+    });
+    if let Some(last_activity_at) = optional_text_field(object, "last_activity_at", 128)? {
+        output["last_activity_at"] = json!(last_activity_at);
+    }
+    Ok(output)
+}
+
+fn sanitize_motivation(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let today_credited_focus_minutes = non_negative_i64_field(object, "today_credited_focus_minutes")?;
+    let total_credited_focus_minutes = non_negative_i64_field(object, "total_credited_focus_minutes")?;
+    let today_earned_ap_milli = non_negative_i64_field(object, "today_earned_ap_milli")?;
+    let today_spent_ap_milli = non_negative_i64_field(object, "today_spent_ap_milli")?;
+    let balance_ap_milli = non_negative_i64_field(object, "balance_ap_milli")?;
+    let daily_target_minutes = non_negative_i64_field(object, "daily_target_minutes")?;
+    let target_progress = bounded_progress_field(object, "target_progress")?;
+    let streak_days = non_negative_i64_field(object, "streak_days")?;
+    let mut output = json!({
+        "today_credited_focus_minutes": today_credited_focus_minutes,
+        "total_credited_focus_minutes": total_credited_focus_minutes,
+        "today_earned_ap_milli": today_earned_ap_milli,
+        "today_spent_ap_milli": today_spent_ap_milli,
+        "balance_ap_milli": balance_ap_milli,
+        "checkin_completed": bool_field(object, "checkin_completed")?,
+        "daily_target_minutes": daily_target_minutes,
+        "target_progress": target_progress,
+        "streak_days": streak_days,
+    });
+    if let Some(event) = object.get("last_event") {
+        let event_object = event.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        output["last_event"] = json!({
+            "id": non_negative_i64_field(event_object, "id")?,
+            "type": text_field(event_object, "type", 64)?,
+            "message": text_field(event_object, "message", 512)?,
+            "created_at": text_field(event_object, "created_at", 128)?,
+        });
+    }
+    Ok(output)
+}
+
+fn sanitize_history(value: &Value) -> Result<Value, NativeErrorKind> {
+    let rows = value.as_array().ok_or(NativeErrorKind::InvalidResponse)?;
+    if rows.len() > 90 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let mut output = Vec::with_capacity(rows.len());
+    for row in rows {
+        let object = row.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        output.push(json!({
+            "date": text_field(object, "date", 32)?,
+            "focus_minutes": non_negative_i64_field(object, "focus_minutes")?,
+            "target_minutes": non_negative_i64_field(object, "target_minutes")?,
+            "checkin_completed": bool_field(object, "checkin_completed")?,
+            "target_completed": bool_field(object, "target_completed")?,
+        }));
+    }
+    Ok(Value::Array(output))
+}
+
+fn sanitize_achievements(value: &Value) -> Result<Value, NativeErrorKind> {
+    let rows = value.as_array().ok_or(NativeErrorKind::InvalidResponse)?;
+    if rows.len() > 32 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let mut output = Vec::with_capacity(rows.len());
+    for row in rows {
+        let object = row.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        let mut item = json!({
+            "achievement_id": text_field(object, "achievement_id", 64)?,
+            "name": text_field(object, "name", 128)?,
+            "description": text_field(object, "description", 512)?,
+            "progress": bounded_progress_field(object, "progress")?,
+            "unlocked": bool_field(object, "unlocked")?,
+        });
+        if let Some(unlocked_at) = optional_text_field(object, "unlocked_at", 128)? {
+            item["unlocked_at"] = json!(unlocked_at);
+        }
+        output.push(item);
+    }
+    Ok(Value::Array(output))
+}
+
+fn sanitize_missions(value: &Value) -> Result<Value, NativeErrorKind> {
+    let rows = value.as_array().ok_or(NativeErrorKind::InvalidResponse)?;
+    if rows.len() > 100 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let mut output = Vec::with_capacity(rows.len());
+    for row in rows {
+        let object = row.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        let mut item = json!({
+            "id": text_field(object, "id", 128)?,
+            "title": text_field(object, "title", 256)?,
+            "description": text_field(object, "description", 1024)?,
+            "reward_milli_ap": non_negative_i64_field(object, "reward_milli_ap")?,
+            "status": enum_field(object, "status", &["OPEN", "COMPLETED", "CANCELLED"] )?,
+            "created_at": text_field(object, "created_at", 128)?,
+        });
+        if let Some(due_date) = optional_text_field(object, "due_date", 32)? {
+            item["due_date"] = json!(due_date);
+        }
+        if let Some(completed_at) = optional_text_field(object, "completed_at", 128)? {
+            item["completed_at"] = json!(completed_at);
+        }
+        output.push(item);
+    }
+    Ok(Value::Array(output))
+}
+
+fn sanitize_rewards(value: &Value) -> Result<Value, NativeErrorKind> {
+    let rows = value.as_array().ok_or(NativeErrorKind::InvalidResponse)?;
+    if rows.len() > 100 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let mut output = Vec::with_capacity(rows.len());
+    for row in rows {
+        let object = row.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        output.push(json!({
+            "id": text_field(object, "id", 128)?,
+            "name": text_field(object, "name", 256)?,
+            "type": text_field(object, "type", 64)?,
+            "cost_milli_ap": non_negative_i64_field(object, "cost_milli_ap")?,
+            "description": text_field(object, "description", 1024)?,
+            "enabled": bool_field(object, "enabled")?,
+        }));
+    }
+    Ok(Value::Array(output))
+}
+
+fn sanitize_ai(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let mut output = json!({
+        "enabled": bool_field(object, "enabled")?,
+        "text_provider": text_field(object, "text_provider", 64)?,
+        "text_configured": bool_field(object, "text_configured")?,
+        "vision_enabled": bool_field(object, "vision_enabled")?,
+    });
+    if let Some(text_model) = optional_text_field(object, "text_model", 128)? {
+        output["text_model"] = json!(text_model);
+    }
+    if let Some(warning) = optional_text_field(object, "warning", 512)? {
+        output["warning"] = json!(warning);
+    }
+    Ok(output)
+}
+
+fn supervisor_credentials() -> Result<(String, u16, String), NativeErrorKind> {
+    let root = runtime_root();
+    let token = fs::read_to_string(root.join("config").join("auth.token"))
+        .map_err(|_| NativeErrorKind::Unavailable)?
+        .trim()
+        .to_string();
+    let (host, port) = runtime_endpoint(&root);
+    Ok((host, port, token))
+}
+
 fn sanitize_semantic(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
@@ -418,13 +691,10 @@ fn sanitize_semantic(value: &Value) -> Result<Value, NativeErrorKind> {
 
 #[tauri::command]
 fn supervisor_snapshot() -> SupervisorSnapshot {
-    let root = runtime_root();
-    let token_path = root.join("config").join("auth.token");
-    let token = match fs::read_to_string(token_path) {
-        Ok(token) => token.trim().to_string(),
-        Err(_) => return disconnected(NativeErrorKind::Unavailable),
+    let (host, port, token) = match supervisor_credentials() {
+        Ok(credentials) => credentials,
+        Err(kind) => return disconnected(kind),
     };
-    let (host, port) = runtime_endpoint(&root);
     let raw = match fetch_current_activity(&host, port, &token) {
         Ok(value) => value,
         Err(kind) => return disconnected(kind),
@@ -446,18 +716,60 @@ fn supervisor_snapshot() -> SupervisorSnapshot {
 }
 
 #[tauri::command]
+fn supervisor_dashboard_snapshot() -> SupervisorDashboardSnapshot {
+    let (host, port, token) = match supervisor_credentials() {
+        Ok(credentials) => credentials,
+        Err(kind) => return disconnected_dashboard(kind),
+    };
+    let status_raw = match fetch_supervisor_get(&host, port, &token, "/v1/status") {
+        Ok(value) => value,
+        Err(kind) => return disconnected_dashboard(kind),
+    };
+    let status = match sanitize_status(&status_raw) {
+        Ok(value) => value,
+        Err(kind) => return disconnected_dashboard(kind),
+    };
+    let motivation = fetch_supervisor_get(&host, port, &token, "/v1/motivation/status")
+        .ok()
+        .and_then(|value| sanitize_motivation(&value).ok());
+    let history = fetch_supervisor_get(&host, port, &token, "/v1/motivation/history?days=7")
+        .ok()
+        .and_then(|value| sanitize_history(&value).ok());
+    let achievements = fetch_supervisor_get(&host, port, &token, "/v1/motivation/achievements")
+        .ok()
+        .and_then(|value| sanitize_achievements(&value).ok());
+    let missions = fetch_supervisor_get(&host, port, &token, "/v1/missions")
+        .ok()
+        .and_then(|value| sanitize_missions(&value).ok());
+    let rewards = fetch_supervisor_get(&host, port, &token, "/v1/rewards")
+        .ok()
+        .and_then(|value| sanitize_rewards(&value).ok());
+    let ai = fetch_supervisor_get(&host, port, &token, "/v1/ai/status")
+        .ok()
+        .and_then(|value| sanitize_ai(&value).ok());
+    SupervisorDashboardSnapshot {
+        connected: true,
+        status: Some(status),
+        motivation,
+        history,
+        achievements,
+        missions,
+        rewards,
+        ai,
+        last_error_kind: None,
+    }
+}
+
+#[tauri::command]
 fn supervisor_set_mode(mode: String, task: Option<String>) -> SupervisorControlResult {
     let request = match build_mode_request(&mode, task.as_deref()) {
         Ok(request) => request,
         Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
     };
-    let root = runtime_root();
-    let token_path = root.join("config").join("auth.token");
-    let token = match fs::read_to_string(token_path) {
-        Ok(token) => token.trim().to_string(),
-        Err(_) => return SupervisorControlResult { ok: false, error_kind: Some(NativeErrorKind::Unavailable.as_str()) },
+    let (host, port, token) = match supervisor_credentials() {
+        Ok(credentials) => credentials,
+        Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
     };
-    let (host, port) = runtime_endpoint(&root);
     match post_supervisor_mode(&host, port, &token, &request) {
         Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
         Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
@@ -508,6 +820,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_click_through,
             supervisor_snapshot,
+            supervisor_dashboard_snapshot,
             supervisor_set_mode,
             open_quick_panel,
             hide_quick_panel,
@@ -554,8 +867,10 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        bounded_panel_position, build_mode_request, classify_control_status, classify_http_status, disconnected, map_io_error, parse_http_response, sanitize_semantic,
-        next_click_through, NativeErrorKind, SupervisorSnapshot,
+        bounded_panel_position, build_mode_request, classify_control_status, classify_http_status,
+        disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
+        sanitize_missions, sanitize_motivation, sanitize_semantic, sanitize_status, NativeErrorKind,
+        SupervisorSnapshot,
     };
 
     #[test]
@@ -644,6 +959,53 @@ mod tests {
         assert_eq!(build_mode_request("NOPE", None), Err(NativeErrorKind::Rejected));
         assert_eq!(build_mode_request("BREAK", Some("unexpected")), Err(NativeErrorKind::Rejected));
         assert_eq!(build_mode_request("STUDY", Some(&"x".repeat(257))), Err(NativeErrorKind::Rejected));
+    }
+
+    #[test]
+    fn dashboard_sanitizers_keep_only_bounded_canonical_fields() {
+        let status = sanitize_status(&json!({
+            "user_mode": "STUDY",
+            "interaction_state": "ACTIVE",
+            "task_relation": "FOCUSED",
+            "privacy_state": "NORMAL",
+            "confidence": 0.9,
+            "task": "Go context",
+            "study_seconds": 2520,
+            "break_seconds": 0,
+            "active_seconds": 2520,
+            "activitywatch_ok": true,
+            "screen_sensor_ok": true,
+            "token": "must never cross the native boundary",
+        }))
+        .expect("valid status");
+        assert_eq!(status.as_object().expect("status object").len(), 11);
+        assert!(status.get("token").is_none());
+
+        let motivation = sanitize_motivation(&json!({
+            "today_credited_focus_minutes": 42,
+            "total_credited_focus_minutes": 420,
+            "today_earned_ap_milli": 700,
+            "today_spent_ap_milli": 0,
+            "balance_ap_milli": 7000,
+            "checkin_completed": true,
+            "daily_target_minutes": 120,
+            "target_progress": 0.35,
+            "streak_days": 5,
+            "secret": "ignored",
+        }))
+        .expect("valid motivation");
+        assert!(motivation.get("secret").is_none());
+        assert!(sanitize_missions(&json!([{
+            "id": "m-1",
+            "title": "Read",
+            "description": "",
+            "reward_milli_ap": 100,
+            "status": "INVALID",
+            "created_at": "2026-09-04T00:00:00Z",
+        }]))
+        .is_err());
+        assert_eq!(fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/private"), Err(NativeErrorKind::Unavailable));
+        assert_eq!(fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/status"), Err(NativeErrorKind::Unauthorized));
     }
 
     #[test]

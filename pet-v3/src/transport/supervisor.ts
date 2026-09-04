@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { mockSemantic, mockSupervisorOffline } from "../mock/semantic";
-import { isCurrentActivityView, type CurrentActivityView } from "../model/semantic";
+import { isCurrentActivityView, VALID_USER_MODES, type CurrentActivityView } from "../model/semantic";
 
 export type TransportErrorKind = "timeout" | "unauthorized" | "unavailable" | "invalid_response";
 export type ControlErrorKind = TransportErrorKind | "rejected";
@@ -66,6 +66,194 @@ export class NativeSupervisorAdapter implements SupervisorAdapter {
       // Do not expose the native error text to the UI. Only a bounded kind is
       // allowed across the transport boundary; tokens and paths stay native.
       return disconnected(classifyNativeError(error));
+    }
+  }
+}
+
+export interface NativeSupervisorStatus {
+  user_mode: "STANDBY" | "STUDY" | "BREAK" | "OFF";
+  interaction_state: "ACTIVE" | "IDLE_STATIC" | "IDLE_DYNAMIC" | "UNKNOWN";
+  task_relation: "FOCUSED" | "DISTRACTED" | "UNKNOWN";
+  privacy_state: "NORMAL" | "SENSITIVE";
+  confidence: number;
+  task: string;
+  study_seconds: number;
+  break_seconds: number;
+  active_seconds: number;
+  activitywatch_ok: boolean;
+  screen_sensor_ok: boolean;
+  last_activity_at?: string;
+}
+
+export interface NativeMotivationStatus {
+  today_credited_focus_minutes: number;
+  total_credited_focus_minutes: number;
+  today_earned_ap_milli: number;
+  today_spent_ap_milli: number;
+  balance_ap_milli: number;
+  checkin_completed: boolean;
+  daily_target_minutes: number;
+  target_progress: number;
+  streak_days: number;
+  last_event?: { id: number; type: string; message: string; created_at: string };
+}
+
+export interface NativeHistoryDay {
+  date: string;
+  focus_minutes: number;
+  target_minutes: number;
+  checkin_completed: boolean;
+  target_completed: boolean;
+}
+
+export interface NativeAchievement {
+  achievement_id: string;
+  name: string;
+  description: string;
+  progress: number;
+  unlocked: boolean;
+  unlocked_at?: string;
+}
+
+export interface NativeMission {
+  id: string;
+  title: string;
+  description: string;
+  reward_milli_ap: number;
+  status: "OPEN" | "COMPLETED" | "CANCELLED";
+  created_at: string;
+  due_date?: string;
+  completed_at?: string;
+}
+
+export interface NativeReward {
+  id: string;
+  name: string;
+  type: string;
+  cost_milli_ap: number;
+  description: string;
+  enabled: boolean;
+}
+
+export interface NativeAIStatus {
+  enabled: boolean;
+  text_provider: string;
+  text_configured: boolean;
+  vision_enabled: boolean;
+  text_model?: string;
+  warning?: string;
+}
+
+export interface SupervisorDashboardSnapshot {
+  connected: boolean;
+  status?: NativeSupervisorStatus;
+  motivation?: NativeMotivationStatus;
+  history?: NativeHistoryDay[];
+  achievements?: NativeAchievement[];
+  missions?: NativeMission[];
+  rewards?: NativeReward[];
+  ai?: NativeAIStatus;
+  last_error_kind?: TransportErrorKind;
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object";
+}
+
+function boundedText(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length <= max;
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function boundedRatio(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function validStatus(value: unknown): value is NativeSupervisorStatus {
+  if (!record(value)) return false;
+  return VALID_USER_MODES.includes(value.user_mode as NativeSupervisorStatus["user_mode"]) &&
+    ["ACTIVE", "IDLE_STATIC", "IDLE_DYNAMIC", "UNKNOWN"].includes(value.interaction_state as string) &&
+    ["FOCUSED", "DISTRACTED", "UNKNOWN"].includes(value.task_relation as string) &&
+    ["NORMAL", "SENSITIVE"].includes(value.privacy_state as string) &&
+    boundedRatio(value.confidence) && boundedText(value.task, 4096) &&
+    nonNegativeInteger(value.study_seconds) && nonNegativeInteger(value.break_seconds) &&
+    nonNegativeInteger(value.active_seconds) && typeof value.activitywatch_ok === "boolean" &&
+    typeof value.screen_sensor_ok === "boolean" &&
+    (value.last_activity_at === undefined || boundedText(value.last_activity_at, 128));
+}
+
+function validMotivation(value: unknown): value is NativeMotivationStatus {
+  if (!record(value)) return false;
+  const lastEvent = value.last_event;
+  return nonNegativeInteger(value.today_credited_focus_minutes) &&
+    nonNegativeInteger(value.total_credited_focus_minutes) &&
+    nonNegativeInteger(value.today_earned_ap_milli) && nonNegativeInteger(value.today_spent_ap_milli) &&
+    nonNegativeInteger(value.balance_ap_milli) && typeof value.checkin_completed === "boolean" &&
+    nonNegativeInteger(value.daily_target_minutes) && boundedRatio(value.target_progress) &&
+    nonNegativeInteger(value.streak_days) &&
+    (lastEvent === undefined || (record(lastEvent) && nonNegativeInteger(lastEvent.id) &&
+      boundedText(lastEvent.type, 64) && boundedText(lastEvent.message, 512) && boundedText(lastEvent.created_at, 128)));
+}
+
+function validHistory(value: unknown): value is NativeHistoryDay[] {
+  return Array.isArray(value) && value.length <= 90 && value.every(row => record(row) &&
+    boundedText(row.date, 32) && nonNegativeInteger(row.focus_minutes) && nonNegativeInteger(row.target_minutes) &&
+    typeof row.checkin_completed === "boolean" && typeof row.target_completed === "boolean");
+}
+
+function validAchievements(value: unknown): value is NativeAchievement[] {
+  return Array.isArray(value) && value.length <= 32 && value.every(row => record(row) &&
+    boundedText(row.achievement_id, 64) && boundedText(row.name, 128) && boundedText(row.description, 512) &&
+    boundedRatio(row.progress) && typeof row.unlocked === "boolean" &&
+    (row.unlocked_at === undefined || boundedText(row.unlocked_at, 128)));
+}
+
+function validMissions(value: unknown): value is NativeMission[] {
+  return Array.isArray(value) && value.length <= 100 && value.every(row => record(row) &&
+    boundedText(row.id, 128) && boundedText(row.title, 256) && boundedText(row.description, 1024) &&
+    nonNegativeInteger(row.reward_milli_ap) && ["OPEN", "COMPLETED", "CANCELLED"].includes(row.status as string) &&
+    boundedText(row.created_at, 128) && (row.due_date === undefined || boundedText(row.due_date, 32)) &&
+    (row.completed_at === undefined || boundedText(row.completed_at, 128)));
+}
+
+function validRewards(value: unknown): value is NativeReward[] {
+  return Array.isArray(value) && value.length <= 100 && value.every(row => record(row) &&
+    boundedText(row.id, 128) && boundedText(row.name, 256) && boundedText(row.type, 64) &&
+    nonNegativeInteger(row.cost_milli_ap) && boundedText(row.description, 1024) && typeof row.enabled === "boolean");
+}
+
+function validAI(value: unknown): value is NativeAIStatus {
+  return record(value) && typeof value.enabled === "boolean" && boundedText(value.text_provider, 64) &&
+    typeof value.text_configured === "boolean" && typeof value.vision_enabled === "boolean" &&
+    (value.text_model === undefined || boundedText(value.text_model, 128)) &&
+    (value.warning === undefined || boundedText(value.warning, 512));
+}
+
+export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashboardSnapshot {
+  if (!record(raw) || raw.connected !== true || !validStatus(raw.status)) {
+    return { connected: false, last_error_kind: record(raw) ? errorKind(raw.last_error_kind) ?? "invalid_response" : "invalid_response" };
+  }
+  return {
+    connected: true,
+    status: raw.status,
+    ...(validMotivation(raw.motivation) ? { motivation: raw.motivation } : {}),
+    ...(validHistory(raw.history) ? { history: raw.history } : {}),
+    ...(validAchievements(raw.achievements) ? { achievements: raw.achievements } : {}),
+    ...(validMissions(raw.missions) ? { missions: raw.missions } : {}),
+    ...(validRewards(raw.rewards) ? { rewards: raw.rewards } : {}),
+    ...(validAI(raw.ai) ? { ai: raw.ai } : {}),
+  };
+}
+
+export class NativeSupervisorDashboardAdapter {
+  async poll(): Promise<SupervisorDashboardSnapshot> {
+    try {
+      return normalizeNativeDashboardSnapshot(await invoke<unknown>("supervisor_dashboard_snapshot"));
+    } catch (error) {
+      return { connected: false, last_error_kind: classifyNativeError(error) };
     }
   }
 }

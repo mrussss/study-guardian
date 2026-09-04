@@ -24,6 +24,9 @@ export interface QuickPanelProps {
   targetMinutes?: number;
   streakDays?: number;
   balanceAP?: number;
+  connected?: boolean;
+  motivationAvailable?: boolean;
+  notice?: string;
   onModeAction?: (mode: "STUDY" | "BREAK" | "OFF") => void;
   onOpenCenter?: () => void;
   onOpenSettings?: () => void;
@@ -48,18 +51,25 @@ export function QuickPanel({
   targetMinutes = 120,
   streakDays = 5,
   balanceAP = 12.43,
+  connected = true,
+  motivationAvailable = true,
+  notice,
   onModeAction,
   onOpenCenter,
   onOpenSettings,
 }: QuickPanelProps): ReactElement {
-  const [notice, setNotice] = useState("");
+  const [localNotice, setLocalNotice] = useState("");
   const copy = modeCopy[mode];
   const progress = clampProgress(targetMinutes > 0 ? focusMinutes / targetMinutes : 0);
 
   const action = (nextMode: "STUDY" | "BREAK" | "OFF", message: string): void => {
     onModeAction?.(nextMode);
-    setNotice(message);
+    setLocalNotice(message);
   };
+
+  const displayNotice = notice ?? localNotice;
+  const displayTarget = motivationAvailable && targetMinutes > 0 ? formatFocusMinutes(targetMinutes) : "—";
+  const displayFocus = motivationAvailable && targetMinutes > 0 ? formatFocusMinutes(focusMinutes) : "—";
 
   return (
     <section className="quick-panel" aria-label="StudyGuardian 快捷面板">
@@ -71,7 +81,7 @@ export function QuickPanel({
             <div className="brand-caption">本地专注陪伴</div>
           </div>
         </div>
-        <div className="health-chip"><ShieldCheck size={14} />正常</div>
+        <div className={`health-chip ${connected ? "" : "is-warning"}`}><ShieldCheck size={14} />{connected ? "正常" : "待连接"}</div>
       </header>
 
       <div className="quick-panel-content">
@@ -109,22 +119,22 @@ export function QuickPanel({
           <div className="section-heading-row">
             <div>
               <div className="eyebrow" id="focus-progress-title">今日有效专注</div>
-              <div className="progress-value">{formatFocusMinutes(focusMinutes)} <span>/ {formatFocusMinutes(targetMinutes)}</span></div>
-            </div>
-            <span className="progress-percent">{Math.round(progress * 100)}%</span>
+          <div className="progress-value">{displayFocus} <span>/ {displayTarget}</span></div>
           </div>
-          <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={targetMinutes} aria-valuenow={focusMinutes} aria-label="今日有效专注进度">
+            <span className="progress-percent">{motivationAvailable && targetMinutes > 0 ? `${Math.round(progress * 100)}%` : "—"}</span>
+          </div>
+          <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={targetMinutes || 1} aria-valuenow={motivationAvailable ? focusMinutes : 0} aria-label="今日有效专注进度">
             <span style={{ width: `${progress * 100}%` }} />
           </div>
-          <div className="progress-caption"><span>目标 {targetMinutes} 分钟</span><span>保持现在的节奏</span></div>
+          <div className="progress-caption"><span>{motivationAvailable && targetMinutes > 0 ? `目标 ${targetMinutes} 分钟` : "等待今日目标"}</span><span>{connected ? "保持现在的节奏" : "正在连接本地服务"}</span></div>
         </section>
 
         <div className="quick-metrics">
-          <div className="quick-metric"><span className="metric-icon metric-icon-warm"><Flame size={16} /></span><div><strong>{streakDays} 天</strong><span>连续专注</span></div></div>
-          <div className="quick-metric"><span className="metric-icon metric-icon-violet"><Sparkles size={16} /></span><div><strong>{balanceAP.toFixed(2)} AP</strong><span>当前余额</span></div></div>
+          <div className="quick-metric"><span className="metric-icon metric-icon-warm"><Flame size={16} /></span><div><strong>{motivationAvailable ? `${streakDays} 天` : "—"}</strong><span>连续专注</span></div></div>
+          <div className="quick-metric"><span className="metric-icon metric-icon-violet"><Sparkles size={16} /></span><div><strong>{motivationAvailable ? `${balanceAP.toFixed(2)} AP` : "—"}</strong><span>当前余额</span></div></div>
         </div>
 
-        {notice && <div className="quick-notice" role="status"><CheckCircle2 size={15} />{notice}</div>}
+        {displayNotice && <div className="quick-notice" role="status"><CheckCircle2 size={15} />{displayNotice}</div>}
       </div>
 
       <footer className="quick-panel-footer">
