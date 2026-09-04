@@ -2,6 +2,7 @@ import json
 import logging
 import urllib.request
 import urllib.error
+from datetime import date
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger("StudyPet.Client")
@@ -103,3 +104,11 @@ class SupervisorClient:
 
     def get_events(self, after_id: int = 0, limit: int = 20) -> Optional[list]:
         return self._make_request("GET", f"/v1/events?after_id={after_id}&limit={limit}")
+
+    def get_daily_review(self, review_date: str = "") -> Optional[Dict[str, Any]]:
+        review_date = review_date or date.today().isoformat()
+        return self._make_request("GET", f"/v1/review/daily?date={review_date}")
+
+    def generate_daily_review(self, review_date: str = "") -> Optional[Dict[str, Any]]:
+        review_date = review_date or date.today().isoformat()
+        return self._make_request("POST", "/v1/review/generate", {"date": review_date}, timeout=35.0)

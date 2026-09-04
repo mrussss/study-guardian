@@ -1,8 +1,9 @@
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QWidget, QTabWidget, QVBoxLayout, QLabel, QPushButton,
-    QListWidget, QListWidgetItem, QInputDialog,
+    QListWidget, QListWidgetItem, QInputDialog, QTextEdit,
 )
+import json
 
 from client import SupervisorClient
 
@@ -31,6 +32,8 @@ class StudyCenterWorker(QObject):
                     self.client.redeem_reward(*args)
                 elif kind == "target":
                     self.client.set_daily_target(*args)
+                elif kind == "review_generate":
+                    self.client.generate_daily_review(*args)
             result.update({
                 "status": self.client.get_motivation_status(),
                 "settings": self.client.get_motivation_settings(),
@@ -38,6 +41,7 @@ class StudyCenterWorker(QObject):
                 "missions": self.client.get_missions(),
                 "achievements": self.client.get_achievements(),
                 "rewards": self.client.get_rewards(),
+                "review": self.client.get_daily_review(),
             })
             if not result["status"]:
                 result["error"] = self.client.last_error or "Supervisor 暂时无法连接"
@@ -60,6 +64,8 @@ class StudyCenter(QWidget):
         self.missions = QListWidget()
         self.achievements = QListWidget()
         self.rewards = QListWidget()
+        self.review = QTextEdit()
+        self.review.setReadOnly(True)
         self.current_target = 120
         self._thread = None
         self._worker = None
@@ -100,6 +106,14 @@ class StudyCenter(QWidget):
         reward_page = QWidget()
         QVBoxLayout(reward_page).addWidget(self.rewards)
         self.tabs.addTab(reward_page, "奖励")
+
+        review_page = QWidget()
+        review_layout = QVBoxLayout(review_page)
+        review_layout.addWidget(self.review)
+        generate_button = QPushButton("生成 / 刷新今日复盘")
+        generate_button.clicked.connect(lambda: self.refresh(("review_generate", ())))
+        review_layout.addWidget(generate_button)
+        self.tabs.addTab(review_page, "学习复盘")
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -157,6 +171,43 @@ class StudyCenter(QWidget):
             item = QListWidgetItem(f"{reward.get('name')}  {reward.get('cost_milli_ap', 0)/1000:.3f} AP — 双击兑换")
             item.setData(Qt.ItemDataRole.UserRole, reward.get("id"))
             self.rewards.addItem(item)
+
+        self._apply_review(data.get("review"))
+
+    def _apply_review(self, record):
+        if not record:
+            self.review.setPlainText("今日暂无复盘记录。点击“生成 / 刷新今日复盘”开始。")
+            return
+        try:
+            document = json.loads(record.get("review_json") or "{}")
+        except (TypeError, ValueError):
+            self.review.setPlainText("复盘记录格式不可用。")
+            return
+        lines = [
+            f"{document.get('date', record.get('date', ''))}  ·  {record.get('generation_mode', 'UNKNOWN')}",
+            f"{document.get('headline', '今日学习复盘')}",
+            "",
+            "主题：",
+        ]
+        for topic in document.get("topics") or []:
+            refs = ", ".join(topic.get("evidence_refs") or [])
+            lines.append(f"- {topic.get('name', '')}：{topic.get('summary', '')}（证据：{refs}）")
+        lines.append("\n已完成：")
+        for item in document.get("accomplishments") or []:
+            lines.append(f"- {item.get('text', '')}（证据：{', '.join(item.get('evidence_refs') or [])}）")
+        if not document.get("accomplishments"):
+            lines.append("- 暂无足够证据证明完成")
+        lines.append("\n未完成 / 困难：")
+        for item in (document.get("unfinished") or []) + (document.get("difficulties") or []):
+            lines.append(f"- {item}")
+        lines.extend(["\n明日优先级：", document.get("tomorrow_priority", "")])
+        quality = document.get("evidence_quality")
+        if quality:
+            lines.extend(["", f"证据质量：{quality.get('score', 0):.0%}"])
+        warnings = document.get("warnings") or []
+        if warnings:
+            lines.extend(["警告：", *[f"- {warning}" for warning in warnings]])
+        self.review.setPlainText("\n".join(lines))
 
     def _clear_worker(self):
         self._thread = None

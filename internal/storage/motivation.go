@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -209,6 +210,40 @@ func (s *Storage) RecordUIEvent(ctx context.Context, eventType, message, metadat
 	}
 	id, err := res.LastInsertId()
 	return UIEvent{ID: id, EventType: eventType, Message: message, MetadataJSON: metadata, CreatedAt: now}, err
+}
+
+// RecordDailyReviewReady emits one event for a date/revision pair. The
+// INSERT..SELECT guard makes retries and duplicate callers idempotent without
+// relying on an in-memory cursor.
+func (s *Storage) RecordDailyReviewReady(ctx context.Context, date string, revision int, generationMode string, now time.Time) (UIEvent, bool, error) {
+	metadataBytes, err := json.Marshal(struct {
+		Date           string `json:"date"`
+		Revision       int    `json:"revision"`
+		GenerationMode string `json:"generation_mode"`
+	}{Date: date, Revision: revision, GenerationMode: generationMode})
+	if err != nil {
+		return UIEvent{}, false, err
+	}
+	metadata := string(metadataBytes)
+	result, err := s.db.ExecContext(ctx, `INSERT INTO ui_events(event_type,message,metadata_json,created_at)
+		SELECT ?,?,?,? WHERE NOT EXISTS (
+			SELECT 1 FROM ui_events WHERE event_type=? AND metadata_json=?
+		)`, "DAILY_REVIEW_READY", "每日学习复盘已生成", metadata, now, "DAILY_REVIEW_READY", metadata)
+	if err != nil {
+		return UIEvent{}, false, err
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return UIEvent{}, false, err
+	}
+	if inserted == 0 {
+		return UIEvent{}, false, nil
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return UIEvent{}, false, err
+	}
+	return UIEvent{ID: id, EventType: "DAILY_REVIEW_READY", Message: "每日学习复盘已生成", MetadataJSON: metadata, CreatedAt: now}, true, nil
 }
 
 func (s *Storage) ListUIEvents(ctx context.Context, afterID int64, limit int) ([]UIEvent, error) {
