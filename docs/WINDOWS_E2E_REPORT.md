@@ -19,7 +19,7 @@
 - Python: Windows Python 3.11; Sensor venv with `mss` and Pillow; Pet venv with PyQt6
 - ActivityWatch: 0.13.2 at `127.0.0.1:5600`
 - Displays: MSS reported virtual desktop plus one physical monitor (`monitor: 0`)
-- Git Commit: `cba4dfd` (`docs(tasks): record expanded activitywatch coverage`)
+- Git Commit: 当前 `HEAD`（每次复核以 `git log -n 1` 与 `origin/main` 重新核对）
 - Runtime: `D:\StudyGuardianDev`
 
 ## PASS
