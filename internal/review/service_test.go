@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,37 @@ func TestGenerateFallbackPersistsCanonicalReviewAndMarkdownAtomically(t *testing
 	record, err = service.GenerateFallback(context.Background(), "2026-09-03")
 	if err != nil || record.Revision != 2 {
 		t.Fatalf("second generation record=%+v err=%v", record, err)
+	}
+}
+
+func TestReviewMarkdownFailureCannotPublishReadyOrReadyEvent(t *testing.T) {
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	root := t.TempDir()
+	outputPath := filepath.Join(root, "output-file")
+	if err := os.WriteFile(outputPath, []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(store, time.UTC, outputPath)
+	if _, err := service.GenerateFallback(context.Background(), "2026-09-03"); err == nil {
+		t.Fatal("expected Markdown write failure")
+	}
+	record, err := store.LoadDailyReview(context.Background(), "2026-09-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != StatusPending {
+		t.Fatalf("failed write published status=%s, want PENDING", record.Status)
+	}
+	events, err := store.ListUIEvents(context.Background(), 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("failed write emitted ready event: %+v", events)
 	}
 }
 

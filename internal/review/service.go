@@ -215,16 +215,18 @@ func (s *Service) persistLocked(ctx context.Context, bundle evidence.DailyEviden
 	}
 	now := time.Now()
 	revision := 1
+	attemptCount := 1
 	if previous, loadErr := s.store.LoadDailyReview(ctx, bundle.Date); loadErr == nil {
 		revision = previous.Revision + 1
+		attemptCount = previous.AttemptCount + 1
 	}
 	markdown := RenderMarkdown(doc, bundle)
 	record := storage.DailyReviewRecord{
-		Date: bundle.Date, Status: StatusReady, GenerationMode: generationMode, Revision: revision,
+		Date: bundle.Date, Status: StatusPending, GenerationMode: generationMode, Revision: revision,
 		InputHash: inputHash, SchemaVersion: 1, PromptVersion: promptVersion,
 		Provider: providerName, Model: model,
-		ReviewJSON: string(reviewJSON), Markdown: markdown, AttemptCount: 1,
-		GeneratedAt: &now, UpdatedAt: now, ErrorCode: errorCode,
+		ReviewJSON: string(reviewJSON), Markdown: markdown, AttemptCount: attemptCount,
+		StartedAt: &now, UpdatedAt: now, ErrorCode: errorCode,
 	}
 	if err := s.store.SaveDailyReview(ctx, record); err != nil {
 		return storage.DailyReviewRecord{}, err
@@ -234,6 +236,11 @@ func (s *Service) persistLocked(ctx context.Context, bundle evidence.DailyEviden
 			return storage.DailyReviewRecord{}, err
 		}
 	}
+	if err := s.store.MarkDailyReviewReady(ctx, bundle.Date, revision, now, now, errorCode); err != nil {
+		return storage.DailyReviewRecord{}, err
+	}
+	record.Status = StatusReady
+	record.GeneratedAt = &now
 	if _, _, err := s.store.RecordDailyReviewReady(ctx, bundle.Date, record.Revision, generationMode, now); err != nil {
 		return storage.DailyReviewRecord{}, err
 	}

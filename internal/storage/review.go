@@ -122,4 +122,28 @@ func (s *Storage) MarkDailyReviewStale(ctx context.Context, date string, now tim
 	return err
 }
 
+// MarkDailyReviewReady publishes a review only after its Markdown artifact has
+// been written successfully. The revision/status predicate prevents a stale
+// or superseded generation from publishing over a newer pending attempt.
+func (s *Storage) MarkDailyReviewReady(ctx context.Context, date string, revision int, generatedAt, updatedAt time.Time, errorCode string) error {
+	if date == "" || revision <= 0 {
+		return errors.New("daily review date and positive revision are required")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE daily_reviews
+		SET status = 'READY', generated_at = ?, updated_at = ?, error_code = ?
+		WHERE date = ? AND revision = ? AND status = 'PENDING'`,
+		generatedAt, updatedAt, errorCode, date, revision)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return fmt.Errorf("daily review pending revision not found: %s/%d", date, revision)
+	}
+	return nil
+}
+
 func IsNotFound(err error) bool { return errors.Is(err, sql.ErrNoRows) }
