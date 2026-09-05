@@ -28,7 +28,7 @@
 - SHA-256: `469322f4a12430f6c4678390f5781c6327053f44ffc0a2e65261700e503e0af2`
 - runtime selection: `{"pet_runtime":"pyqt"}`
 - desktop shortcut: `C:\Users\Lenovo\Desktop\StudyGuardian.lnk`, created
-- actual autostart state: disabled; no Startup shortcut existed before or after deployment
+- actual autostart state: disabled; a real enable/state/disable cycle created exactly one valid Startup shortcut and restored the original absent state
 - preserved config evidence: `auth.token` and `config.yaml` hashes unchanged
 - database evidence: the existing database remained in place and grew from 5,713,920 to 5,726,208 bytes when the updated Supervisor ran migrations/health smoke
 - repeated desktop activation: one Supervisor, healthy ports 17321/17322, one logical PyQt Pet, one watchdog and one Tauri UI shell after the second launch
@@ -67,9 +67,9 @@ The Windows virtual environment launches PyQt through a small interpreter parent
 | No-AI review | PASS | automated immediate/debounce deterministic fallback tests |
 | Desktop shortcut cold launch | PASS | real process/port-level launch; visual focus pending |
 | Desktop shortcut repeat activation | PASS | real single-stack process result; visual focus pending |
-| Autostart install | NOT RUN | isolated shortcut test passed; actual user state intentionally remains disabled |
+| Autostart install | PASS | real Startup folder contained one valid background-launch shortcut after enable |
 | Autostart reboot/sign-in | NOT RUN | requires real sign-out or reboot |
-| Autostart disable | NOT RUN | actual Startup shortcut was already absent |
+| Autostart disable | PASS | real disable removed the shortcut and state query returned disabled |
 | Tauri production artifact | PASS | native Windows/MSVC release artifact built, hashed and deployed |
 | Tauri runtime cutover | PENDING USER GATE | default remains PyQt |
 | Legacy fallback | PASS | real deployed PyQt runtime started with modern UI shell |

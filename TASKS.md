@@ -166,7 +166,7 @@
 - [x] 117. OFF-state Review UX、immediate generate 与 debounce generate
 - [~] 118. Feature-pack Windows E2E（自动化与进程级启动通过；设置 UI 人工流程待验收）
 - [~] 119. Unified Windows Launcher 与 single-instance activation（进程级重复激活通过；窗口焦点待人工确认）
-- [~] 120. Windows autostart integration（安装/卸载测试通过；真实重启/登录 Gate 未运行）
+- [~] 120. Windows autostart integration（真实 Startup enable/state/disable 通过并恢复关闭；重启/登录 Gate 未运行）
 - [~] 121. Desktop shortcut integration（真实快捷方式和冷/重复启动通过；窗口焦点待人工确认）
 - [~] 122. Tauri v3 Windows production packaging/deploy/runtime selection（build/deploy PASS；cutover PENDING USER GATE）
 - [~] 123. Windows startup integration E2E（1 个逻辑 PyQt Pet、Supervisor、Sensor、watchdog 和 Tauri UI shell；reboot/sign-in 未运行）

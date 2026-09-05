@@ -97,7 +97,8 @@ fake display context、localhost fixture 和部署 smoke 不能替代下列项�
 
 2026-09-05 自动化/进程级证据：production EXE、部署、桌面冷启动和重复激活均成功；
 重复启动后为 1 个 Supervisor、1 个逻辑 PyQt Pet、1 个 Tauri UI shell、1 个
-watchdog。窗口视觉焦点、真实拖动/点击及重启登录仍必须人工验收。
+watchdog。真实 Startup 文件夹的 enable/state/disable 循环通过且最终恢复为关闭。
+窗口视觉焦点、真实拖动/点击及重启登录仍必须人工验收。
 
 ## 证据记录
 
