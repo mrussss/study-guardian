@@ -6,6 +6,7 @@ import { ControlCenter } from "./App";
 import { applyControlCenterRouteRequest, CONTROL_CENTER_ROUTE_EVENT, isControlCenterRoute, type ControlCenterRouteRequest } from "./route";
 import { NativeSupervisorDashboardAdapter, type SupervisorDashboardSnapshot } from "../transport/supervisor";
 import "../shared/theme/tokens.css";
+import "../shared/task-picker.css";
 import "./center.css";
 
 const root = document.querySelector<HTMLElement>("#control-center");

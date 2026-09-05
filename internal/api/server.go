@@ -69,6 +69,8 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/mode/break", s.withAuth(s.handleModeBreak))
 	mux.HandleFunc("/v1/mode/off", s.withAuth(s.handleModeOff))
 	mux.HandleFunc("/v1/task", s.withAuth(s.handleTask))
+	mux.HandleFunc("/v1/task-presets", s.withAuth(s.handleTaskPresets))
+	mux.HandleFunc("/v1/task-presets/", s.withAuth(s.handleTaskPresetAction))
 	mux.HandleFunc("/v1/feedback", s.withAuth(s.handleFeedback))
 	mux.HandleFunc("/v1/motivation/status", s.withAuth(s.handleMotivationStatus))
 	mux.HandleFunc("/v1/motivation/settings", s.withAuth(s.handleMotivationSettings))
@@ -232,6 +234,9 @@ func (s *Server) handleModeStudy(w http.ResponseWriter, r *http.Request) {
 	if s.reviewTrigger != nil {
 		s.reviewTrigger.OnModeChanged(string(state.UserModeStudy), time.Now())
 	}
+	if s.store != nil && strings.TrimSpace(req.Task) != "" {
+		_, _ = s.store.RecordTaskUse(r.Context(), req.Task, time.Now())
+	}
 
 	st := s.stateMgr.GetStatus()
 	w.Header().Set("Content-Type", "application/json")
@@ -301,6 +306,9 @@ func (s *Server) handleTask(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
+	}
+	if s.store != nil && strings.TrimSpace(req.Task) != "" {
+		_, _ = s.store.RecordTaskUse(r.Context(), req.Task, time.Now())
 	}
 
 	st := s.stateMgr.GetStatus()

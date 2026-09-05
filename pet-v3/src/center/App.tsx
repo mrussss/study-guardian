@@ -27,6 +27,7 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
 import { NativeSupervisorControlAdapter } from "../transport/supervisor";
+import { TaskPicker } from "../shared/TaskPicker";
 import type { NativeAchievement, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
@@ -120,6 +121,22 @@ function Dashboard({ snapshot, live = false }: DashboardProps): ReactElement {
   const modeCaption = currentMode === "STUDY" ? "把注意力放回当下，剩下的交给节奏。" : currentMode === "BREAK" ? "短暂离开屏幕，再回来继续。" : currentMode === "OFF" ? "今天已经收好，明天再从容开始。" : "给今天留下一点可见的进展。";
   const progressLabel = motivation ? `${Math.round(progress * 100)}%` : liveData ? "—" : "72%";
   const targetLabel = motivation ? `${targetMinutes} min` : liveData ? "—" : "120 min";
+  const [taskNotice, setTaskNotice] = useState("");
+  const control = new NativeSupervisorControlAdapter();
+  const taskOperation = async (operation: Promise<{ ok: boolean }>, success: string): Promise<boolean> => {
+    const result = await operation;
+    setTaskNotice(result.ok ? success : "当前任务暂时无法更新");
+    return result.ok;
+  };
+  const saveTask = async (name: string): Promise<boolean> => {
+    const created = await control.createTaskPreset(name, true);
+    if (!created.ok) { setTaskNotice("任务已存在或暂时无法保存"); return false; }
+    return taskOperation(control.setTask(name), "常用任务已保存并选中");
+  };
+  const modeAction = async (next: "STUDY" | "BREAK" | "OFF"): Promise<void> => {
+    const result = next === "STUDY" ? await control.setModeStudy(currentTask === "未设置任务" ? "" : currentTask) : next === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
+    setTaskNotice(result.ok ? "状态已更新" : "状态暂时无法更新");
+  };
   return <div className="dashboard-page">
     <div className="page-heading">
       <div><p className="heading-kicker">{liveData ? "今天" : "2026 年 9 月 4 日 · 星期五"}</p><h1>{liveData ? "今天，保持一点进展就够了" : "今天，保持一点进展就够了"}</h1><p className="heading-subtitle">{modeCaption}</p></div>
@@ -131,8 +148,15 @@ function Dashboard({ snapshot, live = false }: DashboardProps): ReactElement {
         <div className="hero-topline"><span className="hero-kicker"><span className="live-dot" />当前状态</span><span className="hero-health"><ShieldCheck size={15} />{healthLabel}</span></div>
         <h2 id="current-focus-title">{modeTitle[currentMode]}</h2>
         <p className="hero-task"><BookOpen size={17} />{currentTask}</p>
+        <TaskPicker currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData} onSelect={id => taskOperation(control.selectTaskPreset(id), "当前任务已更新")} onTemporary={name => taskOperation(control.setTask(name), "当前任务已更新")} onSavePinned={saveTask} />
+        {taskNotice && <span className="hero-notice" role="status">{taskNotice}</span>}
         <p className="hero-caption">{liveData ? (status?.user_mode === "STUDY" ? `已保持专注 ${formatFocusMinutes(Math.floor(status.study_seconds / 60))}，继续完成眼前这一小段。` : modeCaption) : "已保持专注 42 分钟，继续完成眼前这一小段。"}</p>
-        <div className="hero-actions"><button className="primary-button" type="button"><CoffeeIcon />休息一下</button><button className="secondary-button" type="button">结束学习</button></div>
+        <div className="hero-actions">
+          {currentMode === "STUDY" && <><button className="primary-button" type="button" onClick={() => void modeAction("BREAK")}><CoffeeIcon />休息一下</button><button className="secondary-button" type="button" onClick={() => void modeAction("OFF")}>结束学习</button></>}
+          {currentMode === "BREAK" && <><button className="primary-button" type="button" onClick={() => void modeAction("STUDY")}><Play size={17} />继续学习</button><button className="secondary-button" type="button" onClick={() => void modeAction("OFF")}>结束今天</button></>}
+          {currentMode === "STANDBY" && <button className="primary-button" type="button" onClick={() => void modeAction("STUDY")}><Play size={17} />开始学习</button>}
+          {currentMode === "OFF" && <><button className="primary-button" type="button"><BookOpen size={17} />查看今日复盘</button><button className="secondary-button" type="button" onClick={() => void modeAction("STUDY")}>重新开始学习</button></>}
+        </div>
       </div>
       <div className="hero-progress" aria-label={motivation ? `今日目标 ${progressLabel}` : "今日目标等待数据"}>
         <div className="progress-ring" style={{ background: `conic-gradient(var(--sg-accent) ${progress * 360}deg, var(--sg-accent-soft) 0)` }}><div><strong>{progressLabel}</strong><span>今日目标</span></div></div>

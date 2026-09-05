@@ -98,6 +98,20 @@ export interface NativeMotivationStatus {
   last_event?: { id: number; type: string; message: string; created_at: string };
 }
 
+export interface NativeTaskPreset {
+  id: string;
+  name: string;
+  pinned: boolean;
+  sort_order: number;
+  use_count: number;
+  last_used_at?: string;
+}
+
+export interface NativeTaskPresetList {
+  pinned: NativeTaskPreset[];
+  recent: NativeTaskPreset[];
+}
+
 export interface NativeHistoryDay {
   date: string;
   focus_minutes: number;
@@ -161,6 +175,7 @@ export interface SupervisorDashboardSnapshot {
   connected: boolean;
   status?: NativeSupervisorStatus;
   motivation?: NativeMotivationStatus;
+  task_presets?: NativeTaskPresetList;
   history?: NativeHistoryDay[];
   achievements?: NativeAchievement[];
   missions?: NativeMission[];
@@ -210,6 +225,14 @@ function validMotivation(value: unknown): value is NativeMotivationStatus {
     nonNegativeInteger(value.streak_days) &&
     (lastEvent === undefined || (record(lastEvent) && nonNegativeInteger(lastEvent.id) &&
       boundedText(lastEvent.type, 64) && boundedText(lastEvent.message, 512) && boundedText(lastEvent.created_at, 128)));
+}
+
+function validTaskPresets(value: unknown): value is NativeTaskPresetList {
+  if (!record(value) || !Array.isArray(value.pinned) || !Array.isArray(value.recent) || value.pinned.length > 8 || value.recent.length > 6) return false;
+  const valid = (row: unknown): row is NativeTaskPreset => record(row) && boundedText(row.id, 128) && boundedText(row.name, 256) &&
+    typeof row.pinned === "boolean" && Number.isSafeInteger(row.sort_order) && nonNegativeInteger(row.use_count) &&
+    (row.last_used_at === undefined || row.last_used_at === null || boundedText(row.last_used_at, 128));
+  return value.pinned.every(valid) && value.recent.every(valid);
 }
 
 function validHistory(value: unknown): value is NativeHistoryDay[] {
@@ -288,6 +311,7 @@ export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashbo
     connected: true,
     status: raw.status,
     ...(validMotivation(raw.motivation) ? { motivation: raw.motivation } : {}),
+    ...(validTaskPresets(raw.task_presets) ? { task_presets: raw.task_presets } : {}),
     ...(validHistory(raw.history) ? { history: raw.history } : {}),
     ...(validAchievements(raw.achievements) ? { achievements: raw.achievements } : {}),
     ...(validMissions(raw.missions) ? { missions: raw.missions } : {}),
@@ -339,6 +363,11 @@ export interface SupervisorControlAdapter {
   setModeStudy(task: string): Promise<ControlResult>;
   setModeBreak(): Promise<ControlResult>;
   setModeOff(): Promise<ControlResult>;
+  setTask(task: string): Promise<ControlResult>;
+  createTaskPreset(name: string, pinned: boolean): Promise<ControlResult>;
+  selectTaskPreset(id: string): Promise<ControlResult>;
+  updateTaskPreset(id: string, name: string, pinned: boolean, sortOrder: number): Promise<ControlResult>;
+  deleteTaskPreset(id: string): Promise<ControlResult>;
   setDailyTarget(minutes: number): Promise<ControlResult>;
 }
 
@@ -355,6 +384,26 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
     return this.call("OFF");
   }
 
+  setTask(task: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_set_task", { task });
+  }
+
+  createTaskPreset(name: string, pinned: boolean): Promise<ControlResult> {
+    return this.invokeControl("supervisor_create_task_preset", { name, pinned });
+  }
+
+  selectTaskPreset(id: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_select_task_preset", { id });
+  }
+
+  updateTaskPreset(id: string, name: string, pinned: boolean, sortOrder: number): Promise<ControlResult> {
+    return this.invokeControl("supervisor_update_task_preset", { id, name, pinned, sortOrder });
+  }
+
+  deleteTaskPreset(id: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_delete_task_preset", { id });
+  }
+
   setDailyTarget(minutes: number): Promise<ControlResult> {
     if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
       return Promise.resolve({ ok: false, error_kind: "rejected" });
@@ -367,6 +416,14 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
       return normalizeControlResult(await invoke<unknown>("supervisor_set_mode", { mode, task: task ?? null }));
     } catch (error) {
       // Native errors are normalized before they cross into UI state.
+      return { ok: false, error_kind: classifyControlError(error) };
+    }
+  }
+
+  private async invokeControl(command: string, args: Record<string, unknown>): Promise<ControlResult> {
+    try {
+      return normalizeControlResult(await invoke<unknown>(command, args));
+    } catch (error) {
       return { ok: false, error_kind: classifyControlError(error) };
     }
   }

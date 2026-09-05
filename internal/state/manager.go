@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -292,6 +293,12 @@ func (m *Manager) SetModeOff() error {
 func (m *Manager) SetTask(task string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	task = strings.Join(strings.Fields(task), " ")
+	if m.storage != nil && m.currentSessID != "" {
+		if err := m.storage.UpdateOpenSessionTask(context.Background(), m.currentSessID, task); err != nil {
+			return fmt.Errorf("persist current task: %w", err)
+		}
+	}
 	m.task = task
 	return nil
 }

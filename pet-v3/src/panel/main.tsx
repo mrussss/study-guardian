@@ -5,6 +5,7 @@ import { QuickPanel, type QuickPanelMode } from "./QuickPanel";
 import { NativeSupervisorControlAdapter, NativeSupervisorDashboardAdapter, type SupervisorDashboardSnapshot } from "../transport/supervisor";
 import type { ControlCenterRoute } from "../center/route";
 import "../shared/theme/tokens.css";
+import "../shared/task-picker.css";
 import "./panel.css";
 
 const root = document.querySelector<HTMLElement>("#quick-panel");
@@ -72,6 +73,13 @@ function RuntimeQuickPanel(): ReactElement {
   const motivationAvailable = Boolean(motivation);
   const control = new NativeSupervisorControlAdapter();
 
+  const handleTaskResult = async (operation: Promise<{ ok: boolean; error_kind?: string }>, success: string): Promise<boolean> => {
+    setNotice("正在更新任务…");
+    const result = await operation;
+    setNotice(result.ok ? success : controlNotice(result.error_kind));
+    return result.ok;
+  };
+
   const handleModeAction = async (nextMode: "STUDY" | "BREAK" | "OFF"): Promise<void> => {
     if (!connected) {
       setNotice("本地服务尚未连接，请稍后再试");
@@ -95,6 +103,15 @@ function RuntimeQuickPanel(): ReactElement {
     connected={connected}
     motivationAvailable={motivationAvailable}
     notice={notice}
+    taskPresets={snapshot?.task_presets}
+    onSelectTask={id => handleTaskResult(control.selectTaskPreset(id), "当前任务已更新")}
+    onTemporaryTask={name => handleTaskResult(control.setTask(name), "当前任务已更新")}
+    onSaveTask={name => handleTaskResult(control.createTaskPreset(name, true).then(async result => {
+      if (!result.ok) return result;
+      const latest = await new NativeSupervisorDashboardAdapter().poll();
+      const created = latest.task_presets?.pinned.find(item => item.name.toLocaleLowerCase() === name.trim().replace(/\s+/g, " ").toLocaleLowerCase());
+      return created ? control.selectTaskPreset(created.id) : control.setTask(name);
+    }), "常用任务已保存并选中")}
     onModeAction={handleModeAction}
     onOpenCenter={() => openControlCenter("overview")}
     onOpenSettings={() => openControlCenter("settings")}

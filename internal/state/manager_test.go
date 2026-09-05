@@ -249,3 +249,39 @@ func TestBreakReminderUsesCurrentBreakSessionDuration(t *testing.T) {
 		t.Fatalf("expected current BREAK duration 5, got %d", reminders.last.BreakSeconds)
 	}
 }
+
+func TestSetTaskPersistsIntoOpenSessionAndRestartRecovery(t *testing.T) {
+	now := time.Date(2026, 9, 5, 9, 0, 0, 0, time.Local)
+	dbPath := t.TempDir() + "/studyguardian.db"
+	cfg := config.DefaultConfig()
+	clock := NewFakeClock(now)
+	store1, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr1 := NewPersistentManager(clock, cfg, store1, mockRuleClassifier{}, mockPrivacyEvaluator{}, nil)
+	if err := mgr1.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr1.SetTask("  算法   练习  "); err != nil {
+		t.Fatal(err)
+	}
+	open, err := store1.LoadOpenSession(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if open.Task != "算法 练习" {
+		t.Fatalf("open session task=%q", open.Task)
+	}
+	_ = store1.Close() // process-kill simulation: preserve the open row
+
+	store2, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+	mgr2 := NewPersistentManager(clock, cfg, store2, mockRuleClassifier{}, mockPrivacyEvaluator{}, nil)
+	if got := mgr2.GetStatus().Task; got != "算法 练习" {
+		t.Fatalf("recovered task=%q, want 算法 练习", got)
+	}
+}

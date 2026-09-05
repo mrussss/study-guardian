@@ -315,6 +315,18 @@ func (s *Storage) migrate() error {
 			updated_at TIMESTAMP NOT NULL,
 			error_code TEXT NOT NULL DEFAULT ''
 		);`,
+		`CREATE TABLE IF NOT EXISTS task_presets (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			name_key TEXT NOT NULL,
+			pinned INTEGER NOT NULL DEFAULT 0,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			use_count INTEGER NOT NULL DEFAULT 0,
+			last_used_at TIMESTAMP,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_presets_name_key ON task_presets(name_key);`,
 		`INSERT OR IGNORE INTO reward_catalog (id, name, type, cost_milli_ap, description, enabled) VALUES
 			('game-15', '游戏 15 分钟', 'TIME', 250, '给自己一个短暂的游戏奖励', 1),
 			('game-30', '游戏 30 分钟', 'TIME', 500, '给自己一个半小时奖励', 1),
@@ -344,6 +356,21 @@ func (s *Storage) SaveSession(ctx context.Context, session SessionRecord) error 
 			end_reason = excluded.end_reason;`
 	_, err := s.db.ExecContext(ctx, query, session.ID, session.Mode, session.Task, session.StartedAt, session.EndedAt, session.DurationSeconds, session.EndReason)
 	return err
+}
+
+func (s *Storage) UpdateOpenSessionTask(ctx context.Context, sessionID, task string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE sessions SET task = ? WHERE id = ? AND ended_at IS NULL`, task, sessionID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("open session not found")
+	}
+	return nil
 }
 
 func (s *Storage) RecordObservation(ctx context.Context, obs ObservationRecord) error {

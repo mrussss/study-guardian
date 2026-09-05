@@ -1,0 +1,21 @@
+.task-picker { display: grid; gap: 10px; width: 100%; padding: 14px; color: var(--sg-text); background: var(--sg-surface-muted); border: 1px solid var(--sg-border); border-radius: var(--sg-radius-card); }
+.task-picker-current, .task-picker-group { display: grid; gap: 6px; }
+.task-picker-current > span, .task-picker-group > span { color: var(--sg-text-tertiary); font-size: 11px; font-weight: 650; letter-spacing: .03em; }
+.task-picker-current strong { min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+.task-chip-row { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.task-chip-row em { color: var(--sg-text-tertiary); font-size: 12px; font-style: normal; }
+.task-chip { min-height: 29px; padding: 0 10px; color: var(--sg-text-secondary); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 999px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.task-chip:hover, .task-chip.is-active { color: var(--sg-accent); border-color: color-mix(in srgb, var(--sg-accent) 45%, var(--sg-border)); background: var(--sg-accent-soft); }
+.task-chip:disabled { cursor: default; opacity: .55; }
+.task-chip-add { display: grid; width: 29px; padding: 0; place-items: center; }
+.task-create-row { display: grid; grid-template-columns: minmax(100px, 1fr) auto auto; gap: 7px; }
+.task-create-row input { min-width: 0; height: 34px; padding: 0 10px; color: var(--sg-text); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 8px; outline: none; }
+.task-create-row input:focus { border-color: var(--sg-accent); }
+.task-create-row button { padding: 0 10px; color: var(--sg-text-secondary); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 650; }
+.task-create-row button.is-primary { color: #fff; background: var(--sg-accent); border-color: var(--sg-accent); }
+.task-create-row button:disabled { cursor: default; opacity: .5; }
+.task-picker.is-compact { padding: 11px; gap: 8px; }
+.task-picker.is-compact .task-picker-current { grid-template-columns: auto minmax(0, 1fr); align-items: baseline; }
+.task-picker.is-compact .task-picker-current strong { text-align: right; }
+.task-picker.is-compact .task-create-row { grid-template-columns: 1fr 1fr; }
+.task-picker.is-compact .task-create-row input { grid-column: 1 / -1; }

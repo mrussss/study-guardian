@@ -50,6 +50,7 @@ const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 const SUPERVISOR_GET_PATHS: &[&str] = &[
     "/v1/activity/current",
     "/v1/status",
+    "/v1/task-presets",
     "/v1/motivation/status",
     "/v1/motivation/settings",
     "/v1/motivation/history?days=7",
@@ -120,6 +121,8 @@ struct SupervisorDashboardSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     motivation: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    task_presets: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     history: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     achievements: Option<Value>,
@@ -149,6 +152,7 @@ fn disconnected_dashboard(kind: NativeErrorKind) -> SupervisorDashboardSnapshot 
         connected: false,
         status: None,
         motivation: None,
+        task_presets: None,
         history: None,
         achievements: None,
         missions: None,
@@ -543,6 +547,46 @@ fn post_supervisor_mode(host: &str, port: u16, token: &str, request: &ModeReques
         .map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
+fn task_preset_path_allowed(path: &str) -> bool {
+    if path == "/v1/task" || path == "/v1/task-presets" { return true; }
+    let Some(rest) = path.strip_prefix("/v1/task-presets/") else { return false; };
+    let mut parts = rest.split('/');
+    let Some(id) = parts.next() else { return false; };
+    if id.is_empty() || id.len() > 128 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') { return false; }
+    match (parts.next(), parts.next()) {
+        (None, None) | (Some("select"), None) => true,
+        _ => false,
+    }
+}
+
+fn task_supervisor_request(host: &str, port: u16, token: &str, method: &str, path: &str, body: &[u8]) -> Result<Value, NativeErrorKind> {
+    if !["POST", "PUT", "DELETE"].contains(&method) || !task_preset_path_allowed(path) || host.contains(['\r', '\n']) {
+        return Err(NativeErrorKind::Rejected);
+    }
+    if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
+    let address = loopback_address(host, port)?;
+    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).map_err(|error| map_io_error(&error))?;
+    stream.set_read_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
+    stream.set_write_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
+    let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+    stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body)).map_err(|error| map_io_error(&error))?;
+    stream.flush().map_err(|error| map_io_error(&error))?;
+    let mut response = Vec::with_capacity(4096);
+    let mut chunk = [0_u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) if response.len() + read <= MAX_RESPONSE_BYTES => response.extend_from_slice(&chunk[..read]),
+            Ok(_) => return Err(NativeErrorKind::InvalidResponse),
+            Err(error) => return Err(map_io_error(&error)),
+        }
+    }
+    let (body_start, status) = response_parts(&response)?;
+    classify_control_status(status)?;
+    if status == 204 { return Ok(json!({})); }
+    serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
+}
+
 fn put_daily_target(host: &str, port: u16, token: &str, minutes: i64) -> Result<Value, NativeErrorKind> {
     let body = build_daily_target_body(minutes)?;
     if host.contains('\r') || host.contains('\n') {
@@ -791,6 +835,28 @@ fn sanitize_rewards(value: &Value) -> Result<Value, NativeErrorKind> {
     Ok(Value::Array(output))
 }
 
+fn sanitize_task_preset_list(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let sanitize_rows = |key: &str, max: usize| -> Result<Value, NativeErrorKind> {
+        let rows = object.get(key).and_then(Value::as_array).ok_or(NativeErrorKind::InvalidResponse)?;
+        if rows.len() > max { return Err(NativeErrorKind::InvalidResponse); }
+        let mut output = Vec::with_capacity(rows.len());
+        for row in rows {
+            let item = row.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+            output.push(json!({
+                "id": text_field(item, "id", 128)?,
+                "name": text_field(item, "name", 256)?,
+                "pinned": bool_field(item, "pinned")?,
+                "sort_order": item.get("sort_order").and_then(Value::as_i64).ok_or(NativeErrorKind::InvalidResponse)?,
+                "use_count": non_negative_i64_field(item, "use_count")?,
+                "last_used_at": optional_text_field(item, "last_used_at", 128)?,
+            }));
+        }
+        Ok(Value::Array(output))
+    };
+    Ok(json!({ "pinned": sanitize_rows("pinned", 8)?, "recent": sanitize_rows("recent", 6)? }))
+}
+
 fn sanitize_ai(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let mut output = json!({
@@ -991,6 +1057,9 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
     let motivation = fetch_supervisor_get(&host, port, &token, "/v1/motivation/status")
         .ok()
         .and_then(|value| sanitize_motivation(&value).ok());
+    let task_presets = fetch_supervisor_get(&host, port, &token, "/v1/task-presets")
+        .ok()
+        .and_then(|value| sanitize_task_preset_list(&value).ok());
     let history = fetch_supervisor_get(&host, port, &token, "/v1/motivation/history?days=7")
         .ok()
         .and_then(|value| sanitize_history(&value).ok());
@@ -1013,6 +1082,7 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
         connected: true,
         status: Some(status),
         motivation,
+        task_presets,
         history,
         achievements,
         missions,
@@ -1043,6 +1113,62 @@ fn supervisor_set_mode_blocking(mode: String, task: Option<String>) -> Superviso
         Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
         Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
     }
+}
+
+fn task_control_result(method: &str, path: String, body: Value) -> SupervisorControlResult {
+    let body = match serde_json::to_vec(&body) {
+        Ok(value) => value,
+        Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") },
+    };
+    let (host, port, token) = match supervisor_credentials() {
+        Ok(credentials) => credentials,
+        Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+    };
+    match task_supervisor_request(&host, port, &token, method, &path, &body) {
+        Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
+        Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+    }
+}
+
+fn bounded_task_name(name: &str) -> bool {
+    let count = name.trim().chars().count();
+    (1..=64).contains(&count)
+}
+
+#[tauri::command]
+async fn supervisor_set_task(task: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !bounded_task_name(&task) { return SupervisorControlResult { ok: false, error_kind: Some("rejected") }; }
+        task_control_result("POST", "/v1/task".to_string(), json!({ "task": task }))
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_create_task_preset(name: String, pinned: bool) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !bounded_task_name(&name) { return SupervisorControlResult { ok: false, error_kind: Some("rejected") }; }
+        task_control_result("POST", "/v1/task-presets".to_string(), json!({ "name": name, "pinned": pinned, "sort_order": 0 }))
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_select_task_preset(id: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || task_control_result("POST", format!("/v1/task-presets/{id}/select"), json!({})))
+        .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_update_task_preset(id: String, name: String, pinned: bool, sort_order: i64) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !bounded_task_name(&name) { return SupervisorControlResult { ok: false, error_kind: Some("rejected") }; }
+        task_control_result("PUT", format!("/v1/task-presets/{id}"), json!({ "name": name, "pinned": pinned, "sort_order": sort_order }))
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_delete_task_preset(id: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || task_control_result("DELETE", format!("/v1/task-presets/{id}"), json!({})))
+        .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
 }
 
 #[tauri::command]
@@ -1231,6 +1357,11 @@ pub fn run() {
             supervisor_snapshot,
             supervisor_dashboard_snapshot,
             supervisor_set_mode,
+            supervisor_set_task,
+            supervisor_create_task_preset,
+            supervisor_select_task_preset,
+            supervisor_update_task_preset,
+            supervisor_delete_task_preset,
             supervisor_set_daily_target,
             open_quick_panel,
             hide_quick_panel,
