@@ -2,6 +2,8 @@
 
 WSL `~/projects/study-guardian` 是源码真源，`D:\StudyGuardianDev` 是可替换的 Windows 运行目录。构建使用 `scripts/build-windows.sh`，其中 Windows PowerShell helper 在本机 Rust/MSVC 环境生成 `dist/windows/pet-v3/StudyGuardian.exe`。部署脚本带 staging、备份、健康烟测和失败回滚；`config`、`data`、`logs`、`run`、`handoff`、`pet/.venv` 与 `sensor/.venv` 不属于替换集合。
 
+Pet v3 日常开发使用 `scripts/pet-v3.sh`。Windows staging、npm 缓存、Cargo target 和候选产物固定保存在 `D:\StudyGuardianBuild`，避免在 C 盘临时目录重复执行全新构建。`candidate` 只构建、部署和核验 Tauri Pet；Supervisor、Sensor 与持久数据保持运行。完整产品发布仍使用 `scripts/build-windows.sh` 和 `scripts/deploy-windows.sh`。
+
 ## 稳定 Launcher
 
 桌面和 Startup 快捷方式都调用：

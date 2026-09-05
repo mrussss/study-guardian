@@ -10,6 +10,19 @@ Tauri 2 / React / TypeScript 桌面 UI：Pet、Quick Panel、Control Center 三�
 
 ## 构建与验证
 
+日常开发从 WSL 仓库使用统一入口：
+
+```sh
+../scripts/pet-v3.sh dev          # Vite 热更新，不构建或替换 exe
+../scripts/pet-v3.sh check        # 前端测试、类型检查、Vite 构建、diff 检查
+../scripts/pet-v3.sh native       # 复用 D 盘缓存构建 Windows debug exe
+../scripts/pet-v3.sh candidate    # 检查、Rust 测试、Pet 专用部署与哈希核验
+../scripts/pet-v3.sh build        # 生成经过测试的 Windows release Pet 产物
+../scripts/pet-v3.sh verify       # 核对 debug 产物与当前运行 exe
+```
+
+Windows 原生构建固定使用 `D:\StudyGuardianBuild`，复用 staging、`node_modules`、npm 下载缓存和 debug/release Cargo target。`D:\StudyGuardianDev` 只作为运行目录。Pet 专用部署只停止并替换 `pet-v3\StudyGuardian.exe`，不会停止 Supervisor 或 Sensor。
+
 ```sh
 npm ci
 npm test

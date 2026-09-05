@@ -63,10 +63,17 @@ if [ ! -x "${POWERSHELL_BIN}" ]; then
     echo "Windows PowerShell is required for the native Tauri build." >&2
     exit 1
 fi
+PET_GIT_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+if [ -n "$(git -C "${REPO_ROOT}" status --porcelain)" ]; then PET_GIT_DIRTY=true; else PET_GIT_DIRTY=false; fi
 "${POWERSHELL_BIN}" -NoProfile -ExecutionPolicy Bypass -File \
     "$(wslpath -w "${REPO_ROOT}/scripts/build-pet-v3-windows.ps1")" \
     -RepoRoot "$(wslpath -w "${REPO_ROOT}")" \
-    -OutputPath "$(wslpath -w "${REPO_ROOT}/dist/windows/pet-v3/StudyGuardian.exe")"
+    -OutputPath "$(wslpath -w "${REPO_ROOT}/dist/windows/pet-v3/StudyGuardian.exe")" \
+    -Configuration Release \
+    -RunFrontendTests \
+    -RunRustTests \
+    -GitCommit "${PET_GIT_COMMIT}" \
+    -GitDirty "${PET_GIT_DIRTY}"
 test -s "${REPO_ROOT}/dist/windows/pet-v3/StudyGuardian.exe"
 
 echo "=== [6/7] Copying Windows helper scripts ==="
