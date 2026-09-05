@@ -28,16 +28,17 @@ type StateManager interface {
 }
 
 type Server struct {
-	cfg           *config.Config
-	stateMgr      StateManager
-	httpServer    *http.Server
-	mu            sync.RWMutex
-	motivation    MotivationManager
-	aiStatus      func() interface{}
-	store         *storage.Storage
-	review        *review.Service
-	reviewTrigger *review.ReviewTrigger
-	semantic      *semantic.Service
+	cfg              *config.Config
+	stateMgr         StateManager
+	httpServer       *http.Server
+	mu               sync.RWMutex
+	motivation       MotivationManager
+	aiStatus         func() interface{}
+	store            *storage.Storage
+	review           *review.Service
+	reviewTrigger    *review.ReviewTrigger
+	semantic         *semantic.Service
+	reminderSettings ReminderSettingsManager
 }
 
 type MotivationManager interface {
@@ -71,6 +72,7 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/task", s.withAuth(s.handleTask))
 	mux.HandleFunc("/v1/task-presets", s.withAuth(s.handleTaskPresets))
 	mux.HandleFunc("/v1/task-presets/", s.withAuth(s.handleTaskPresetAction))
+	mux.HandleFunc("/v1/settings/reminder", s.withAuth(s.handleReminderSettings))
 	mux.HandleFunc("/v1/feedback", s.withAuth(s.handleFeedback))
 	mux.HandleFunc("/v1/motivation/status", s.withAuth(s.handleMotivationStatus))
 	mux.HandleFunc("/v1/motivation/settings", s.withAuth(s.handleMotivationSettings))

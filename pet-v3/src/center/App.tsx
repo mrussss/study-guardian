@@ -16,11 +16,13 @@ import {
   LayoutDashboard,
   ListChecks,
   MoreHorizontal,
+  Plus,
   Play,
   Settings2,
   ShieldCheck,
   Sparkles,
   Target,
+  Trash2,
   Trophy,
   WalletCards,
 } from "lucide-react";
@@ -246,22 +248,38 @@ function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): R
 
 function SettingsPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
   const [targetInput, setTargetInput] = useState("");
+  const [quietDraft, setQuietDraft] = useState<Array<{ start: string; end: string }>>();
   const [notice, setNotice] = useState("");
   const currentTarget = snapshot?.motivation?.daily_target_minutes;
   const inputValue = targetInput !== "" ? targetInput : currentTarget?.toString() ?? "";
-  const save = async (): Promise<void> => {
+  const quietPeriods = quietDraft ?? snapshot?.reminder_settings?.quiet_periods ?? [
+    { start: "12:00", end: "14:00" }, { start: "17:30", end: "19:00" }, { start: "21:00", end: "24:00" },
+  ];
+  const control = new NativeSupervisorControlAdapter();
+  const saveTarget = async (): Promise<void> => {
     const minutes = Number(inputValue);
-    if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
-      setNotice("请输入 1–1440 分钟");
-      return;
-    }
-    const result = await new NativeSupervisorControlAdapter().setDailyTarget(minutes);
+    if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) { setNotice("请输入 1–1440 分钟"); return; }
+    const result = await control.setDailyTarget(minutes);
     setNotice(result.ok ? "每日目标已保存" : "每日目标暂时无法保存");
     if (result.ok) setTargetInput("");
   };
-  return <DataPage title="设置" description="设置保存在本机；token 和 AI secret 只在 native 端读取。"><section className="surface-section data-card settings-card"><div className="section-header"><div><h2>每日专注目标</h2><p>目标会写入 canonical motivation storage</p></div><Settings2 className="section-icon" size={20} /></div><label className="setting-field"><span>目标分钟数</span><input type="number" min={1} max={1440} value={inputValue} onChange={event => setTargetInput(event.target.value)} /><small>范围 1–1440 分钟</small></label><div className="setting-actions"><button className="primary-button" type="button" onClick={() => void save()}>保存设置</button>{notice && <span role="status">{notice}</span>}</div></section></DataPage>;
+  const saveQuiet = async (): Promise<void> => {
+    const validClock = (value: string, end: boolean): boolean => /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value) || (end && value === "24:00");
+    if (quietPeriods.some(period => !validClock(period.start, false) || !validClock(period.end, true))) { setNotice("时间格式应为 HH:MM；24:00 只能作为结束时间"); return; }
+    const result = await control.setReminderSettings(snapshot?.reminder_settings?.cooldown_minutes ?? 10, quietPeriods);
+    setNotice(result.ok ? "免打扰时段已保存并立即生效" : "时段重叠、顺序无效或暂时无法保存");
+    if (result.ok) setQuietDraft(undefined);
+  };
+  const updateQuiet = (index: number, key: "start" | "end", value: string): void => setQuietDraft(quietPeriods.map((period, itemIndex) => itemIndex === index ? { ...period, [key]: value } : period));
+  return <DataPage title="设置" description="设置保存在本机；token 和 AI secret 只在 native 端读取。"><div className="settings-stack">
+    <section className="surface-section data-card settings-card"><div className="section-header"><div><h2>每日专注目标</h2><p>目标会写入 canonical motivation storage</p></div><Settings2 className="section-icon" size={20} /></div><label className="setting-field"><span>目标分钟数</span><input type="number" min={1} max={1440} value={inputValue} onChange={event => setTargetInput(event.target.value)} /><small>范围 1–1440 分钟</small></label><div className="setting-actions"><button className="primary-button" type="button" onClick={() => void saveTarget()}>保存目标</button></div></section>
+    <section className="surface-section data-card settings-card"><div className="section-header"><div><h2>免打扰时段</h2><p>这些时段继续记录学习状态，但不主动弹出提醒。</p></div><ShieldCheck className="section-icon" size={20} /></div>
+      <div className="quiet-period-list">{quietPeriods.map((period, index) => <div className="quiet-period-row" key={`${index}-${period.start}-${period.end}`}><input aria-label={`时段 ${index + 1} 开始`} inputMode="numeric" maxLength={5} value={period.start} onChange={event => updateQuiet(index, "start", event.target.value)} /><span>—</span><input aria-label={`时段 ${index + 1} 结束`} inputMode="numeric" maxLength={5} value={period.end} onChange={event => updateQuiet(index, "end", event.target.value)} /><button className="icon-button" type="button" aria-label={`删除时段 ${index + 1}`} onClick={() => setQuietDraft(quietPeriods.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16} /></button></div>)}</div>
+      <div className="setting-actions"><button className="secondary-button" type="button" disabled={quietPeriods.length >= 12} onClick={() => setQuietDraft([...quietPeriods, { start: "09:00", end: "10:00" }])}><Plus size={16} />添加时段</button><button className="primary-button" type="button" onClick={() => void saveQuiet()}>保存免打扰</button></div>
+    </section>
+    {notice && <span className="settings-notice" role="status">{notice}</span>}
+  </div></DataPage>;
 }
-
 function ComingSoon({ title }: { title: string }): ReactElement {
   return <div className="coming-page"><div className="coming-icon"><Sparkles size={24} /></div><h1>{title}</h1><p>这个入口已经为 Control Center 预留，当前阶段先完成总览与视觉基础。</p><button className="secondary-button" type="button"><Play size={16} />回到总览</button></div>;
 }

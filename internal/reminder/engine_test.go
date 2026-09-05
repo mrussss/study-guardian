@@ -10,6 +10,7 @@ import (
 
 func TestReminderEngineDecisions(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Reminder.QuietPeriods = nil
 	engine := NewEngine(cfg)
 	now := time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)
 

@@ -112,6 +112,11 @@ export interface NativeTaskPresetList {
   recent: NativeTaskPreset[];
 }
 
+export interface NativeReminderSettings {
+  cooldown_minutes: number;
+  quiet_periods: Array<{ start: string; end: string }>;
+}
+
 export interface NativeHistoryDay {
   date: string;
   focus_minutes: number;
@@ -176,6 +181,7 @@ export interface SupervisorDashboardSnapshot {
   status?: NativeSupervisorStatus;
   motivation?: NativeMotivationStatus;
   task_presets?: NativeTaskPresetList;
+  reminder_settings?: NativeReminderSettings;
   history?: NativeHistoryDay[];
   achievements?: NativeAchievement[];
   missions?: NativeMission[];
@@ -225,6 +231,11 @@ function validMotivation(value: unknown): value is NativeMotivationStatus {
     nonNegativeInteger(value.streak_days) &&
     (lastEvent === undefined || (record(lastEvent) && nonNegativeInteger(lastEvent.id) &&
       boundedText(lastEvent.type, 64) && boundedText(lastEvent.message, 512) && boundedText(lastEvent.created_at, 128)));
+}
+
+function validReminderSettings(value: unknown): value is NativeReminderSettings {
+  return record(value) && Number.isSafeInteger(value.cooldown_minutes) && Number(value.cooldown_minutes) >= 1 && Number(value.cooldown_minutes) <= 1440 &&
+    Array.isArray(value.quiet_periods) && value.quiet_periods.length <= 12 && value.quiet_periods.every(period => record(period) && boundedText(period.start, 5) && boundedText(period.end, 5));
 }
 
 function validTaskPresets(value: unknown): value is NativeTaskPresetList {
@@ -312,6 +323,7 @@ export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashbo
     status: raw.status,
     ...(validMotivation(raw.motivation) ? { motivation: raw.motivation } : {}),
     ...(validTaskPresets(raw.task_presets) ? { task_presets: raw.task_presets } : {}),
+    ...(validReminderSettings(raw.reminder_settings) ? { reminder_settings: raw.reminder_settings } : {}),
     ...(validHistory(raw.history) ? { history: raw.history } : {}),
     ...(validAchievements(raw.achievements) ? { achievements: raw.achievements } : {}),
     ...(validMissions(raw.missions) ? { missions: raw.missions } : {}),
@@ -368,6 +380,7 @@ export interface SupervisorControlAdapter {
   selectTaskPreset(id: string): Promise<ControlResult>;
   updateTaskPreset(id: string, name: string, pinned: boolean, sortOrder: number): Promise<ControlResult>;
   deleteTaskPreset(id: string): Promise<ControlResult>;
+  setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult>;
   setDailyTarget(minutes: number): Promise<ControlResult>;
 }
 
@@ -402,6 +415,10 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
 
   deleteTaskPreset(id: string): Promise<ControlResult> {
     return this.invokeControl("supervisor_delete_task_preset", { id });
+  }
+
+  setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult> {
+    return this.invokeControl("supervisor_set_reminder_settings", { cooldownMinutes, quietPeriods });
   }
 
   setDailyTarget(minutes: number): Promise<ControlResult> {

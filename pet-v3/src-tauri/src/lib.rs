@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use tauri::{
@@ -51,6 +51,7 @@ const SUPERVISOR_GET_PATHS: &[&str] = &[
     "/v1/activity/current",
     "/v1/status",
     "/v1/task-presets",
+    "/v1/settings/reminder",
     "/v1/motivation/status",
     "/v1/motivation/settings",
     "/v1/motivation/history?days=7",
@@ -123,6 +124,8 @@ struct SupervisorDashboardSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     task_presets: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    reminder_settings: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     history: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     achievements: Option<Value>,
@@ -153,6 +156,7 @@ fn disconnected_dashboard(kind: NativeErrorKind) -> SupervisorDashboardSnapshot 
         status: None,
         motivation: None,
         task_presets: None,
+        reminder_settings: None,
         history: None,
         achievements: None,
         missions: None,
@@ -835,6 +839,20 @@ fn sanitize_rewards(value: &Value) -> Result<Value, NativeErrorKind> {
     Ok(Value::Array(output))
 }
 
+fn sanitize_reminder_settings(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let cooldown = non_negative_i64_field(object, "cooldown_minutes")?;
+    if !(1..=1440).contains(&cooldown) { return Err(NativeErrorKind::InvalidResponse); }
+    let periods = object.get("quiet_periods").and_then(Value::as_array).ok_or(NativeErrorKind::InvalidResponse)?;
+    if periods.len() > 12 { return Err(NativeErrorKind::InvalidResponse); }
+    let mut safe = Vec::with_capacity(periods.len());
+    for period in periods {
+        let row = period.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        safe.push(json!({ "start": text_field(row, "start", 5)?, "end": text_field(row, "end", 5)? }));
+    }
+    Ok(json!({ "cooldown_minutes": cooldown, "quiet_periods": safe }))
+}
+
 fn sanitize_task_preset_list(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let sanitize_rows = |key: &str, max: usize| -> Result<Value, NativeErrorKind> {
@@ -1060,6 +1078,9 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
     let task_presets = fetch_supervisor_get(&host, port, &token, "/v1/task-presets")
         .ok()
         .and_then(|value| sanitize_task_preset_list(&value).ok());
+    let reminder_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/reminder")
+        .ok()
+        .and_then(|value| sanitize_reminder_settings(&value).ok());
     let history = fetch_supervisor_get(&host, port, &token, "/v1/motivation/history?days=7")
         .ok()
         .and_then(|value| sanitize_history(&value).ok());
@@ -1083,6 +1104,7 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
         status: Some(status),
         motivation,
         task_presets,
+        reminder_settings,
         history,
         achievements,
         missions,
@@ -1169,6 +1191,39 @@ async fn supervisor_update_task_preset(id: String, name: String, pinned: bool, s
 async fn supervisor_delete_task_preset(id: String) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || task_control_result("DELETE", format!("/v1/task-presets/{id}"), json!({})))
         .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[derive(Deserialize, Serialize)]
+struct QuietPeriodInput { start: String, end: String }
+
+#[tauri::command]
+async fn supervisor_set_reminder_settings(cooldown_minutes: i64, quiet_periods: Vec<QuietPeriodInput>) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !(1..=1440).contains(&cooldown_minutes) || quiet_periods.len() > 12 {
+            return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
+        }
+        let body = match serde_json::to_vec(&json!({ "cooldown_minutes": cooldown_minutes, "quiet_periods": quiet_periods })) {
+            Ok(value) => value,
+            Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") },
+        };
+        let (host, port, token) = match supervisor_credentials() {
+            Ok(credentials) => credentials,
+            Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        };
+        let address = match loopback_address(&host, port) { Ok(value) => value, Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } };
+        let result = (|| -> Result<(), NativeErrorKind> {
+            if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
+            let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).map_err(|error| map_io_error(&error))?;
+            stream.set_read_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
+            stream.set_write_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
+            let head = format!("PUT /v1/settings/reminder HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(&body)).map_err(|error| map_io_error(&error))?;
+            stream.flush().map_err(|error| map_io_error(&error))?;
+            let mut response = Vec::new(); stream.read_to_end(&mut response).map_err(|error| map_io_error(&error))?;
+            let (_, status) = response_parts(&response)?; classify_control_status(status)
+        })();
+        match result { Ok(()) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
 }
 
 #[tauri::command]
@@ -1362,6 +1417,7 @@ pub fn run() {
             supervisor_select_task_preset,
             supervisor_update_task_preset,
             supervisor_delete_task_preset,
+            supervisor_set_reminder_settings,
             supervisor_set_daily_target,
             open_quick_panel,
             hide_quick_panel,

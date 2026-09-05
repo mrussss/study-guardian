@@ -43,7 +43,8 @@ type BreakConfig struct {
 }
 
 type ReminderConfig struct {
-	CooldownMinutes int `yaml:"cooldown_minutes"`
+	CooldownMinutes int                 `yaml:"cooldown_minutes" json:"cooldown_minutes"`
+	QuietPeriods    []QuietPeriodConfig `yaml:"quiet_periods" json:"quiet_periods"`
 }
 
 type ScreenConfig struct {
@@ -165,6 +166,11 @@ func DefaultConfig() *Config {
 		},
 		Reminder: ReminderConfig{
 			CooldownMinutes: 10,
+			QuietPeriods: []QuietPeriodConfig{
+				{Start: "12:00", End: "14:00"},
+				{Start: "17:30", End: "19:00"},
+				{Start: "21:00", End: "24:00"},
+			},
 		},
 		Screen: ScreenConfig{
 			Enabled:              true,
@@ -221,6 +227,9 @@ func LoadConfig(configPath string, tokenPath string) (*Config, error) {
 	}
 	NormalizeAIConfig(cfg, legacyAI)
 	NormalizeMotivationConfig(cfg)
+	if err := ValidateReminderConfig(cfg); err != nil {
+		return nil, fmt.Errorf("invalid reminder config: %w", err)
+	}
 
 	// Ensure token exists or load from tokenPath
 	if tokenPath != "" {

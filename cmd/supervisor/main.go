@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
@@ -104,6 +105,17 @@ func main() {
 		}
 	}()
 
+	if raw, ok, loadErr := store.GetSetting(context.Background(), "reminder.config.v1"); loadErr != nil {
+		log.Printf("[Reminder] settings load failed: %v", loadErr)
+	} else if ok {
+		var persisted config.ReminderConfig
+		if decodeErr := json.Unmarshal([]byte(raw), &persisted); decodeErr == nil {
+			if _, validateErr := config.ParseQuietPeriods(persisted.QuietPeriods); validateErr == nil && persisted.CooldownMinutes > 0 {
+				cfg.Reminder = persisted
+			}
+		}
+	}
+
 	clock := state.RealClock{}
 	privacyGate := rules.NewPrivacyGate(cfg)
 	ruleEngine := rules.NewRuleEngine()
@@ -125,6 +137,7 @@ func main() {
 
 	server := api.NewServer(cfg, stateMgr)
 	server.SetStorage(store)
+	server.SetReminderSettings(reminderEng)
 	reviewService := review.NewService(store, time.Local, filepath.Join(filepath.Dir(targetDB), "reviews"))
 	reviewService.SetLimits(review.ReviewLimits{MaxTurnChars: cfg.Review.Limits.MaxTurnChars, MaxConversationChars: cfg.Review.Limits.MaxConversationChars, MaxFinalInputChars: cfg.Review.Limits.MaxFinalInputChars})
 	if reviewProvider, reviewStatus := review.NewConfiguredProvider(cfg); reviewProvider != nil {
