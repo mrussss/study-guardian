@@ -40,7 +40,7 @@ if ! command -v "${POWERSHELL_BIN}" >/dev/null 2>&1 && [ ! -x "${POWERSHELL_BIN}
 fi
 
 # 1. Check build artifacts
-if [ ! -f "${REPO_ROOT}/dist/windows/bin/study-supervisor.exe" ]; then
+if [ ! -f "${REPO_ROOT}/dist/windows/bin/study-supervisor.exe" ] || [ ! -s "${REPO_ROOT}/dist/windows/pet-v3/StudyGuardian.exe" ]; then
     echo "[Deploy] Build artifacts not found. Running build-windows.sh first..."
     bash "${REPO_ROOT}/scripts/build-windows.sh"
 fi
@@ -48,6 +48,7 @@ fi
 # 2. Ensure persistent directories exist (NEVER DELETE THESE)
 mkdir -p "${TARGET_DIR}/bin"
 mkdir -p "${TARGET_DIR}/pet"
+mkdir -p "${TARGET_DIR}/pet-v3"
 mkdir -p "${TARGET_DIR}/sensor"
 mkdir -p "${TARGET_DIR}/config"
 mkdir -p "${TARGET_DIR}/data"
@@ -72,6 +73,13 @@ if [ ! -f "${CONFIG_FILE}" ]; then
     cp "${REPO_ROOT}/configs/default.yaml" "${CONFIG_FILE}"
 fi
 
+# The legacy Pet remains the safe default until the manual Pet gate explicitly
+# approves the Tauri runtime. Existing selections are always preserved.
+RUNTIME_FILE="${TARGET_DIR}/config/runtime.json"
+if [ ! -f "${RUNTIME_FILE}" ]; then
+    printf '%s\n' '{"pet_runtime":"pyqt"}' > "${RUNTIME_FILE}"
+fi
+
 # 5. Stage all replaceable runtime files before touching the live tree.
 STAGE_DIR="$(mktemp -d "${TARGET_DIR}/.deploy-staging.XXXXXX")"
 BACKUP_DIR=""
@@ -93,11 +101,12 @@ cleanup() {
     exit "${status}"
 }
 trap cleanup EXIT
-mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/pet/src" "${STAGE_DIR}/pet/assets/skins" "${STAGE_DIR}/sensor/screen" "${STAGE_DIR}/scripts" "${STAGE_DIR}/browser"
+mkdir -p "${STAGE_DIR}/bin" "${STAGE_DIR}/pet/src" "${STAGE_DIR}/pet/assets/skins" "${STAGE_DIR}/pet-v3" "${STAGE_DIR}/sensor/screen" "${STAGE_DIR}/scripts" "${STAGE_DIR}/browser"
 cp -f "${REPO_ROOT}/dist/windows/bin/study-supervisor.exe" "${STAGE_DIR}/bin/study-supervisor.exe"
 cp -f "${REPO_ROOT}/dist/windows/bin/config-helper.exe" "${STAGE_DIR}/bin/config-helper.exe"
 cp -r "${REPO_ROOT}/dist/windows/pet/src/." "${STAGE_DIR}/pet/src/"
 cp -f "${REPO_ROOT}/dist/windows/pet/requirements.txt" "${STAGE_DIR}/pet/requirements.txt"
+cp -f "${REPO_ROOT}/dist/windows/pet-v3/StudyGuardian.exe" "${STAGE_DIR}/pet-v3/StudyGuardian.exe"
 cp -r "${REPO_ROOT}/dist/windows/pet/assets/skins/." "${STAGE_DIR}/pet/assets/skins/"
 cp -r "${REPO_ROOT}/dist/windows/sensor/screen/." "${STAGE_DIR}/sensor/screen/"
 cp -f "${REPO_ROOT}/dist/windows/sensor/requirements.txt" "${STAGE_DIR}/sensor/requirements.txt"
@@ -108,6 +117,7 @@ test -s "${STAGE_DIR}/bin/study-supervisor.exe"
 test -s "${STAGE_DIR}/bin/config-helper.exe"
 test -f "${STAGE_DIR}/pet/src/main.py"
 test -f "${STAGE_DIR}/pet/requirements.txt"
+test -s "${STAGE_DIR}/pet-v3/StudyGuardian.exe"
 test -f "${STAGE_DIR}/pet/assets/skins/studyguardian-pixel/manifest.json"
 test -f "${STAGE_DIR}/sensor/screen/server.py"
 test -f "${STAGE_DIR}/sensor/requirements.txt"
@@ -141,6 +151,7 @@ EPHEMERAL_PATHS=(
     "pet/src"
     "pet/requirements.txt"
     "pet/assets/skins"
+    "pet-v3/StudyGuardian.exe"
     "sensor/screen"
     "sensor/requirements.txt"
     "scripts"
@@ -154,10 +165,11 @@ for relative_path in "${EPHEMERAL_PATHS[@]}"; do
     fi
 done
 
-mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/pet" "${TARGET_DIR}/pet/assets" "${TARGET_DIR}/sensor" "${TARGET_DIR}/browser"
+mkdir -p "${TARGET_DIR}/bin" "${TARGET_DIR}/pet" "${TARGET_DIR}/pet/assets" "${TARGET_DIR}/pet-v3" "${TARGET_DIR}/sensor" "${TARGET_DIR}/browser"
 mv "${STAGE_DIR}/pet/src" "${TARGET_DIR}/pet/src"
 mv "${STAGE_DIR}/pet/requirements.txt" "${TARGET_DIR}/pet/requirements.txt"
 mv "${STAGE_DIR}/pet/assets/skins" "${TARGET_DIR}/pet/assets/skins"
+mv "${STAGE_DIR}/pet-v3/StudyGuardian.exe" "${TARGET_DIR}/pet-v3/StudyGuardian.exe"
 mv "${STAGE_DIR}/sensor/screen" "${TARGET_DIR}/sensor/screen"
 mv "${STAGE_DIR}/sensor/requirements.txt" "${TARGET_DIR}/sensor/requirements.txt"
 mv "${STAGE_DIR}/bin/study-supervisor.exe" "${TARGET_DIR}/bin/study-supervisor.exe"
@@ -169,6 +181,7 @@ mv "${STAGE_DIR}/browser/chatgpt-collector" "${TARGET_DIR}/browser/chatgpt-colle
 # or later deploy step is handled by the EXIT trap above.
 test -s "${TARGET_DIR}/bin/study-supervisor.exe"
 test -f "${TARGET_DIR}/pet/src/main.py"
+test -s "${TARGET_DIR}/pet-v3/StudyGuardian.exe"
 test -f "${TARGET_DIR}/sensor/screen/server.py"
 test -f "${TARGET_DIR}/browser/chatgpt-collector/manifest.json"
 test -s "${TARGET_DIR}/browser/chatgpt-collector/dist/content.js"

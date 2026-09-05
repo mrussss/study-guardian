@@ -438,6 +438,34 @@ export interface SupervisorControlAdapter {
   setDailyTarget(minutes: number): Promise<ControlResult>;
 }
 
+export type AutostartState = { enabled: boolean; available: boolean };
+
+export class NativeSystemIntegrationAdapter {
+  async getAutostartState(): Promise<AutostartState> {
+    try {
+      const value = await invoke<unknown>("get_autostart_state");
+      if (!record(value) || typeof value.enabled !== "boolean" || typeof value.available !== "boolean") {
+        return { enabled: false, available: false };
+      }
+      return { enabled: value.enabled, available: value.available };
+    } catch {
+      return { enabled: false, available: false };
+    }
+  }
+
+  async setAutostartEnabled(enabled: boolean): Promise<AutostartState> {
+    try {
+      const value = await invoke<unknown>("set_autostart_enabled", { enabled });
+      if (!record(value) || typeof value.enabled !== "boolean" || typeof value.available !== "boolean") {
+        return { enabled: false, available: false };
+      }
+      return { enabled: value.enabled, available: value.available };
+    } catch {
+      return { enabled: false, available: false };
+    }
+  }
+}
+
 export class NativeSupervisorControlAdapter implements SupervisorControlAdapter {
   setModeStudy(task: string): Promise<ControlResult> {
     return this.call("STUDY", task);

@@ -62,10 +62,11 @@ export PATH="${FIXTURE_ROOT}/bin:${PATH}"
 ARTIFACTS="${FIXTURE_REPO}/dist/windows"
 mkdir -p "${ARTIFACTS}/bin" "${ARTIFACTS}/pet/src" \
     "${ARTIFACTS}/pet/assets/skins/studyguardian-pixel" \
-    "${ARTIFACTS}/sensor/screen" "${ARTIFACTS}/browser/chatgpt-collector/dist"
+    "${ARTIFACTS}/pet-v3" "${ARTIFACTS}/sensor/screen" "${ARTIFACTS}/browser/chatgpt-collector/dist"
 printf 'supervisor-v1\n' > "${ARTIFACTS}/bin/study-supervisor.exe"
 printf 'config-helper\n' > "${ARTIFACTS}/bin/config-helper.exe"
 printf '# fixture pet\n' > "${ARTIFACTS}/pet/src/main.py"
+printf 'fixture-tauri-pet\n' > "${ARTIFACTS}/pet-v3/StudyGuardian.exe"
 printf '# fixture sensor\n' > "${ARTIFACTS}/sensor/screen/server.py"
 printf '# fixture dependencies\n' > "${ARTIFACTS}/pet/requirements.txt"
 printf '# fixture dependencies\n' > "${ARTIFACTS}/sensor/requirements.txt"
@@ -84,6 +85,7 @@ for directory in config data logs run handoff; do
 done
 printf 'fixture-auth-token\n' > "${TARGET_DIR}/config/auth.token"
 printf 'existing-fixture-config\n' > "${TARGET_DIR}/config/config.yaml"
+printf '%s\n' '{"pet_runtime":"pyqt"}' > "${TARGET_DIR}/config/runtime.json"
 printf 'fixture-user-skin\n' > "${TARGET_DIR}/config/pet-skins/user-canary/manifest.json"
 printf 'fixture-database\n' > "${TARGET_DIR}/data/studyguardian.db"
 printf 'stale-pet-source\n' > "${TARGET_DIR}/pet/src/stale-v06.py"
@@ -115,6 +117,7 @@ bash "${FIXTURE_REPO}/scripts/deploy-windows.sh" "${TARGET_DIR}"
 assert_persistent_unchanged
 test ! -e "${TARGET_DIR}/pet/src/stale-v06.py"
 cmp "${ARTIFACTS}/bin/study-supervisor.exe" "${TARGET_DIR}/bin/study-supervisor.exe"
+cmp "${ARTIFACTS}/pet-v3/StudyGuardian.exe" "${TARGET_DIR}/pet-v3/StudyGuardian.exe"
 
 echo '=== Isolated deploy safety: repeated deployment ==='
 printf 'supervisor-v2\n' > "${ARTIFACTS}/bin/study-supervisor.exe"

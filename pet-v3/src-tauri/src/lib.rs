@@ -5,6 +5,7 @@ use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
+    process::Command,
     time::Duration,
 };
 
@@ -41,6 +42,43 @@ struct NativeWindowDiagnostic {
 struct PetWindowDiagnostics {
     windows: Vec<NativeWindowDiagnostic>,
     control_center_route: String,
+}
+
+#[derive(Serialize)]
+struct AutostartState {
+    enabled: bool,
+    available: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaunchRoute {
+    QuickPanel,
+    ControlCenter,
+}
+
+fn requested_launch_route(args: &[String]) -> Option<LaunchRoute> {
+    args.windows(2).find_map(|pair| match (pair[0].as_str(), pair[1].as_str()) {
+        ("--show", "quick-panel") => Some(LaunchRoute::QuickPanel),
+        ("--show", "control-center") => Some(LaunchRoute::ControlCenter),
+        _ => None,
+    })
+}
+
+fn launch_without_pet(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--no-pet")
+}
+
+fn activate_launch_request(app: &AppHandle, args: &[String]) {
+    match requested_launch_route(args) {
+        Some(LaunchRoute::QuickPanel) => {
+            schedule_aux_window(app.clone(), AuxiliaryWindowAction::QuickPanel)
+        }
+        Some(LaunchRoute::ControlCenter) => schedule_aux_window(
+            app.clone(),
+            AuxiliaryWindowAction::ControlCenter("overview".to_string()),
+        ),
+        None => {}
+    }
 }
 
 fn next_click_through(current: bool) -> bool { !current }
@@ -1511,8 +1549,77 @@ fn record_pet_drag_debug(event: String) -> Result<(), String> {
     write_pet_drag_debug_event(&event)
 }
 
+fn integration_script() -> Option<(PathBuf, PathBuf)> {
+    let mut candidates = Vec::new();
+    if let Ok(executable) = env::current_exe() {
+        if let Some(root) = executable.parent().and_then(Path::parent) {
+            candidates.push(root.to_path_buf());
+        }
+    }
+    if let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent) {
+        candidates.push(root.to_path_buf());
+    }
+    candidates.into_iter().find_map(|root| {
+        let script = root.join("scripts").join("set-autostart.ps1");
+        script.is_file().then_some((root, script))
+    })
+}
+
+#[cfg(windows)]
+fn run_autostart_script(argument: &str) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let (root, script) = integration_script().ok_or_else(|| "integration_unavailable".to_string())?;
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(script)
+        .arg(argument)
+        .arg("-RootDir")
+        .arg(root)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|_| "integration_unavailable".to_string())?;
+    if !output.status.success() {
+        return Err("integration_failed".to_string());
+    }
+    String::from_utf8(output.stdout).map_err(|_| "integration_failed".to_string())
+}
+
+#[cfg(not(windows))]
+fn run_autostart_script(_argument: &str) -> Result<String, String> {
+    Err("integration_unavailable".to_string())
+}
+
+#[tauri::command]
+fn get_autostart_state() -> AutostartState {
+    match run_autostart_script("-GetState") {
+        Ok(output) => AutostartState {
+            enabled: output.trim().eq_ignore_ascii_case("enabled"),
+            available: true,
+        },
+        Err(_) => AutostartState { enabled: false, available: false },
+    }
+}
+
+#[tauri::command]
+fn set_autostart_enabled(enabled: bool) -> Result<AutostartState, String> {
+    run_autostart_script(if enabled { "-Enable" } else { "-Disable" })?;
+    Ok(AutostartState { enabled, available: true })
+}
+
 pub fn run() {
     tauri::Builder::default()
+        // Register first so repeated launcher invocations activate the existing
+        // UI instead of creating another Pet process.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            activate_launch_request(app, &args);
+        }))
         .manage(ClickThroughState(Arc::new(Mutex::new(false))))
         .manage(ControlCenterRouteState(Arc::new(Mutex::new("overview".to_string()))))
         .manage(AuxiliaryWindowState(Arc::new(Mutex::new(()))))
@@ -1539,6 +1646,8 @@ pub fn run() {
             open_control_center,
             control_center_route,
             pet_window_diagnostics,
+            get_autostart_state,
+            set_autostart_enabled,
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").ok_or("main window missing")?;
@@ -1547,6 +1656,12 @@ pub fn run() {
             window.set_ignore_cursor_events(false)?;
             window.set_always_on_top(true)?;
             window.set_shadow(false)?;
+            let args: Vec<String> = env::args().collect();
+            if launch_without_pet(&args) {
+                window.hide()?;
+            } else {
+                window.show()?;
+            }
             let toggle = MenuItem::with_id(app, "toggle-click-through", "切换鼠标穿透", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出 Pet", true, None::<&str>)?;
             let quick_panel = MenuItem::with_id(app, "open-quick-panel", "打开快捷面板", true, None::<&str>)?;
@@ -1577,6 +1692,7 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            activate_launch_request(app.handle(), &args);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -1593,9 +1709,20 @@ mod tests {
         bounded_control_center_route, bounded_panel_position, bounded_quick_panel_debug_event, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
         sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event,
-        NativeErrorKind,
+        launch_without_pet, requested_launch_route, LaunchRoute, NativeErrorKind,
         SupervisorSnapshot,
     };
+
+    #[test]
+    fn launcher_arguments_are_bounded() {
+        let quick = vec!["StudyGuardian.exe".to_string(), "--show".to_string(), "quick-panel".to_string()];
+        let center = vec!["StudyGuardian.exe".to_string(), "--show".to_string(), "control-center".to_string()];
+        let unknown = vec!["StudyGuardian.exe".to_string(), "--show".to_string(), "javascript:alert(1)".to_string()];
+        assert_eq!(requested_launch_route(&quick), Some(LaunchRoute::QuickPanel));
+        assert_eq!(requested_launch_route(&center), Some(LaunchRoute::ControlCenter));
+        assert_eq!(requested_launch_route(&unknown), None);
+        assert!(launch_without_pet(&["StudyGuardian.exe".to_string(), "--no-pet".to_string()]));
+    }
 
     #[test]
     fn auxiliary_window_operations_run_off_caller_and_do_not_overlap() {

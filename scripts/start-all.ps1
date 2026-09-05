@@ -1,95 +1,67 @@
-# StudyGuardian 一键启动脚本 (Windows PowerShell)
 param(
+    [string]$RootDir,
+    [ValidateSet("pyqt", "tauri")][string]$PetRuntime,
     [switch]$NoWatchdog
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "runtime-common.ps1")
+$RootDir = Resolve-StudyGuardianRoot -RootDir $RootDir -CallingScriptRoot $PSScriptRoot
+$runtime = if ($PetRuntime) { $PetRuntime } else { Get-StudyGuardianPetRuntime -RootDir $RootDir }
+$configDir = Join-Path $RootDir "config"
+Write-StudyGuardianLog -RootDir $RootDir -Source "start" -Message "starting runtime; pet=$runtime"
 
-$RootDir = "D:\StudyGuardianDev"
-$BinDir = "$RootDir\bin"
-$PetDir = "$RootDir\pet"
-$SensorDir = "$RootDir\sensor"
-$ConfigDir = "$RootDir\config"
-$LogsDir = "$RootDir\logs"
+$awExe = Join-Path $RootDir "ActivityWatch\aw-qt.exe"
+if (-not (Get-Process -Name "aw-qt", "aw-server" -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $awExe)) {
+    Start-Process -FilePath $awExe -WorkingDirectory (Split-Path -Parent $awExe)
+}
 
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "  Starting StudyGuardian Components" -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
+$sensorScript = Join-Path $RootDir "sensor\screen\server.py"
+if (-not (Test-StudyGuardianPort -Port 17322)) {
+    $sensorPython = Join-Path $RootDir "sensor\.venv\Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $sensorPython)) { $sensorPython = (Get-Command python.exe).Source }
+    Start-Process -FilePath $sensorPython -ArgumentList @((ConvertTo-StudyGuardianArgument $sensorScript), "--token-file", (ConvertTo-StudyGuardianArgument (Join-Path $configDir "auth.token"))) -WorkingDirectory (Split-Path -Parent $sensorScript) -WindowStyle Hidden
+}
 
-# 1. Start ActivityWatch if not running
-$awProcess = Get-Process -Name "aw-qt", "aw-server" -ErrorAction SilentlyContinue
-if (-not $awProcess) {
-    Write-Host "[1/4] Starting ActivityWatch..." -ForegroundColor Yellow
-    $awExe = "$RootDir\ActivityWatch\aw-qt.exe"
-    if (Test-Path $awExe) {
-        Start-Process -FilePath $awExe -WorkingDirectory "$RootDir\ActivityWatch"
-    } else {
-        Write-Host "Warning: ActivityWatch not found at $awExe, please start it manually." -ForegroundColor DarkYellow
+$supervisorExe = Join-Path $RootDir "bin\study-supervisor.exe"
+if (-not (Test-StudyGuardianPort -Port 17321)) {
+    if (-not (Test-Path -LiteralPath $supervisorExe)) { throw "Supervisor executable not found: $supervisorExe" }
+    Start-Process -FilePath $supervisorExe -ArgumentList @(
+        "-config", (ConvertTo-StudyGuardianArgument (Join-Path $configDir "config.yaml")), "-token", (ConvertTo-StudyGuardianArgument (Join-Path $configDir "auth.token")),
+        "-collector-token", (ConvertTo-StudyGuardianArgument (Join-Path $configDir "collector-token")), "-db", (ConvertTo-StudyGuardianArgument (Join-Path $RootDir "data\studyguardian.db"))
+    ) -WorkingDirectory $RootDir -WindowStyle Hidden
+}
+if (-not (Wait-StudyGuardianPort -Port 17321 -TimeoutSeconds 10)) { throw "Supervisor did not become healthy on port 17321" }
+
+$legacyPet = Join-Path $RootDir "pet\src\main.py"
+$tauriPet = Join-Path $RootDir "pet-v3\StudyGuardian.exe"
+if ($runtime -eq "tauri") {
+    Stop-OwnedPythonScript -ScriptPath $legacyPet
+    if (-not (Test-Path -LiteralPath $tauriPet)) { throw "Tauri Pet executable not found: $tauriPet" }
+    if (-not (Test-OwnedExecutable -Path $tauriPet)) { Start-Process -FilePath $tauriPet -WorkingDirectory (Split-Path -Parent $tauriPet) }
+} else {
+    if (-not (Test-Path -LiteralPath $legacyPet)) { throw "Legacy Pet script not found: $legacyPet" }
+    if (-not (Test-OwnedPythonScript -ScriptPath $legacyPet)) {
+        $petPython = Join-Path $RootDir "pet\.venv\Scripts\python.exe"
+        if (-not (Test-Path -LiteralPath $petPython)) { $petPython = (Get-Command python.exe).Source }
+        Start-Process -FilePath $petPython -ArgumentList @(
+            (ConvertTo-StudyGuardianArgument $legacyPet), "--token-file", (ConvertTo-StudyGuardianArgument (Join-Path $configDir "auth.token")),
+            "--assets", (ConvertTo-StudyGuardianArgument (Join-Path $RootDir "pet\assets")), "--pet-config", (ConvertTo-StudyGuardianArgument (Join-Path $configDir "pet.json"))
+        ) -WorkingDirectory (Split-Path -Parent $legacyPet)
     }
-} else {
-    Write-Host "[1/4] ActivityWatch is already running." -ForegroundColor Green
 }
-
-# 2. Start Screen Sensor (idempotently)
-if (@(Get-NetTCPConnection -State Listen -LocalPort 17322 -ErrorAction SilentlyContinue).Count -eq 0) {
-    Write-Host "[2/4] Starting Screen Sensor (:17322)..." -ForegroundColor Yellow
-    $sensorVenvPy = "$SensorDir\.venv\Scripts\python.exe"
-    if (-not (Test-Path $sensorVenvPy)) {
-        $sensorVenvPy = "python.exe"
-    }
-    $sensorScript = "$SensorDir\screen\server.py"
-    $sensorTokenFile = "$ConfigDir\auth.token"
-    Start-Process -FilePath $sensorVenvPy -ArgumentList "`"$sensorScript`" --token-file `"$sensorTokenFile`"" -WorkingDirectory "$SensorDir\screen" -WindowStyle Hidden
-} else {
-    Write-Host "[2/4] Screen Sensor is already running." -ForegroundColor Green
-}
-
-# 3. Start Supervisor (idempotently)
-$supExe = "$BinDir\study-supervisor.exe"
-$supConfig = "$ConfigDir\config.yaml"
-$supToken = "$ConfigDir\auth.token"
-$collectorToken = "$ConfigDir\collector-token"
-$supDB = "$RootDir\data\studyguardian.db"
-if (@(Get-NetTCPConnection -State Listen -LocalPort 17321 -ErrorAction SilentlyContinue).Count -eq 0) {
-    Write-Host "[3/4] Starting Supervisor (:17321)..." -ForegroundColor Yellow
-    Start-Process -FilePath $supExe -ArgumentList "-config `"$supConfig`" -token `"$supToken`" -collector-token `"$collectorToken`" -db `"$supDB`"" -WorkingDirectory "$RootDir" -WindowStyle Hidden
-} else {
-    Write-Host "[3/4] Supervisor is already running." -ForegroundColor Green
-}
-
-Start-Sleep -Seconds 2
-
-# 4. Start Pet UI Shell if it is not already running
-$petRunning = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $PID -and $_.Name -eq "python.exe" -and $_.CommandLine -like "*pet\src\main.py*" }).Count -gt 0
-if (-not $petRunning) {
-    Write-Host "[4/4] Starting Study Pet UI..." -ForegroundColor Yellow
-    $petVenvPy = "$PetDir\.venv\Scripts\python.exe"
-    if (-not (Test-Path $petVenvPy)) {
-        $petVenvPy = "python.exe"
-    }
-    $petScript = "$PetDir\src\main.py"
-    $petAssets = "$PetDir\assets"
-    $petConfig = "$ConfigDir\pet.json"
-    Start-Process -FilePath $petVenvPy -ArgumentList "`"$petScript`" --token-file `"$supToken`" --assets `"$petAssets`" --pet-config `"$petConfig`"" -WorkingDirectory "$PetDir\src"
-} else {
-    Write-Host "[4/4] Study Pet is already running." -ForegroundColor Green
-}
-
-Write-Host "==================================================" -ForegroundColor Green
-Write-Host "  StudyGuardian is now running in background!" -ForegroundColor Green
-Write-Host "==================================================" -ForegroundColor Green
 
 if (-not $NoWatchdog) {
-    $watchdogScript = "$RootDir\scripts\watchdog.ps1"
-    $watchdogRunning = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $_.ProcessId -ne $PID -and $_.Name -eq "powershell.exe" -and $_.CommandLine -like "*watchdog.ps1*"
+    $watchdogScript = Join-Path $RootDir "scripts\watchdog.ps1"
+    $watchdogRunning = @(Get-StudyGuardianProcesses | Where-Object {
+        $_.ProcessId -ne $PID -and ($_.Name -eq "powershell.exe" -or $_.Name -eq "pwsh.exe") -and $_.CommandLine -and
+        $_.CommandLine.IndexOf($watchdogScript, [StringComparison]::OrdinalIgnoreCase) -ge 0
     }).Count -gt 0
-    if (-not $watchdogRunning -and (Test-Path -LiteralPath $watchdogScript)) {
-        Write-Host "[watchdog] Starting lightweight crash recovery..." -ForegroundColor Yellow
-        Start-Process -FilePath (Get-Command powershell.exe).Source `
-            -ArgumentList @("-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", $watchdogScript) `
-            -WorkingDirectory $RootDir -WindowStyle Hidden
-    } else {
-        Write-Host "[watchdog] Already running or unavailable." -ForegroundColor DarkGray
+    if (-not $watchdogRunning) {
+        Start-Process -FilePath (Get-Command powershell.exe).Source -ArgumentList @(
+            "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-StudyGuardianArgument $watchdogScript),
+            "-RootDir", (ConvertTo-StudyGuardianArgument $RootDir)
+        ) -WorkingDirectory $RootDir -WindowStyle Hidden
     }
 }
+Write-StudyGuardianLog -RootDir $RootDir -Source "start" -Message "runtime started; pet=$runtime"

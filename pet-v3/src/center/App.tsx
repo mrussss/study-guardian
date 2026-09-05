@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
-import { NativeSupervisorControlAdapter } from "../transport/supervisor";
+import { NativeSupervisorControlAdapter, NativeSystemIntegrationAdapter } from "../transport/supervisor";
 import { TaskPicker } from "../shared/TaskPicker";
 import type { NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
@@ -302,6 +302,20 @@ function SettingsPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }):
     { start: "12:00", end: "14:00" }, { start: "17:30", end: "19:00" }, { start: "21:00", end: "24:00" },
   ];
   const control = new NativeSupervisorControlAdapter();
+  const [autostart, setAutostart] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: true });
+  const [autostartBusy, setAutostartBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void new NativeSystemIntegrationAdapter().getAutostartState().then(state => { if (active) setAutostart(state); });
+    return () => { active = false; };
+  }, []);
+  const toggleAutostart = async (): Promise<void> => {
+    setAutostartBusy(true);
+    const state = await new NativeSystemIntegrationAdapter().setAutostartEnabled(!autostart.enabled);
+    setAutostart(state);
+    setNotice(state.available ? (state.enabled ? "已开启开机启动" : "已关闭开机启动") : "系统启动设置暂时不可用");
+    setAutostartBusy(false);
+  };
   const saveTarget = async (): Promise<void> => {
     const minutes = Number(inputValue);
     if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) { setNotice("请输入 1–1440 分钟"); return; }
@@ -318,6 +332,7 @@ function SettingsPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }):
   };
   const updateQuiet = (index: number, key: "start" | "end", value: string): void => setQuietDraft(quietPeriods.map((period, itemIndex) => itemIndex === index ? { ...period, [key]: value } : period));
   return <DataPage title="设置" description="设置保存在本机；token 和 AI secret 只在 native 端读取。"><div className="settings-stack">
+    <section className="surface-section data-card settings-card"><div className="section-header"><div><h2>Windows 启动</h2><p>登录 Windows 后在后台启动 StudyGuardian。</p></div><label className="switch-label"><input type="checkbox" checked={autostart.enabled} disabled={!autostart.available || autostartBusy} onChange={() => void toggleAutostart()} />{autostart.enabled ? "开启" : "关闭"}</label></div>{!autostart.available && <small>当前安装中找不到稳定启动器，请重新部署后再试。</small>}</section>
     <section className="surface-section data-card settings-card"><div className="section-header"><div><h2>每日专注目标</h2><p>目标会写入 canonical motivation storage</p></div><Settings2 className="section-icon" size={20} /></div><label className="setting-field"><span>目标分钟数</span><input type="number" min={1} max={1440} value={inputValue} onChange={event => setTargetInput(event.target.value)} /><small>范围 1–1440 分钟</small></label><div className="setting-actions"><button className="primary-button" type="button" onClick={() => void saveTarget()}>保存目标</button></div></section>
     <section className="surface-section data-card settings-card"><div className="section-header"><div><h2>免打扰时段</h2><p>这些时段继续记录学习状态，但不主动弹出提醒。</p></div><ShieldCheck className="section-icon" size={20} /></div>
       <div className="quiet-period-list">{quietPeriods.map((period, index) => <div className="quiet-period-row" key={`${index}-${period.start}-${period.end}`}><input aria-label={`时段 ${index + 1} 开始`} inputMode="numeric" maxLength={5} value={period.start} onChange={event => updateQuiet(index, "start", event.target.value)} /><span>—</span><input aria-label={`时段 ${index + 1} 结束`} inputMode="numeric" maxLength={5} value={period.end} onChange={event => updateQuiet(index, "end", event.target.value)} /><button className="icon-button" type="button" aria-label={`删除时段 ${index + 1}`} onClick={() => setQuietDraft(quietPeriods.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16} /></button></div>)}</div>
