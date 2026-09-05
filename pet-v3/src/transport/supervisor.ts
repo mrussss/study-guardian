@@ -117,6 +117,31 @@ export interface NativeReminderSettings {
   quiet_periods: Array<{ start: string; end: string }>;
 }
 
+export interface NativeAIEndpointSettings {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  base_url: string;
+  api_key_configured: boolean;
+  timeout_seconds: number;
+  json_mode: "auto" | "json_object" | "off";
+}
+
+export interface NativeAISettings {
+  enabled: boolean;
+  min_confidence: number;
+  text: NativeAIEndpointSettings;
+  vision: NativeAIEndpointSettings;
+}
+
+export interface NativeAIConnectionResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  latency_ms: number;
+  error_kind?: "authentication_failed" | "timeout" | "network_unavailable" | "model_not_found" | "invalid_response" | "provider_unavailable" | "unavailable";
+}
+
 export interface NativeHistoryDay {
   date: string;
   focus_minutes: number;
@@ -182,6 +207,7 @@ export interface SupervisorDashboardSnapshot {
   motivation?: NativeMotivationStatus;
   task_presets?: NativeTaskPresetList;
   reminder_settings?: NativeReminderSettings;
+  ai_settings?: NativeAISettings;
   history?: NativeHistoryDay[];
   achievements?: NativeAchievement[];
   missions?: NativeMission[];
@@ -231,6 +257,12 @@ function validMotivation(value: unknown): value is NativeMotivationStatus {
     nonNegativeInteger(value.streak_days) &&
     (lastEvent === undefined || (record(lastEvent) && nonNegativeInteger(lastEvent.id) &&
       boundedText(lastEvent.type, 64) && boundedText(lastEvent.message, 512) && boundedText(lastEvent.created_at, 128)));
+}
+
+function validAISettings(value: unknown): value is NativeAISettings {
+  if (!record(value) || typeof value.enabled !== "boolean" || !boundedRatio(value.min_confidence)) return false;
+  const validEndpoint = (endpoint: unknown): endpoint is NativeAIEndpointSettings => record(endpoint) && typeof endpoint.enabled === "boolean" && boundedText(endpoint.provider, 64) && boundedText(endpoint.model, 128) && boundedText(endpoint.base_url, 1024) && typeof endpoint.api_key_configured === "boolean" && Number.isSafeInteger(endpoint.timeout_seconds) && Number(endpoint.timeout_seconds) >= 1 && Number(endpoint.timeout_seconds) <= 120 && ["auto", "json_object", "off"].includes(endpoint.json_mode as string);
+  return validEndpoint(value.text) && validEndpoint(value.vision);
 }
 
 function validReminderSettings(value: unknown): value is NativeReminderSettings {
@@ -324,6 +356,7 @@ export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashbo
     ...(validMotivation(raw.motivation) ? { motivation: raw.motivation } : {}),
     ...(validTaskPresets(raw.task_presets) ? { task_presets: raw.task_presets } : {}),
     ...(validReminderSettings(raw.reminder_settings) ? { reminder_settings: raw.reminder_settings } : {}),
+    ...(validAISettings(raw.ai_settings) ? { ai_settings: raw.ai_settings } : {}),
     ...(validHistory(raw.history) ? { history: raw.history } : {}),
     ...(validAchievements(raw.achievements) ? { achievements: raw.achievements } : {}),
     ...(validMissions(raw.missions) ? { missions: raw.missions } : {}),
@@ -381,6 +414,10 @@ export interface SupervisorControlAdapter {
   updateTaskPreset(id: string, name: string, pinned: boolean, sortOrder: number): Promise<ControlResult>;
   deleteTaskPreset(id: string): Promise<ControlResult>;
   setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult>;
+  saveAISettings(settings: NativeAISettings): Promise<ControlResult>;
+  putAISecret(target: "text" | "vision", apiKey: string): Promise<ControlResult>;
+  deleteAISecret(target: "text" | "vision"): Promise<ControlResult>;
+  testAIConnection(target: "text" | "vision"): Promise<NativeAIConnectionResult>;
   setDailyTarget(minutes: number): Promise<ControlResult>;
 }
 
@@ -419,6 +456,26 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
 
   setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult> {
     return this.invokeControl("supervisor_set_reminder_settings", { cooldownMinutes, quietPeriods });
+  }
+
+  saveAISettings(settings: NativeAISettings): Promise<ControlResult> {
+    return this.invokeControl("supervisor_save_ai_settings", { settings });
+  }
+
+  putAISecret(target: "text" | "vision", apiKey: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_put_ai_secret", { target, apiKey });
+  }
+
+  deleteAISecret(target: "text" | "vision"): Promise<ControlResult> {
+    return this.invokeControl("supervisor_delete_ai_secret", { target });
+  }
+
+  async testAIConnection(target: "text" | "vision"): Promise<NativeAIConnectionResult> {
+    try {
+      const raw = await invoke<unknown>("supervisor_test_ai_connection", { target });
+      if (!record(raw) || typeof raw.ok !== "boolean" || !boundedText(raw.provider, 64) || !boundedText(raw.model, 128) || !nonNegativeInteger(raw.latency_ms) || (raw.error_kind !== undefined && raw.error_kind !== null && !boundedText(raw.error_kind, 64))) return { ok: false, provider: "", model: "", latency_ms: 0, error_kind: "invalid_response" };
+      return { ok: raw.ok, provider: raw.provider, model: raw.model, latency_ms: raw.latency_ms, ...(typeof raw.error_kind === "string" ? { error_kind: raw.error_kind as NativeAIConnectionResult["error_kind"] } : {}) };
+    } catch { return { ok: false, provider: "", model: "", latency_ms: 0, error_kind: "unavailable" }; }
   }
 
   setDailyTarget(minutes: number): Promise<ControlResult> {

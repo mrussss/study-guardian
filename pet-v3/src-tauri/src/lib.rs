@@ -52,6 +52,7 @@ const SUPERVISOR_GET_PATHS: &[&str] = &[
     "/v1/status",
     "/v1/task-presets",
     "/v1/settings/reminder",
+    "/v1/settings/ai",
     "/v1/motivation/status",
     "/v1/motivation/settings",
     "/v1/motivation/history?days=7",
@@ -126,6 +127,8 @@ struct SupervisorDashboardSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     reminder_settings: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    ai_settings: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     history: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     achievements: Option<Value>,
@@ -157,6 +160,7 @@ fn disconnected_dashboard(kind: NativeErrorKind) -> SupervisorDashboardSnapshot 
         motivation: None,
         task_presets: None,
         reminder_settings: None,
+        ai_settings: None,
         history: None,
         achievements: None,
         missions: None,
@@ -839,6 +843,24 @@ fn sanitize_rewards(value: &Value) -> Result<Value, NativeErrorKind> {
     Ok(Value::Array(output))
 }
 
+fn sanitize_ai_settings(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let endpoint = |key: &str| -> Result<Value, NativeErrorKind> {
+        let row = object.get(key).and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
+        Ok(json!({
+            "enabled": bool_field(row, "enabled")?,
+            "provider": text_field(row, "provider", 64)?,
+            "model": text_field(row, "model", 128)?,
+            "base_url": text_field(row, "base_url", 1024)?,
+            "api_key_configured": bool_field(row, "api_key_configured")?,
+            "timeout_seconds": non_negative_i64_field(row, "timeout_seconds")?,
+            "json_mode": text_field(row, "json_mode", 32)?,
+        }))
+    };
+    let min_confidence = object.get("min_confidence").and_then(Value::as_f64).filter(|value| value.is_finite() && (0.0..=1.0).contains(value)).ok_or(NativeErrorKind::InvalidResponse)?;
+    Ok(json!({ "enabled": bool_field(object, "enabled")?, "min_confidence": min_confidence, "text": endpoint("text")?, "vision": endpoint("vision")? }))
+}
+
 fn sanitize_reminder_settings(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let cooldown = non_negative_i64_field(object, "cooldown_minutes")?;
@@ -1081,6 +1103,9 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
     let reminder_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/reminder")
         .ok()
         .and_then(|value| sanitize_reminder_settings(&value).ok());
+    let ai_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/ai")
+        .ok()
+        .and_then(|value| sanitize_ai_settings(&value).ok());
     let history = fetch_supervisor_get(&host, port, &token, "/v1/motivation/history?days=7")
         .ok()
         .and_then(|value| sanitize_history(&value).ok());
@@ -1105,6 +1130,7 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
         motivation,
         task_presets,
         reminder_settings,
+        ai_settings,
         history,
         achievements,
         missions,
@@ -1191,6 +1217,72 @@ async fn supervisor_update_task_preset(id: String, name: String, pinned: bool, s
 async fn supervisor_delete_task_preset(id: String) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || task_control_result("DELETE", format!("/v1/task-presets/{id}"), json!({})))
         .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[derive(Deserialize, Serialize)]
+struct AIEndpointInput {
+    enabled: bool, provider: String, model: String, base_url: String,
+    api_key_configured: bool, timeout_seconds: i64, json_mode: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct AISettingsInput { enabled: bool, min_confidence: f64, text: AIEndpointInput, vision: AIEndpointInput }
+
+fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value, NativeErrorKind> {
+    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("POST", "/v1/settings/ai/test"));
+    if !allowed { return Err(NativeErrorKind::Rejected); }
+    let (host, port, token) = supervisor_credentials()?;
+    if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
+    let address = loopback_address(&host, port)?;
+    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).map_err(|error| map_io_error(&error))?;
+    stream.set_read_timeout(Some(Duration::from_secs(125))).map_err(|error| map_io_error(&error))?;
+    stream.set_write_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
+    let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+    stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body)).map_err(|error| map_io_error(&error))?;
+    stream.flush().map_err(|error| map_io_error(&error))?;
+    let mut response = Vec::new(); stream.take(MAX_RESPONSE_BYTES as u64 + 1).read_to_end(&mut response).map_err(|error| map_io_error(&error))?;
+    if response.len() > MAX_RESPONSE_BYTES { return Err(NativeErrorKind::InvalidResponse); }
+    let (body_start, status) = response_parts(&response)?;
+    if path.ends_with("/test") {
+        if status != 200 && status != 502 { classify_control_status(status)?; }
+    } else { classify_control_status(status)?; }
+    serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
+}
+
+#[tauri::command]
+async fn supervisor_save_ai_settings(settings: AISettingsInput) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = match serde_json::to_vec(&settings) { Ok(value) => value, Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") } };
+        match ai_supervisor_request("PUT", "/v1/settings/ai", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_put_ai_secret(target: String, api_key: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !["text", "vision"].contains(&target.as_str()) || api_key.trim().is_empty() || api_key.len() > 8192 { return SupervisorControlResult { ok: false, error_kind: Some("rejected") }; }
+        let body = serde_json::to_vec(&json!({ "target": target, "api_key": api_key })).unwrap_or_default();
+        match ai_supervisor_request("PUT", "/v1/settings/ai/secret", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_delete_ai_secret(target: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = serde_json::to_vec(&json!({ "target": target })).unwrap_or_default();
+        match ai_supervisor_request("DELETE", "/v1/settings/ai/secret", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_test_ai_connection(target: String) -> Value {
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = serde_json::to_vec(&json!({ "target": target })).unwrap_or_default();
+        match ai_supervisor_request("POST", "/v1/settings/ai/test", &body).and_then(|value| {
+            let row = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+            Ok(json!({ "ok": bool_field(row, "ok")?, "provider": text_field(row, "provider", 64)?, "model": text_field(row, "model", 128)?, "latency_ms": non_negative_i64_field(row, "latency_ms")?, "error_kind": optional_text_field(row, "error_kind", 64)? }))
+        }) { Ok(value) => value, Err(kind) => json!({ "ok": false, "provider": "", "model": "", "latency_ms": 0, "error_kind": kind.as_str() }) }
+    }).await.unwrap_or_else(|_| json!({ "ok": false, "provider": "", "model": "", "latency_ms": 0, "error_kind": "unavailable" }))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1418,6 +1510,10 @@ pub fn run() {
             supervisor_update_task_preset,
             supervisor_delete_task_preset,
             supervisor_set_reminder_settings,
+            supervisor_save_ai_settings,
+            supervisor_put_ai_secret,
+            supervisor_delete_ai_secret,
+            supervisor_test_ai_connection,
             supervisor_set_daily_target,
             open_quick_panel,
             hide_quick_panel,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"study-guardian/internal/config"
@@ -15,7 +16,9 @@ import (
 )
 
 type Service struct {
+	mu          sync.RWMutex
 	cfg         *config.Config
+	aiConfig    config.AIConfig
 	ruleEngine  *rules.RuleEngine
 	privacyGate *rules.PrivacyGate
 	provider    TaskRelationProvider
@@ -38,11 +41,20 @@ func NewService(
 ) *Service {
 	return &Service{
 		cfg:         cfg,
+		aiConfig:    cfg.AI,
 		ruleEngine:  ruleEngine,
 		privacyGate: privacyGate,
 		provider:    provider,
 		storage:     store,
 	}
+}
+
+func (s *Service) UpdateAI(aiConfig config.AIConfig, textProvider, visionProvider TaskRelationProvider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.aiConfig = aiConfig
+	s.provider = textProvider
+	s.vision = visionProvider
 }
 
 func (s *Service) Classify(
@@ -53,7 +65,12 @@ func (s *Service) Classify(
 ) state.ClassificationResult {
 	// 1. Local deterministic rules first!
 	ruleRes := s.ruleEngine.Classify(app, title, domain, task)
-	minConf := s.cfg.AI.MinConfidence
+	s.mu.RLock()
+	aiConfig := s.aiConfig
+	textProvider := s.provider
+	visionProvider := s.vision
+	s.mu.RUnlock()
+	minConf := aiConfig.MinConfidence
 	if minConf <= 0 {
 		minConf = 0.75
 	}
@@ -77,10 +94,10 @@ func (s *Service) Classify(
 
 	// The caller decides when a screenshot is worth collecting. Supplying an
 	// image here explicitly selects the configured vision fallback provider.
-	requestedVision := imageBase64 != "" && s.vision != nil
-	provider := s.provider
+	requestedVision := imageBase64 != "" && visionProvider != nil
+	provider := textProvider
 	if requestedVision {
-		provider = s.vision
+		provider = visionProvider
 	}
 	providerName := "none"
 	if provider != nil {
@@ -102,7 +119,7 @@ func (s *Service) Classify(
 	}
 
 	// 4. If AI is not enabled or no provider configured, return rule fallback
-	if !s.cfg.AI.Enabled || provider == nil {
+	if !aiConfig.Enabled || provider == nil {
 		return ruleRes
 	}
 
@@ -118,9 +135,9 @@ func (s *Service) Classify(
 		aiReq.AnalysisImageBase64 = imageBase64
 	}
 
-	timeoutSeconds := s.cfg.AI.Text.TimeoutSeconds
+	timeoutSeconds := aiConfig.Text.TimeoutSeconds
 	if requestedVision {
-		timeoutSeconds = s.cfg.AI.Vision.TimeoutSeconds
+		timeoutSeconds = aiConfig.Vision.TimeoutSeconds
 	}
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 6

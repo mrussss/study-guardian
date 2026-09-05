@@ -39,6 +39,7 @@ type Server struct {
 	reviewTrigger    *review.ReviewTrigger
 	semantic         *semantic.Service
 	reminderSettings ReminderSettingsManager
+	aiSettings       AISettingsManager
 }
 
 type MotivationManager interface {
@@ -73,6 +74,9 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/task-presets", s.withAuth(s.handleTaskPresets))
 	mux.HandleFunc("/v1/task-presets/", s.withAuth(s.handleTaskPresetAction))
 	mux.HandleFunc("/v1/settings/reminder", s.withAuth(s.handleReminderSettings))
+	mux.HandleFunc("/v1/settings/ai", s.withAuth(s.handleAISettings))
+	mux.HandleFunc("/v1/settings/ai/secret", s.withAuth(s.handleAISecret))
+	mux.HandleFunc("/v1/settings/ai/test", s.withAuth(s.handleAITest))
 	mux.HandleFunc("/v1/feedback", s.withAuth(s.handleFeedback))
 	mux.HandleFunc("/v1/motivation/status", s.withAuth(s.handleMotivationStatus))
 	mux.HandleFunc("/v1/motivation/settings", s.withAuth(s.handleMotivationSettings))

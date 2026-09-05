@@ -36,9 +36,17 @@ func NewService(store *storage.Storage, timezone *time.Location, outputDir strin
 	return &Service{store: store, aggregator: evidence.NewAggregator(store, timezone), outputDir: outputDir, limits: normalizeReviewLimits(ReviewLimits{})}
 }
 
-func (s *Service) SetProvider(provider Provider) { s.provider = provider }
+func (s *Service) SetProvider(provider Provider) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.provider = provider
+}
 
-func (s *Service) SetLimits(limits ReviewLimits) { s.limits = normalizeReviewLimits(limits) }
+func (s *Service) SetLimits(limits ReviewLimits) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.limits = normalizeReviewLimits(limits)
+}
 
 func (s *Service) Evidence(ctx context.Context, date string) (evidence.DailyEvidenceBundle, error) {
 	return s.aggregator.Build(ctx, date)

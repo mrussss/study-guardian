@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"study-guardian/internal/activitywatch"
+	"study-guardian/internal/aisettings"
 	"study-guardian/internal/api"
 	"study-guardian/internal/classifier"
 	"study-guardian/internal/classifier/providers"
@@ -81,6 +82,15 @@ func main() {
 		store, _ = storage.OpenSQLite(":memory:")
 	}
 	defer store.Close()
+	if raw, ok, loadErr := store.GetSetting(context.Background(), aisettings.SettingKey); loadErr != nil {
+		log.Printf("[AI] settings load failed: %v", loadErr)
+	} else if ok {
+		var persisted config.AIConfig
+		if decodeErr := json.Unmarshal([]byte(raw), &persisted); decodeErr == nil {
+			cfg.AI = persisted
+			config.NormalizeAIConfig(cfg, false)
+		}
+	}
 	runRetentionCleanup := func(ctx context.Context) {
 		retentionStats, err := store.PruneRetention(ctx, time.Now(), cfg.Review.Retention.RawChatDays, cfg.Review.Retention.SemanticDays)
 		if err != nil {
@@ -154,7 +164,13 @@ func main() {
 		}()
 	}
 	server.SetMotivation(motivationService)
-	server.SetAIStatus(func() interface{} { return aiRegistry.Status() })
+	configDir := filepath.Join(filepath.Dir(targetDB), "..", "config")
+	if *configPath != "" {
+		configDir = filepath.Dir(*configPath)
+	}
+	aiSettingsService := aisettings.New(cfg, store, filepath.Join(configDir, "secrets"), classifierService, reviewService)
+	server.SetAISettings(aiSettingsService)
+	server.SetAIStatus(func() interface{} { return aiSettingsService.Status() })
 	semanticService := semantic.NewService(store)
 	server.SetSemantic(semanticService)
 

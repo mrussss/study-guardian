@@ -153,3 +153,24 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .quiet-period-row > span { color: var(--sg-text-tertiary); text-align: center; }
 .settings-notice { color: var(--sg-success); font-size: 13px; }
 .hero-notice { color: #d8d4ff; font-size: 12px; }
+
+.ai-settings-card { max-width: 700px; }
+.switch-label { display: inline-flex; align-items: center; gap: 7px; color: var(--sg-text-secondary); font-size: 13px; font-weight: 600; }
+.switch-label input { accent-color: var(--sg-accent); }
+.confidence-field { display: grid; gap: 7px; margin: 16px 0; color: var(--sg-text-secondary); font-size: 13px; }
+.confidence-field input { accent-color: var(--sg-accent); }
+.ai-endpoint-card { display: grid; gap: 14px; margin-top: 14px; padding: 16px; background: var(--sg-surface-muted); border: 1px solid var(--sg-border); border-radius: var(--sg-radius-card); }
+.ai-endpoint-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ai-endpoint-heading > div { display: grid; gap: 3px; }
+.ai-endpoint-heading strong { font-size: 14px; }
+.ai-endpoint-heading span { color: var(--sg-text-tertiary); font-size: 12px; }
+.ai-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ai-field-grid label { display: grid; gap: 5px; color: var(--sg-text-tertiary); font-size: 12px; }
+.ai-field-grid label.wide { grid-column: 1 / -1; }
+.ai-field-grid input, .ai-field-grid select, .secret-row input { min-width: 0; height: 36px; padding: 0 9px; color: var(--sg-text); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 8px; }
+.secret-row { display: grid; grid-template-columns: auto minmax(140px, 1fr) auto auto auto; align-items: center; gap: 7px; }
+.secret-row button { height: 34px; padding: 0 9px; color: var(--sg-text-secondary); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.secret-row button.test-button { color: var(--sg-accent); }
+.secret-state { color: var(--sg-text-tertiary); font-size: 12px; }
+.secret-state.is-set { color: var(--sg-success); }
+@media (max-width: 760px) { .ai-field-grid { grid-template-columns: 1fr; } .ai-field-grid label.wide { grid-column: auto; } .secret-row { grid-template-columns: 1fr 1fr; } .secret-row input { grid-column: 1 / -1; } }
