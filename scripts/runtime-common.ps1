@@ -33,6 +33,16 @@ function Get-StudyGuardianProcesses {
     try { return @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { return @() }
 }
 
+function Get-OwnedPowerShellScriptProcesses {
+    param([Parameter(Mandatory = $true)][string]$ScriptPath)
+    $escaped = [Regex]::Escape([IO.Path]::GetFullPath($ScriptPath))
+    $pattern = "(?i)(?:^|\s)-File\s+(?:`"$escaped`"|$escaped)(?:\s|$)"
+    return @(Get-StudyGuardianProcesses | Where-Object {
+        $_.ProcessId -ne $PID -and ($_.Name -eq "powershell.exe" -or $_.Name -eq "pwsh.exe") -and
+        $_.CommandLine -and [Regex]::IsMatch($_.CommandLine, $pattern)
+    })
+}
+
 function Test-OwnedExecutable {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
@@ -67,6 +77,13 @@ function Stop-OwnedPythonScript {
         $_.ProcessId -ne $PID -and ($_.Name -eq "python.exe" -or $_.Name -eq "pythonw.exe") -and $_.CommandLine -and
         $_.CommandLine.IndexOf($expected, [StringComparison]::OrdinalIgnoreCase) -ge 0
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+function Stop-OwnedPowerShellScript {
+    param([Parameter(Mandatory = $true)][string]$ScriptPath)
+    Get-OwnedPowerShellScriptProcesses -ScriptPath $ScriptPath | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Wait-StudyGuardianPort {

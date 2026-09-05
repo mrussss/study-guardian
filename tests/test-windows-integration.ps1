@@ -14,6 +14,11 @@ try {
     Assert-True ((Get-StudyGuardianPetRuntime -RootDir $tempRoot) -eq "pyqt") "safe runtime default failed"
     Set-Content -LiteralPath (Join-Path $tempRoot "config\runtime.json") -Value '{"pet_runtime":"tauri"}' -Encoding UTF8
     Assert-True ((Get-StudyGuardianPetRuntime -RootDir $tempRoot) -eq "tauri") "runtime marker failed"
+    $watchdogPath = Join-Path $tempRoot "scripts\watchdog.ps1"
+    $escapedWatchdog = [Regex]::Escape([IO.Path]::GetFullPath($watchdogPath))
+    $ownedPattern = "(?i)(?:^|\s)-File\s+(?:`"$escapedWatchdog`"|$escapedWatchdog)(?:\s|$)"
+    Assert-True ([Regex]::IsMatch("powershell.exe -File `"$watchdogPath`" -RootDir `"$tempRoot`"", $ownedPattern)) "watchdog command matching failed"
+    Assert-True (-not [Regex]::IsMatch("powershell.exe -File stop-all.ps1 -Note `"$watchdogPath`"", $ownedPattern)) "watchdog command matching is too broad"
 
     $autostart = Join-Path $repoRoot "scripts\set-autostart.ps1"
     & $autostart -Enable -RootDir $tempRoot -StartupDirectory $startup | Out-Null

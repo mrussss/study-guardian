@@ -53,10 +53,7 @@ if ($runtime -eq "tauri") {
 
 if (-not $NoWatchdog) {
     $watchdogScript = Join-Path $RootDir "scripts\watchdog.ps1"
-    $watchdogRunning = @(Get-StudyGuardianProcesses | Where-Object {
-        $_.ProcessId -ne $PID -and ($_.Name -eq "powershell.exe" -or $_.Name -eq "pwsh.exe") -and $_.CommandLine -and
-        $_.CommandLine.IndexOf($watchdogScript, [StringComparison]::OrdinalIgnoreCase) -ge 0
-    }).Count -gt 0
+    $watchdogRunning = @(Get-OwnedPowerShellScriptProcesses -ScriptPath $watchdogScript).Count -gt 0
     if (-not $watchdogRunning) {
         Start-Process -FilePath (Get-Command powershell.exe).Source -ArgumentList @(
             "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-StudyGuardianArgument $watchdogScript),
