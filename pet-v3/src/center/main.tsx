@@ -1,10 +1,10 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { ControlCenter } from "./App";
 import { applyControlCenterRouteRequest, CONTROL_CENTER_ROUTE_EVENT, isControlCenterRoute, type ControlCenterRouteRequest } from "./route";
-import { NativeSupervisorDashboardAdapter, type SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { NativeSupervisorDashboardAdapter, SupervisorDashboardPollLoop, type SupervisorDashboardSnapshot } from "../transport/supervisor";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
 import "./center.css";
@@ -18,6 +18,7 @@ const isTauriRuntime = typeof window !== "undefined"
 function RuntimeControlCenter(): ReactElement {
   const [snapshot, setSnapshot] = useState<SupervisorDashboardSnapshot>();
   const [routeRequest, setRouteRequest] = useState<ControlCenterRouteRequest>({ route: "overview", revision: 0 });
+  const pollerRef = useRef<SupervisorDashboardPollLoop | undefined>(undefined);
 
   useEffect(() => {
     let stopped = false;
@@ -60,27 +61,21 @@ function RuntimeControlCenter(): ReactElement {
 
   useEffect(() => {
     let stopped = false;
-    let inFlight = false;
     const adapter = new NativeSupervisorDashboardAdapter();
-    const poll = async (): Promise<void> => {
-      if (stopped || inFlight) return;
-      inFlight = true;
-      try {
-        const next = await adapter.poll();
-        if (!stopped) setSnapshot(next);
-      } finally {
-        inFlight = false;
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 2500);
+    const poller = new SupervisorDashboardPollLoop(adapter, 2500);
+    pollerRef.current = poller;
+    poller.start(next => { if (!stopped) setSnapshot(next); });
     return () => {
       stopped = true;
-      window.clearInterval(timer);
+      poller.stop();
+      pollerRef.current = undefined;
     };
   }, []);
 
-  return <ControlCenter snapshot={snapshot} live initialActive={routeRequest.route} routeRevision={routeRequest.revision} />;
+  return <ControlCenter snapshot={snapshot} live initialActive={routeRequest.route} routeRevision={routeRequest.revision}
+    onTaskChanged={() => pollerRef.current?.refresh()}
+    onTaskMutationStarted={() => pollerRef.current?.markMutation()}
+  />;
 }
 
 createRoot(root).render(isTauriRuntime ? <RuntimeControlCenter /> : <ControlCenter />);

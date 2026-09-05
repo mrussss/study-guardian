@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { clampProgress, formatFocusMinutes } from "../shared/models/dashboard";
-import { TaskPicker } from "../shared/TaskPicker";
+import { TaskPicker, type TaskPickerAction, type TaskPickerActionResult } from "../shared/TaskPicker";
 import type { NativeTaskPresetList } from "../transport/supervisor";
 
 export type QuickPanelMode = "STANDBY" | "STUDY" | "BREAK" | "OFF";
@@ -31,9 +31,12 @@ export interface QuickPanelProps {
   motivationAvailable?: boolean;
   notice?: string;
   taskPresets?: NativeTaskPresetList;
-  onSelectTask?: (id: string) => Promise<boolean>;
-  onTemporaryTask?: (name: string) => Promise<boolean>;
-  onSaveTask?: (name: string) => Promise<boolean>;
+  onSelectTask?: (id: string) => Promise<TaskPickerActionResult>;
+  onTemporaryTask?: (name: string) => Promise<TaskPickerActionResult>;
+  onSaveTask?: (name: string) => Promise<TaskPickerActionResult>;
+  onOptimisticTaskChange?: (task: string | undefined) => void;
+  onTaskResult?: (result: TaskPickerActionResult, action: TaskPickerAction) => void | Promise<void>;
+  onTaskMutationStarted?: () => void;
   onModeAction?: (mode: "STUDY" | "BREAK" | "OFF") => void;
   onOpenCenter?: () => void;
   onOpenSettings?: () => void;
@@ -63,10 +66,13 @@ export function QuickPanel({
   motivationAvailable = true,
   notice,
   taskPresets,
-  onSelectTask = async () => false,
-  onTemporaryTask = async () => false,
-  onSaveTask = async () => false,
+  onSelectTask = async () => ({ ok: false }),
+  onTemporaryTask = async () => ({ ok: false }),
+  onSaveTask = async () => ({ ok: false }),
   onModeAction,
+  onOptimisticTaskChange,
+  onTaskResult,
+  onTaskMutationStarted,
   onOpenCenter,
   onOpenSettings,
   onClose,
@@ -114,7 +120,7 @@ export function QuickPanel({
           <div className="task-line"><BookOpen size={15} /><span>{task}</span></div>
         </section>
 
-        <TaskPicker currentTask={task} presets={taskPresets} compact disabled={!connected} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} />
+        <TaskPicker currentTask={task} presets={taskPresets} compact disabled={!connected} onOptimisticTaskChange={nextTask => { if (nextTask !== undefined) onTaskMutationStarted?.(); onOptimisticTaskChange?.(nextTask); }} onResult={onTaskResult} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} />
 
         <div className="quick-actions">
           {mode === "BREAK" ? (

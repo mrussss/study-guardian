@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { QuickPanel, type QuickPanelMode } from "./QuickPanel";
-import { NativeSupervisorControlAdapter, NativeSupervisorDashboardAdapter, type SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { NativeSupervisorControlAdapter, NativeSupervisorDashboardAdapter, SupervisorDashboardPollLoop, type SupervisorDashboardSnapshot } from "../transport/supervisor";
 import type { ControlCenterRoute } from "../center/route";
+import type { TaskPickerAction, TaskPickerActionResult } from "../shared/TaskPicker";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
 import "./panel.css";
@@ -41,26 +42,21 @@ function controlNotice(kind: string | undefined): string {
 function RuntimeQuickPanel(): ReactElement {
   const [snapshot, setSnapshot] = useState<SupervisorDashboardSnapshot>();
   const [notice, setNotice] = useState<string>();
+  const [optimisticTask, setOptimisticTask] = useState<string>();
+  const [authoritativeTask, setAuthoritativeTask] = useState<string>();
+  const pollerRef = useRef<SupervisorDashboardPollLoop | undefined>(undefined);
+  const taskMutationRevision = useRef(0);
 
   useEffect(() => {
     let stopped = false;
-    let inFlight = false;
     const adapter = new NativeSupervisorDashboardAdapter();
-    const poll = async (): Promise<void> => {
-      if (stopped || inFlight) return;
-      inFlight = true;
-      try {
-        const next = await adapter.poll();
-        if (!stopped) setSnapshot(next);
-      } finally {
-        inFlight = false;
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 1800);
+    const poller = new SupervisorDashboardPollLoop(adapter, 1800);
+    pollerRef.current = poller;
+    poller.start(next => { if (!stopped) setSnapshot(next); });
     return () => {
       stopped = true;
-      window.clearInterval(timer);
+      poller.stop();
+      pollerRef.current = undefined;
     };
   }, []);
 
@@ -68,16 +64,32 @@ function RuntimeQuickPanel(): ReactElement {
   const motivation = snapshot?.motivation;
   const connected = Boolean(snapshot?.connected && status);
   const mode: QuickPanelMode = status?.user_mode ?? "STANDBY";
-  const task = status?.task || (connected ? "未设置任务" : "正在读取当前任务");
+  const snapshotTask = status?.task || (connected ? "未设置任务" : "正在读取当前任务");
+  useEffect(() => {
+    if (optimisticTask === undefined && status) setAuthoritativeTask(snapshotTask);
+  }, [optimisticTask, snapshotTask, status]);
+  const serverTask = authoritativeTask ?? snapshotTask;
+  useEffect(() => {
+    if (optimisticTask && status?.task === optimisticTask) setOptimisticTask(undefined);
+  }, [optimisticTask, status?.task]);
+  const task = optimisticTask ?? serverTask;
   const elapsed = status ? formatElapsed(mode === "BREAK" ? status.break_seconds : status.study_seconds) : "--:--";
   const motivationAvailable = Boolean(motivation);
   const control = new NativeSupervisorControlAdapter();
 
-  const handleTaskResult = async (operation: Promise<{ ok: boolean; error_kind?: string }>, success: string): Promise<boolean> => {
-    setNotice("正在更新任务…");
-    const result = await operation;
-    setNotice(result.ok ? success : controlNotice(result.error_kind));
-    return result.ok;
+  const handleTaskResult = (operation: Promise<TaskPickerActionResult>): Promise<TaskPickerActionResult> => operation;
+  const handleTaskPickerResult = async (result: TaskPickerActionResult, action: TaskPickerAction): Promise<void> => {
+    const resultRevision = taskMutationRevision.current;
+    setNotice(result.ok ? (action === "save" ? "常用任务已保存并选中" : "当前任务已更新") : controlNotice(result.error_kind));
+    if (result.ok && result.task !== undefined) {
+      setAuthoritativeTask(result.task);
+      setOptimisticTask(undefined);
+    }
+    const refresh = pollerRef.current?.refresh();
+    if (result.ok && result.task === undefined) {
+      await refresh;
+      if (taskMutationRevision.current === resultRevision) setOptimisticTask(undefined);
+    }
   };
 
   const handleModeAction = async (nextMode: "STUDY" | "BREAK" | "OFF"): Promise<void> => {
@@ -104,14 +116,17 @@ function RuntimeQuickPanel(): ReactElement {
     motivationAvailable={motivationAvailable}
     notice={notice}
     taskPresets={snapshot?.task_presets}
-    onSelectTask={id => handleTaskResult(control.selectTaskPreset(id), "当前任务已更新")}
-    onTemporaryTask={name => handleTaskResult(control.setTask(name), "当前任务已更新")}
+    onSelectTask={id => handleTaskResult(control.selectTaskPreset(id))}
+    onTemporaryTask={name => handleTaskResult(control.setTask(name))}
+    onOptimisticTaskChange={nextTask => setOptimisticTask(nextTask === serverTask ? undefined : nextTask)}
+    onTaskMutationStarted={() => { taskMutationRevision.current += 1; pollerRef.current?.markMutation(); }}
+    onTaskResult={handleTaskPickerResult}
     onSaveTask={name => handleTaskResult(control.createTaskPreset(name, true).then(async result => {
       if (!result.ok) return result;
       const latest = await new NativeSupervisorDashboardAdapter().poll();
       const created = latest.task_presets?.pinned.find(item => item.name.toLocaleLowerCase() === name.trim().replace(/\s+/g, " ").toLocaleLowerCase());
       return created ? control.selectTaskPreset(created.id) : control.setTask(name);
-    }), "常用任务已保存并选中")}
+    }))}
     onModeAction={handleModeAction}
     onOpenCenter={() => openControlCenter("overview")}
     onOpenSettings={() => openControlCenter("settings")}

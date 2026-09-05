@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactElement } from "react";
 import {
   Activity,
   ArrowUpRight,
@@ -29,8 +29,8 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
 import { NativeSupervisorControlAdapter, NativeSystemIntegrationAdapter } from "../transport/supervisor";
-import { TaskPicker } from "../shared/TaskPicker";
-import type { NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { TaskPicker, type TaskPickerAction, type TaskPickerActionResult } from "../shared/TaskPicker";
+import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
 
@@ -66,7 +66,7 @@ const missionRows = [
 
 const achievement = { title: "一周坚持", description: "连续打卡 7 天，保持稳定的节奏", progress: .71, detail: "5 / 7 天" };
 
-type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void };
+type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void; onTaskChanged?: () => void | Promise<void>; onTaskMutationStarted?: () => void };
 
 const modeTitle: Record<"STANDBY" | "STUDY" | "BREAK" | "OFF", string> = {
   STANDBY: "准备开始",
@@ -99,12 +99,23 @@ function navGroup(items: NavItem[], active: string, setActive: (id: string) => v
   </nav>;
 }
 
-function Dashboard({ snapshot, live = false, onNavigate }: DashboardProps): ReactElement {
+function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMutationStarted }: DashboardProps): ReactElement {
   const status = snapshot?.status;
   const motivation = snapshot?.motivation;
   const liveData = live && snapshot?.connected === true;
   const currentMode = status?.user_mode ?? (liveData ? "STANDBY" : "STUDY");
-  const currentTask = status?.task || (liveData ? "未设置任务" : "Go Context 与 goroutine");
+  const snapshotTask = status?.task || (liveData ? "未设置任务" : "Go Context 与 goroutine");
+  const [authoritativeTask, setAuthoritativeTask] = useState<string>();
+  const [optimisticTask, setOptimisticTask] = useState<string>();
+  const taskMutationRevision = useRef(0);
+  useEffect(() => {
+    if (optimisticTask === undefined && status) setAuthoritativeTask(snapshotTask);
+  }, [optimisticTask, snapshotTask, status]);
+  const serverTask = authoritativeTask ?? snapshotTask;
+  useEffect(() => {
+    if (optimisticTask && status?.task === optimisticTask) setOptimisticTask(undefined);
+  }, [optimisticTask, status?.task]);
+  const currentTask = optimisticTask ?? serverTask;
   const currentMinutes = motivation?.today_credited_focus_minutes ?? 0;
   const targetMinutes = motivation?.daily_target_minutes ?? 0;
   const progress = motivation?.target_progress ?? (liveData ? 0 : clampProgress(86 / 120));
@@ -125,15 +136,24 @@ function Dashboard({ snapshot, live = false, onNavigate }: DashboardProps): Reac
   const targetLabel = motivation ? `${targetMinutes} min` : liveData ? "—" : "120 min";
   const [taskNotice, setTaskNotice] = useState("");
   const control = new NativeSupervisorControlAdapter();
-  const taskOperation = async (operation: Promise<{ ok: boolean }>, success: string): Promise<boolean> => {
-    const result = await operation;
-    setTaskNotice(result.ok ? success : "当前任务暂时无法更新");
-    return result.ok;
+  const taskOperation = (operation: Promise<ControlResult>): Promise<ControlResult> => operation;
+  const taskResult = async (result: TaskPickerActionResult, action: TaskPickerAction): Promise<void> => {
+    const resultRevision = taskMutationRevision.current;
+    setTaskNotice(result.ok ? (action === "save" ? "常用任务已保存并选中" : "当前任务已更新") : "当前任务暂时无法更新");
+    if (result.ok && result.task !== undefined) {
+      setAuthoritativeTask(result.task);
+      setOptimisticTask(undefined);
+    }
+    const refresh = onTaskChanged?.();
+    if (result.ok && result.task === undefined) {
+      await refresh;
+      if (taskMutationRevision.current === resultRevision) setOptimisticTask(undefined);
+    }
   };
-  const saveTask = async (name: string): Promise<boolean> => {
+  const saveTask = async (name: string): Promise<ControlResult> => {
     const created = await control.createTaskPreset(name, true);
-    if (!created.ok) { setTaskNotice("任务已存在或暂时无法保存"); return false; }
-    return taskOperation(control.setTask(name), "常用任务已保存并选中");
+    if (!created.ok) return created;
+    return taskOperation(control.setTask(name));
   };
   const modeAction = async (next: "STUDY" | "BREAK" | "OFF"): Promise<void> => {
     const result = next === "STUDY" ? await control.setModeStudy(currentTask === "未设置任务" ? "" : currentTask) : next === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
@@ -150,7 +170,16 @@ function Dashboard({ snapshot, live = false, onNavigate }: DashboardProps): Reac
         <div className="hero-topline"><span className="hero-kicker"><span className="live-dot" />当前状态</span><span className="hero-health"><ShieldCheck size={15} />{healthLabel}</span></div>
         <h2 id="current-focus-title">{modeTitle[currentMode]}</h2>
         <p className="hero-task"><BookOpen size={17} />{currentTask}</p>
-        <TaskPicker currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData} onSelect={id => taskOperation(control.selectTaskPreset(id), "当前任务已更新")} onTemporary={name => taskOperation(control.setTask(name), "当前任务已更新")} onSavePinned={saveTask} />
+        <TaskPicker variant="hero" currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData}
+          onOptimisticTaskChange={task => {
+            if (task !== undefined) { taskMutationRevision.current += 1; onTaskMutationStarted?.(); }
+            setOptimisticTask(task === serverTask ? undefined : task);
+          }}
+          onResult={taskResult}
+          onSelect={id => taskOperation(control.selectTaskPreset(id))}
+          onTemporary={name => taskOperation(control.setTask(name))}
+          onSavePinned={saveTask}
+        />
         {taskNotice && <span className="hero-notice" role="status">{taskNotice}</span>}
         <p className="hero-caption">{liveData ? (status?.user_mode === "STUDY" ? `已保持专注 ${formatFocusMinutes(Math.floor(status.study_seconds / 60))}，继续完成眼前这一小段。` : modeCaption) : "已保持专注 42 分钟，继续完成眼前这一小段。"}</p>
         <div className="hero-actions">
@@ -360,7 +389,7 @@ function LiveSection({ active, snapshot, live }: { active: string; snapshot?: Su
   }
 }
 
-export function ControlCenter({ snapshot, live = false, initialActive = "overview", routeRevision = 0 }: DashboardProps): ReactElement {
+export function ControlCenter({ snapshot, live = false, initialActive = "overview", routeRevision = 0, onTaskChanged, onTaskMutationStarted }: DashboardProps): ReactElement {
   const [active, setActive] = useState(initialActive);
   useEffect(() => setActive(initialActive), [initialActive, routeRevision]);
   const serviceLabel = live ? (snapshot?.connected ? "本地服务正常" : "正在连接本地服务") : "本地服务正常";
@@ -376,7 +405,7 @@ export function ControlCenter({ snapshot, live = false, initialActive = "overvie
     </aside>
     <main className="center-main">
       <header className="center-topbar"><div><span className="breadcrumb">StudyGuardian <ChevronRight size={14} />{displayTitle(active)}</span><span className="topbar-note">数据保存在本机</span></div><div className="topbar-actions"><button className="icon-button" type="button" aria-label="查看通知"><Activity size={17} /></button><button className="avatar-button" type="button" aria-label="用户菜单">SG</button></div></header>
-      {active === "overview" ? <Dashboard snapshot={snapshot} live={live} onNavigate={setActive} /> : <LiveSection active={active} snapshot={snapshot} live={live} />}
+      {active === "overview" ? <Dashboard snapshot={snapshot} live={live} onNavigate={setActive} onTaskChanged={onTaskChanged} onTaskMutationStarted={onTaskMutationStarted} /> : <LiveSection active={active} snapshot={snapshot} live={live} />}
     </main>
   </div>;
 }

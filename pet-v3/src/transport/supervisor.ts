@@ -395,6 +395,7 @@ export class NativeSupervisorDashboardAdapter {
 export interface ControlResult {
   ok: boolean;
   error_kind?: ControlErrorKind;
+  task?: string;
 }
 
 const CONTROL_ERROR_KINDS: ControlErrorKind[] = ["timeout", "unauthorized", "unavailable", "invalid_response", "rejected"];
@@ -402,7 +403,7 @@ const CONTROL_ERROR_KINDS: ControlErrorKind[] = ["timeout", "unauthorized", "una
 export function normalizeControlResult(raw: unknown): ControlResult {
   if (!raw || typeof raw !== "object") return { ok: false, error_kind: "invalid_response" };
   const value = raw as Record<string, unknown>;
-  if (value.ok === true) return { ok: true };
+  if (value.ok === true) return { ok: true, ...(boundedText(value.task, 4096) ? { task: value.task } : {}) };
   const kind = value.error_kind;
   return {
     ok: false,
@@ -593,5 +594,115 @@ export class SupervisorPollLoop {
       this.inFlight = false;
       if (this.running) this.timer = setTimeout(() => void this.tick(onSnapshot), this.intervalMs);
     }
+  }
+}
+
+export interface SupervisorDashboardPollScheduler {
+  setTimeout(callback: () => void, delayMs: number): ReturnType<typeof setTimeout>;
+  clearTimeout(timer: ReturnType<typeof setTimeout>): void;
+}
+
+const defaultDashboardPollScheduler: SupervisorDashboardPollScheduler = {
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: timer => clearTimeout(timer),
+};
+
+/** Dashboard polling with queued refreshes and stale-snapshot protection. */
+export class SupervisorDashboardPollLoop {
+  private readonly intervalMs: number;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private inFlight: Promise<void> | null = null;
+  private inFlightRevision: number | null = null;
+  private inFlightKind: "poll" | "refresh" | null = null;
+  private running = false;
+  private refreshQueued = false;
+  private refreshWaiters: Array<() => void> = [];
+  private mutationRevision = 0;
+  private lifecycleRevision = 0;
+  private onSnapshot: ((snapshot: SupervisorDashboardSnapshot) => void) | undefined;
+
+  constructor(private readonly adapter: Pick<NativeSupervisorDashboardAdapter, "poll">, intervalMs = 2500,
+    private readonly scheduler: SupervisorDashboardPollScheduler = defaultDashboardPollScheduler) {
+    this.intervalMs = Math.max(1000, intervalMs);
+  }
+
+  start(onSnapshot: (snapshot: SupervisorDashboardSnapshot) => void): void {
+    if (this.running) return;
+    this.running = true;
+    this.onSnapshot = onSnapshot;
+    const lifecycleRevision = ++this.lifecycleRevision;
+    void this.request("poll", lifecycleRevision);
+  }
+
+  stop(): void {
+    this.running = false;
+    this.lifecycleRevision += 1;
+    this.inFlight = null;
+    this.inFlightRevision = null;
+    this.inFlightKind = null;
+    this.refreshQueued = false;
+    if (this.timer !== null) this.scheduler.clearTimeout(this.timer);
+    this.timer = null;
+    this.resolveRefreshWaiters();
+  }
+
+  markMutation(): void {
+    this.mutationRevision += 1;
+  }
+
+  refresh(): Promise<void> {
+    if (!this.running) return Promise.resolve();
+    const promise = new Promise<void>(resolve => { this.refreshWaiters.push(resolve); });
+    if (this.inFlight !== null) {
+      if (this.inFlightKind === "poll" || this.inFlightRevision !== this.mutationRevision) this.refreshQueued = true;
+      return promise;
+    }
+    if (this.timer !== null) this.scheduler.clearTimeout(this.timer);
+    this.timer = null;
+    void this.request("refresh", this.lifecycleRevision);
+    return promise;
+  }
+
+  isInFlight(): boolean { return this.inFlight !== null; }
+
+  private request(kind: "poll" | "refresh", lifecycleRevision: number): Promise<void> {
+    if (!this.running || lifecycleRevision !== this.lifecycleRevision) return Promise.resolve();
+    if (this.inFlight !== null) return this.inFlight;
+    const requestRevision = this.mutationRevision;
+    this.inFlightRevision = requestRevision;
+    this.inFlightKind = kind;
+    const work = Promise.resolve()
+      .then(() => this.adapter.poll())
+      .then(snapshot => {
+        if (this.running && lifecycleRevision === this.lifecycleRevision && requestRevision === this.mutationRevision) this.onSnapshot?.(snapshot);
+      })
+      .catch(() => { /* adapters normalize transport errors */ })
+      .finally(() => {
+        if (lifecycleRevision !== this.lifecycleRevision) return;
+        this.inFlight = null;
+        if (!this.running) {
+          this.resolveRefreshWaiters();
+        } else if (this.refreshQueued) {
+          this.refreshQueued = false;
+          this.inFlightRevision = null;
+          this.inFlightKind = null;
+          void this.request("refresh", lifecycleRevision);
+        } else {
+          this.inFlightRevision = null;
+          this.inFlightKind = null;
+          this.resolveRefreshWaiters();
+          this.timer = this.scheduler.setTimeout(() => {
+            this.timer = null;
+            if (this.running && lifecycleRevision === this.lifecycleRevision) void this.request("poll", lifecycleRevision);
+          }, this.intervalMs);
+        }
+      });
+    this.inFlight = work;
+    return work;
+  }
+
+  private resolveRefreshWaiters(): void {
+    const waiters = this.refreshWaiters.splice(0);
+    waiters.forEach(resolve => resolve());
   }
 }

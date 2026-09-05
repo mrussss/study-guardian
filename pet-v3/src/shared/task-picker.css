@@ -19,3 +19,19 @@
 .task-picker.is-compact .task-picker-current strong { text-align: right; }
 .task-picker.is-compact .task-create-row { grid-template-columns: 1fr 1fr; }
 .task-picker.is-compact .task-create-row input { grid-column: 1 / -1; }
+.task-picker.is-hero { gap: 9px; padding: 11px 0; color: #fff; background: rgba(12, 11, 39, .3); border-color: rgba(255, 255, 255, .13); border-radius: 12px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
+.task-picker.is-hero .task-picker-current { display: none; }
+.task-picker.is-hero .task-picker-group { padding-inline: 13px; }
+.task-picker.is-hero .task-picker-group > span { color: #aaa7cb; }
+.task-picker.is-hero .task-chip-row em { color: #aaa7cb; }
+.task-picker.is-hero .task-chip { color: #e7e5ff; background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .16); }
+.task-picker.is-hero .task-chip:hover { color: #fff; background: rgba(255, 255, 255, .15); border-color: rgba(255, 255, 255, .3); }
+.task-picker.is-hero .task-chip.is-active { color: #27234f; background: #fff; border-color: #fff; }
+.task-picker.is-hero .task-chip-add { color: #cbc6f7; }
+.task-picker.is-hero .task-chip:disabled { opacity: 1; }
+.task-picker.is-hero .task-chip[aria-busy="true"] { cursor: wait; box-shadow: 0 0 0 2px rgba(255, 255, 255, .14); }
+.task-picker.is-hero .task-create-row { padding-inline: 13px; }
+.task-picker.is-hero .task-create-row input { color: #fff; background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .16); }
+.task-picker.is-hero .task-create-row button { color: #e7e5ff; background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .16); }
+.task-picker.is-hero .task-create-row button.is-primary { color: #27234f; background: #fff; border-color: #fff; }
+.task-picker.is-hero .task-create-row button:disabled { opacity: .55; }
