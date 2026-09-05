@@ -122,7 +122,7 @@
 - [x] 99. DAILY_REVIEW_READY ui_event
 - [x] 100. Pet / Study Center Review UI（含安全 evidence exclusion）
 - [x] Retention cleanup（启动时及每日 worker 原子清理；保留 daily reviews、sessions 与 Study Forest 数据）
-- [~] 101. Full Windows E2E（Tauri native transport、生产 Study/Break 控制面板、5px click/drag 仲裁、drag/shadow/dev-panel Fix Pack、Node 17 项/Rust 6 项 checks 与新 `tauri dev` 进程启动已通过；原生窗口视觉/UI、真实 Supervisor mode/error、Study Center/Review 入口与完整 Windows E2E 待人工验收）
+- [~] 101. Full Windows E2E（Tauri native transport、生产 Study/Break 控制面板、production EXE 与部署、single-instance UI shell、Node 20 项/Rust 14 项已通过；原生窗口视觉/输入、真实 mode/error 和完整 Windows E2E 待人工验收）
 
 ## Phase 9: Trial
 
@@ -142,10 +142,10 @@
 - [~] 108. Stage D/E 已接入受限 native Supervisor dashboard DTO（status、motivation、history、
   achievements、missions、rewards、AI status）与 Quick Panel 实时 mode/task/进度/模式控制；
   Control Center 其余页面、Review/Study Center parity 与原生窗口人工 Gate 待完成
-- [~] 109. Stage F/G 已完成每日目标 typed native control（1–1440 校验、atomic
-  motivation storage 写入、bounded result）与 Control Center 设置页；完整配置编辑、
-  AI configured-only DTO 与其余设置项待完成
-- [ ] 110. Stage H/J tray unification、production cleanup 与现代 UI Windows visual acceptance
+- [~] 109. Stage F/G 已完成每日目标、quiet periods、AI provider/model/URL/secret/test、
+  configured-only DTO、运行时重载和 autostart native toggle；其余 Screen/Privacy 配置仍待完成
+- [~] 110. Stage H/J 已完成 tray 入口、single-instance、production EXE、稳定 Launcher 与部署；
+  Tauri Pet 默认切换和现代 UI Windows visual acceptance 待人工 Gate
 
 
 ### 2026-09-04 重启后输入修复补充
@@ -154,3 +154,19 @@
 - Pet 候选改为原生 CSS 拖动 + 独立“学习面板”按钮；完整真人 50 次拖动 / 20 次点击 / 10 次交替仍待验收，详见 `docs/PET_INPUT_ARCH_DECISION.md`。
 - Task 110 已增加托盘 UI 入口，但生产统一切换和完整视觉验收仍未完成。
 - Task 109 的完整设置范围没有在本轮宣称完成。
+
+## Phase 11: Product completion pack
+
+- [x] 111. Task presets、置顶与 recent study tasks
+- [x] 112. Active-session task persistence 与 restart recovery
+- [x] 113. Reminder quiet periods、24:00 校验与 no-debt behavior
+- [x] 114. AI Settings、脱敏 API 与原子 secret 管理
+- [~] 115. Provider connection test 与 runtime status（真实 provider credential E2E 未运行）
+- [x] 116. Offline Daily Review v2 与事实型 fallback
+- [x] 117. OFF-state Review UX、immediate generate 与 debounce generate
+- [~] 118. Feature-pack Windows E2E（自动化与进程级启动通过；设置 UI 人工流程待验收）
+- [~] 119. Unified Windows Launcher 与 single-instance activation（进程级重复激活通过；窗口焦点待人工确认）
+- [~] 120. Windows autostart integration（安装/卸载测试通过；真实重启/登录 Gate 未运行）
+- [~] 121. Desktop shortcut integration（真实快捷方式和冷/重复启动通过；窗口焦点待人工确认）
+- [~] 122. Tauri v3 Windows production packaging/deploy/runtime selection（build/deploy PASS；cutover PENDING USER GATE）
+- [~] 123. Windows startup integration E2E（1 个逻辑 PyQt Pet、Supervisor、Sensor、watchdog 和 Tauri UI shell；reboot/sign-in 未运行）

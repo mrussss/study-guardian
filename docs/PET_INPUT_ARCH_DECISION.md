@@ -131,3 +131,9 @@ Hybrid 的 PyQt 仅承担宠物绘制、拖动、点击/右击、小状态和提
 - 尚未收到用户物理鼠标压力测试反馈。**50 次拖动、20 次人工点击、10 次交替循环与长拖动仍为 PENDING，不据此标记正式稳定或推进完整 Settings。**
 
 完整本机身份文件位于会话 `work/candidate-pet-final/` 的 `build-proof.json`、`runtime-proof.json`、`source-manifest.json` 与 `asset-manifest.json`。这些为脱敏构建身份文件，不含 token、业务记录或屏幕内容。
+
+## v1.0 production candidate 更新（2026-09-05）
+
+Windows/MSVC release 构建现已纳入 `build-windows.sh`，稳定产物和部署路径为 `pet-v3/StudyGuardian.exe`。本次部署文件大小 10,287,616 bytes，SHA-256 为 `469322f4a12430f6c4678390f5781c6327053f44ffc0a2e65261700e503e0af2`。Tauri single-instance IPC 和 `--no-pet` UI-shell 模式已接入稳定 Launcher；真实桌面快捷方式冷启动和重复启动后保持一个 Tauri UI shell。
+
+`D:\StudyGuardianDev\config\runtime.json` 仍明确选择 `pyqt`。production artifact 和基础 single-instance 证据不替代 50 次拖动、20 次点击、10 次交替循环及视觉焦点 Gate，因此本更新不批准 Tauri Pet 默认切换。

@@ -62,3 +62,11 @@ StudyGuardian 采用模块化解耦的单机分布式协作架构，各组件职
 4. **规则优先，AI 兜底 (Rules First, AI Fallback)**：
    - 确定性黑白名单与任务关键词匹配优先判断。
    - 模糊歧义场景调用结构化 AI 分类并进行多维哈希缓存（TTL 10分钟）。
+
+## 3. Windows 产品运行时
+
+`scripts/launch-studyguardian.ps1` 是用户和 Windows Shell 的稳定入口。它从脚本所在目录推导安装根目录，幂等启动 ActivityWatch、Sensor、Supervisor、选定 Pet 和 watchdog，然后通过参数激活 Tauri Quick Panel 或 Control Center。Tauri 使用 single-instance IPC；第二次启动把限定的 `--show` 请求交给已有进程。
+
+`config/runtime.json` 是 Pet 选择真源。`pyqt` 为人工输入 Gate 前的默认值；Tauri production EXE 始终随部署交付，可在 PyQt 模式下以 `--no-pet` 作为现代 Control Center shell。部署只替换程序拥有的路径，并保护 config、data、logs、run、handoff 和 Python venv。
+
+Reminder quiet periods 持久化在 canonical settings 中，默认是 12:00–14:00、17:30–19:00、21:00–24:00。进入或离开 quiet period 会重设提醒基线，因此不会在结束后补发提醒债务。

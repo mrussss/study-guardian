@@ -36,3 +36,9 @@ Windows 上可运行 `scripts/configure-ai.ps1`。脚本先生成带时间戳的
 视觉请求只在文本分类结果仍为 `UNKNOWN` 或低于最小置信度、且调用方提供经过隐私门禁和缩放的 `analysis_image_base64` 时发送；敏感应用/域名不会进入视觉请求。实际流程是 `Rules -> Text AI -> Vision AI fallback`，而不是“只要有截图就直接走 Vision”。文本和视觉请求分别使用配置的 timeout（默认 6 秒 / 8 秒），不再由 Classifier 统一压成 3 秒。
 
 开发测试若使用 `fake`，必须同时设置 `ai.developer_mode: true`；生产配置中 fake 会被强制关闭。
+
+## Control Center 设置与 Secret
+
+现代 Control Center 通过 `/v1/settings/ai` 保存文本和视觉端点，并在保存后立即重建运行时 provider。`GET /v1/settings/ai` 只返回脱敏配置和 `secret_configured`，不会返回 key、secret 文件名或绝对路径。
+
+密钥使用 `/v1/settings/ai/secret` 单独写入或删除。Supervisor 在 `config/secrets` 中原子替换密钥文件；React 输入框不回显已经保存的值。`POST /v1/settings/ai/test` 会向选定 provider 发出最小结构化请求，并只返回 provider、model、延迟和有限错误种类。没有真实凭据时不得把连接测试标记为 PASS。

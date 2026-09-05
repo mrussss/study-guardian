@@ -82,6 +82,23 @@ fake display context、localhost fixture 和部署 smoke 不能替代下列项�
 - [ ] 仅当用户已配置真实 Review Provider credential 时，在隔离测试数据上做
   一次 smoke；否则记录 fallback PASS，不打印或提交 credential。
 
+## G. Windows 稳定入口与开机启动（Tasks 119–123）
+
+- [ ] 停止运行时后双击桌面 `StudyGuardian`，确认 Supervisor、Sensor、配置的
+  Pet 和 watchdog 启动，Control Center 可见且获得焦点。
+- [ ] 再双击一次，确认仍只有一个逻辑 Pet、一个 Supervisor、一个 Sensor、
+  一个 watchdog 和一个 Tauri UI shell，已有 Control Center 被恢复到前台。
+- [ ] 在 Settings 打开开机启动，确认实际 Startup 文件夹出现唯一快捷方式。
+- [ ] 注销登录或重启；不要手动启动，确认后台运行且 Control Center 不被强制打开，
+  没有持久 PowerShell 控制台。
+- [ ] 从 Settings 关闭开机启动，再次登录确认系统不自动启动。
+- [ ] Tauri 默认切换前完成 50 次真实拖动、20 次真实点击和 10 次 click/drag 交替，
+  并验证托盘恢复、穿透切换、Quick Panel 和 Control Center 重复打开。
+
+2026-09-05 自动化/进程级证据：production EXE、部署、桌面冷启动和重复激活均成功；
+重复启动后为 1 个 Supervisor、1 个逻辑 PyQt Pet、1 个 Tauri UI shell、1 个
+watchdog。窗口视觉焦点、真实拖动/点击及重启登录仍必须人工验收。
+
 ## 证据记录
 
 每项记录日期、源码 HEAD、Windows 部署版本、动作时间、观察结果和日志/API

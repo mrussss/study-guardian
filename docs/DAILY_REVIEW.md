@@ -18,3 +18,9 @@ Review 单测；实现不会新增白天 Screen capture 或 Vision 调用。
 - Task 101 Full Windows E2E；
 - Task 102–104 的长期试运行、Collector 审计和 Review factuality audit；
 - Task 89 的真实 Chrome + ChatGPT E2E 仍受 Debugger unattached 阻塞。
+
+## Deterministic fallback v2
+
+AI 关闭、未配置或请求失败时，Review 使用本机证据生成 `generation_mode=FALLBACK` 的事实型总结。主任务按 credited study duration 和最后活动排序；主题证据顺序为 task、semantic snapshot、eligible chat turn。输出明确分为“今日进展”“可以确认”“不能确认”和与真实任务相关的明日优先级，不会把停留时长推断成掌握、完成或质量评价。
+
+结束学习后的 debounce 仍会自动生成 Review；Control Center 也可以立即生成。UI 将 `FALLBACK` 显示为“本地总结”，只有通过 provider、sanitizer 和 validator 的结果才显示为 AI 总结。默认免打扰时段只抑制提醒，不停止数据记录或 Review 生成。

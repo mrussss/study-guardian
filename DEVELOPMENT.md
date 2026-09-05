@@ -16,12 +16,21 @@
 
 ### Windows 启动与停止 (PowerShell)
 ```powershell
-# 启动所有组件 (ActivityWatch + Supervisor + Sensor + Pet)
-powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\start-all.ps1
+# 用户入口：启动组件并打开已有或新的 Control Center
+powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\launch-studyguardian.ps1 -OpenControlCenter
+
+# 后台启动所有组件
+powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\launch-studyguardian.ps1 -Background
 
 # 停止所有组件
 powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\stop-all.ps1
+
+# 创建桌面入口；开机启动保持用户当前选择
+powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\install-windows-integration.ps1
 ```
+
+Pet 运行时由 `D:\StudyGuardianDev\config\runtime.json` 选择。人工 Tauri Pet Gate
+通过前保持 `{"pet_runtime":"pyqt"}`。详见 `docs/WINDOWS_RUNTIME.md`。
 
 ---
 
@@ -44,4 +53,7 @@ python3 tests/integration/test_phase4_ai.py
 
 # 4. 运行部署安全测试
 ./tests/test_deploy_safety.sh
+
+# 5. Windows PowerShell 路径与快捷方式测试
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\test-windows-integration.ps1
 ```
