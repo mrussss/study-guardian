@@ -199,6 +199,14 @@ export interface NativeReviewSummary {
   behavior: { distraction_count: number; largest_distraction_seconds: number; average_recovery_seconds: number };
   tomorrow_priority: string;
   warnings: string[];
+  status: "PENDING" | "READY" | "STALE" | "FAILED";
+  generation_mode: "AI" | "FALLBACK" | "";
+  provider: string;
+  model: string;
+  revision: number;
+  attempt_count: number;
+  error_code?: string;
+  warnings_count: number;
 }
 
 export interface SupervisorDashboardSnapshot {
@@ -343,6 +351,14 @@ function normalizedReview(value: unknown): NativeReviewSummary | undefined {
     },
     tomorrow_priority: value.tomorrow_priority,
     warnings: value.warnings,
+    status: ["PENDING", "READY", "STALE", "FAILED"].includes(value.status as string) ? value.status as NativeReviewSummary["status"] : "FAILED",
+    generation_mode: ["AI", "FALLBACK", ""].includes(value.generation_mode as string) ? value.generation_mode as NativeReviewSummary["generation_mode"] : "",
+    provider: boundedText(value.provider, 64) ? value.provider : "",
+    model: boundedText(value.model, 128) ? value.model : "",
+    revision: nonNegativeInteger(value.revision) ? value.revision : 0,
+    attempt_count: nonNegativeInteger(value.attempt_count) ? value.attempt_count : 0,
+    ...(boundedText(value.error_code, 64) ? { error_code: value.error_code } : {}),
+    warnings_count: nonNegativeInteger(value.warnings_count) ? value.warnings_count : value.warnings.length,
   };
 }
 
@@ -418,6 +434,7 @@ export interface SupervisorControlAdapter {
   putAISecret(target: "text" | "vision", apiKey: string): Promise<ControlResult>;
   deleteAISecret(target: "text" | "vision"): Promise<ControlResult>;
   testAIConnection(target: "text" | "vision"): Promise<NativeAIConnectionResult>;
+  generateReview(): Promise<ControlResult>;
   setDailyTarget(minutes: number): Promise<ControlResult>;
 }
 
@@ -476,6 +493,10 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
       if (!record(raw) || typeof raw.ok !== "boolean" || !boundedText(raw.provider, 64) || !boundedText(raw.model, 128) || !nonNegativeInteger(raw.latency_ms) || (raw.error_kind !== undefined && raw.error_kind !== null && !boundedText(raw.error_kind, 64))) return { ok: false, provider: "", model: "", latency_ms: 0, error_kind: "invalid_response" };
       return { ok: raw.ok, provider: raw.provider, model: raw.model, latency_ms: raw.latency_ms, ...(typeof raw.error_kind === "string" ? { error_kind: raw.error_kind as NativeAIConnectionResult["error_kind"] } : {}) };
     } catch { return { ok: false, provider: "", model: "", latency_ms: 0, error_kind: "unavailable" }; }
+  }
+
+  generateReview(): Promise<ControlResult> {
+    return this.invokeControl("supervisor_generate_review", {});
   }
 
   setDailyTarget(minutes: number): Promise<ControlResult> {

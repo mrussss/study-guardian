@@ -66,7 +66,7 @@ const missionRows = [
 
 const achievement = { title: "一周坚持", description: "连续打卡 7 天，保持稳定的节奏", progress: .71, detail: "5 / 7 天" };
 
-type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number };
+type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void };
 
 const modeTitle: Record<"STANDBY" | "STUDY" | "BREAK" | "OFF", string> = {
   STANDBY: "准备开始",
@@ -99,7 +99,7 @@ function navGroup(items: NavItem[], active: string, setActive: (id: string) => v
   </nav>;
 }
 
-function Dashboard({ snapshot, live = false }: DashboardProps): ReactElement {
+function Dashboard({ snapshot, live = false, onNavigate }: DashboardProps): ReactElement {
   const status = snapshot?.status;
   const motivation = snapshot?.motivation;
   const liveData = live && snapshot?.connected === true;
@@ -157,7 +157,7 @@ function Dashboard({ snapshot, live = false }: DashboardProps): ReactElement {
           {currentMode === "STUDY" && <><button className="primary-button" type="button" onClick={() => void modeAction("BREAK")}><CoffeeIcon />休息一下</button><button className="secondary-button" type="button" onClick={() => void modeAction("OFF")}>结束学习</button></>}
           {currentMode === "BREAK" && <><button className="primary-button" type="button" onClick={() => void modeAction("STUDY")}><Play size={17} />继续学习</button><button className="secondary-button" type="button" onClick={() => void modeAction("OFF")}>结束今天</button></>}
           {currentMode === "STANDBY" && <button className="primary-button" type="button" onClick={() => void modeAction("STUDY")}><Play size={17} />开始学习</button>}
-          {currentMode === "OFF" && <><button className="primary-button" type="button"><BookOpen size={17} />查看今日复盘</button><button className="secondary-button" type="button" onClick={() => void modeAction("STUDY")}>重新开始学习</button></>}
+          {currentMode === "OFF" && <><button className="primary-button" type="button" onClick={() => onNavigate?.("review")}><BookOpen size={17} />查看今日复盘</button><button className="secondary-button" type="button" onClick={() => void modeAction("STUDY")}>重新开始学习</button></>}
         </div>
       </div>
       <div className="hero-progress" aria-label={motivation ? `今日目标 ${progressLabel}` : "今日目标等待数据"}>
@@ -202,9 +202,9 @@ function Dashboard({ snapshot, live = false }: DashboardProps): ReactElement {
       </section>
 
       <section className="surface-section review-section" aria-labelledby="review-title">
-        <div className="section-header"><div><h2 id="review-title">今日复盘</h2><p>结束学习后自动整理</p></div><span className="review-badge">待生成</span></div>
-        <div className="review-body"><span className="review-icon"><BarChart3 size={20} /></span><div><strong>今天的故事还在继续</strong><span>完成一次学习后，就能看到今天的进展摘要。</span></div></div>
-        <button className="section-link" type="button">打开学习复盘<ChevronRight size={16} /></button>
+        <div className="section-header"><div><h2 id="review-title">今日复盘</h2><p>{snapshot?.review ? (snapshot.review.generation_mode === "AI" ? "AI 总结" : "本地总结 · 未使用云端 AI") : "结束学习后自动整理"}</p></div><span className="review-badge">{snapshot?.review?.status === "READY" ? "已生成" : "待生成"}</span></div>
+        <div className="review-body"><span className="review-icon"><BarChart3 size={20} /></span><div><strong>{snapshot?.review?.headline ?? "今天的故事还在继续"}</strong><span>{snapshot?.review ? snapshot.review.tomorrow_priority : "完成一次学习后，就能看到今天的进展摘要。"}</span></div></div>
+        <button className="section-link" type="button" onClick={() => onNavigate?.("review")}>{snapshot?.review ? "查看今日总结" : "打开学习复盘"}<ChevronRight size={16} /></button>
       </section>
     </div>
   </div>;
@@ -237,9 +237,12 @@ function HistoryPage({ history }: { history?: SupervisorDashboardSnapshot["histo
 }
 
 function ReviewPage({ review }: { review?: NativeReviewSummary }): ReactElement {
-  return <DataPage title="学习复盘" description="只读摘要来自 canonical Review，不包含 evidence refs 或原始聊天内容。"><section className="surface-section data-card">{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · 已生成</p></div><span className="review-badge">安全摘要</span></div><div className="review-detail-grid"><div><span className="eyebrow">主题</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>暂无主题</p>}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div></div></> : <EmptyData text="今天还没有可用的复盘摘要" />}</section></DataPage>;
+  const [notice, setNotice] = useState("");
+  const generate = async (): Promise<void> => { setNotice("正在整理本地证据…"); const result = await new NativeSupervisorControlAdapter().generateReview(); setNotice(result.ok ? "今日总结已生成，正在刷新" : "今日总结暂时无法生成"); };
+  const label = review?.generation_mode === "AI" ? "AI 总结" : "本地总结";
+  const reason = review?.generation_mode === "FALLBACK" ? (review.error_code && review.error_code !== "provider_not_configured" ? "AI 暂时不可用，本次已自动使用本地总结。" : "尚未配置 AI，本次使用本地证据生成。") : "通过 Provider、净化和校验链路生成。";
+  return <DataPage title="学习复盘" description="摘要来自 canonical Review，不展示原始聊天或屏幕内容。"><section className="surface-section data-card">{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · {reason}</p></div><span className="review-badge">{label}</span></div><div className="review-detail-grid"><div><span className="eyebrow">主题</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>暂无足够主题证据</p>}</div><div><span className="eyebrow">不能确认</span>{review.unfinished.map(item => <p key={item}>{item}</p>)}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div><div><span className="eyebrow">诊断</span><p>{review.status} · revision {review.revision} · attempt {review.attempt_count} · warnings {review.warnings_count}</p></div></div>{review.status === "STALE" && <button className="primary-button" type="button" onClick={() => void generate()}>更新今日总结</button>}</> : <div className="review-generate-empty"><EmptyData text="今日总结将在结束学习后约 5 分钟自动生成" /><button className="primary-button" type="button" onClick={() => void generate()}>立即生成</button></div>}{notice && <span className="settings-notice" role="status">{notice}</span>}</section></DataPage>;
 }
-
 function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
   const status = snapshot?.status;
   const ai = snapshot?.ai;
@@ -358,7 +361,7 @@ export function ControlCenter({ snapshot, live = false, initialActive = "overvie
     </aside>
     <main className="center-main">
       <header className="center-topbar"><div><span className="breadcrumb">StudyGuardian <ChevronRight size={14} />{displayTitle(active)}</span><span className="topbar-note">数据保存在本机</span></div><div className="topbar-actions"><button className="icon-button" type="button" aria-label="查看通知"><Activity size={17} /></button><button className="avatar-button" type="button" aria-label="用户菜单">SG</button></div></header>
-      {active === "overview" ? <Dashboard snapshot={snapshot} live={live} /> : <LiveSection active={active} snapshot={snapshot} live={live} />}
+      {active === "overview" ? <Dashboard snapshot={snapshot} live={live} onNavigate={setActive} /> : <LiveSection active={active} snapshot={snapshot} live={live} />}
     </main>
   </div>;
 }

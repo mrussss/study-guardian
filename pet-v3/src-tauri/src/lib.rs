@@ -974,6 +974,14 @@ fn sanitize_review(value: &Value) -> Result<Value, NativeErrorKind> {
         "behavior": safe_behavior,
         "tomorrow_priority": text_field(object, "tomorrow_priority", 512)?,
         "warnings": warnings,
+        "status": enum_field(object, "status", &["PENDING", "READY", "STALE", "FAILED"] )?,
+        "generation_mode": enum_field(object, "generation_mode", &["AI", "FALLBACK", ""] )?,
+        "provider": text_field(object, "provider", 64)?,
+        "model": text_field(object, "model", 128)?,
+        "revision": non_negative_i64_field(object, "revision")?,
+        "attempt_count": non_negative_i64_field(object, "attempt_count")?,
+        "error_code": optional_text_field(object, "error_code", 64)?,
+        "warnings_count": non_negative_i64_field(object, "warnings_count")?,
     }))
 }
 
@@ -1229,7 +1237,7 @@ struct AIEndpointInput {
 struct AISettingsInput { enabled: bool, min_confidence: f64, text: AIEndpointInput, vision: AIEndpointInput }
 
 fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value, NativeErrorKind> {
-    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("POST", "/v1/settings/ai/test"));
+    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("POST", "/v1/settings/ai/test") | ("POST", "/v1/review/generate"));
     if !allowed { return Err(NativeErrorKind::Rejected); }
     let (host, port, token) = supervisor_credentials()?;
     if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
@@ -1283,6 +1291,16 @@ async fn supervisor_test_ai_connection(target: String) -> Value {
             Ok(json!({ "ok": bool_field(row, "ok")?, "provider": text_field(row, "provider", 64)?, "model": text_field(row, "model", 128)?, "latency_ms": non_negative_i64_field(row, "latency_ms")?, "error_kind": optional_text_field(row, "error_kind", 64)? }))
         }) { Ok(value) => value, Err(kind) => json!({ "ok": false, "provider": "", "model": "", "latency_ms": 0, "error_kind": kind.as_str() }) }
     }).await.unwrap_or_else(|_| json!({ "ok": false, "provider": "", "model": "", "latency_ms": 0, "error_kind": "unavailable" }))
+}
+
+#[tauri::command]
+async fn supervisor_generate_review() -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        match ai_supervisor_request("POST", "/v1/review/generate", b"{}") {
+            Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
+            Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        }
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1514,6 +1532,7 @@ pub fn run() {
             supervisor_put_ai_secret,
             supervisor_delete_ai_secret,
             supervisor_test_ai_connection,
+            supervisor_generate_review,
             supervisor_set_daily_target,
             open_quick_panel,
             hide_quick_panel,
@@ -1794,6 +1813,14 @@ mod tests {
             "behavior": {"distraction_count": 1, "largest_distraction_seconds": 30, "average_recovery_seconds": 20},
             "tomorrow_priority": "继续练习",
             "warnings": ["仅供复盘"],
+            "status": "READY",
+            "generation_mode": "FALLBACK",
+            "provider": "",
+            "model": "",
+            "revision": 1,
+            "attempt_count": 1,
+            "error_code": "provider_not_configured",
+            "warnings_count": 1,
             "raw_chat": "must never cross the native boundary",
         }))
         .expect("valid review");

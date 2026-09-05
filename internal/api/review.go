@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"study-guardian/internal/review"
 	"study-guardian/internal/storage"
 )
 
@@ -41,7 +42,23 @@ func (s *Server) handleReviewDaily(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err, http.StatusInternalServerError)
 		return
 	}
-	jsonOK(w, record)
+	var document review.Document
+	if err := json.Unmarshal([]byte(record.ReviewJSON), &document); err != nil {
+		jsonError(w, fmt.Errorf("review document unavailable"), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, struct {
+		review.Document
+		Status         string `json:"status"`
+		GenerationMode string `json:"generation_mode"`
+		Provider       string `json:"provider"`
+		Model          string `json:"model"`
+		Revision       int    `json:"revision"`
+		AttemptCount   int    `json:"attempt_count"`
+		ErrorCode      string `json:"error_code,omitempty"`
+		WarningsCount  int    `json:"warnings_count"`
+		Markdown       string `json:"markdown"`
+	}{Document: document, Status: record.Status, GenerationMode: record.GenerationMode, Provider: record.Provider, Model: record.Model, Revision: record.Revision, AttemptCount: record.AttemptCount, ErrorCode: record.ErrorCode, WarningsCount: len(document.Warnings), Markdown: record.Markdown})
 }
 
 func (s *Server) handleReviewGenerate(w http.ResponseWriter, r *http.Request) {
