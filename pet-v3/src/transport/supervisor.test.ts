@@ -1,7 +1,45 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { mockSemantic } from "../mock/semantic";
-import { NativeSupervisorControlAdapter, normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter } from "./supervisor";
+import { NativeSupervisorControlAdapter, normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, SupervisorDashboardPollLoop, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter, type SupervisorDashboardPollScheduler, type SupervisorDashboardSnapshot } from "./supervisor";
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) await Promise.resolve();
+}
+
+function createFakeScheduler(): SupervisorDashboardPollScheduler & { pendingCount(): number; runNext(): void } {
+  let nextId = 0;
+  const callbacks = new Map<number, () => void>();
+  return {
+    setTimeout(callback) {
+      const id = ++nextId;
+      callbacks.set(id, callback);
+      return id as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimeout(timer) {
+      callbacks.delete(timer as unknown as number);
+    },
+    pendingCount() {
+      return callbacks.size;
+    },
+    runNext() {
+      const next = callbacks.entries().next();
+      if (next.done) return;
+      callbacks.delete(next.value[0]);
+      next.value[1]();
+    },
+  };
+}
 
 test("control results expose only bounded success or error kinds", () => {
   assert.deepEqual(normalizeControlResult({ ok: true, token: "ignored", path: "ignored" }), { ok: true });
@@ -117,4 +155,148 @@ test("poll loop prevents overlap and stops cleanly", async () => {
   assert.equal(maxActive, 1);
   assert.equal(snapshots, 1);
   assert.equal(loop.isInFlight(), false);
+});
+
+test("dashboard refresh queues behind an in-flight poll and drops stale snapshots", async () => {
+  let releaseFirst!: () => void;
+  const first = new Promise<void>(resolve => { releaseFirst = resolve; });
+  let calls = 0;
+  const stale = { connected: true } as SupervisorDashboardSnapshot;
+  const fresh = { connected: true } as SupervisorDashboardSnapshot;
+  const snapshots: SupervisorDashboardSnapshot[] = [];
+  const loop = new SupervisorDashboardPollLoop({
+    poll: async () => {
+      calls += 1;
+      if (calls === 1) await first;
+      return calls === 1 ? stale : fresh;
+    },
+  }, 1000);
+
+  loop.start(snapshot => snapshots.push(snapshot));
+  await Promise.resolve();
+  assert.equal(loop.isInFlight(), true);
+  loop.markMutation();
+  let finished = false;
+  const refresh = loop.refresh().then(() => { finished = true; });
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  assert.equal(finished, false);
+  releaseFirst();
+  await refresh;
+  assert.equal(calls, 2);
+  assert.deepEqual(snapshots, [fresh]);
+  loop.stop();
+});
+
+test("dashboard coalesces repeated refreshes and resolves every waiter after one follow-up", async () => {
+  const first = deferred<SupervisorDashboardSnapshot>();
+  const second = deferred<SupervisorDashboardSnapshot>();
+  const scheduler = createFakeScheduler();
+  let calls = 0;
+  const stale = { connected: true } as SupervisorDashboardSnapshot;
+  const fresh = { connected: true } as SupervisorDashboardSnapshot;
+  const snapshots: SupervisorDashboardSnapshot[] = [];
+  const loop = new SupervisorDashboardPollLoop({
+    poll: () => {
+      calls += 1;
+      return calls === 1 ? first.promise : second.promise;
+    },
+  }, 1000, scheduler);
+
+  loop.start(snapshot => snapshots.push(snapshot));
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  loop.markMutation();
+  let firstWaiterDone = false;
+  let secondWaiterDone = false;
+  const refreshA = loop.refresh().then(() => { firstWaiterDone = true; });
+  const refreshB = loop.refresh().then(() => { secondWaiterDone = true; });
+  first.resolve(stale);
+  await flushMicrotasks();
+  assert.equal(calls, 2);
+  assert.equal(firstWaiterDone, false);
+  assert.equal(secondWaiterDone, false);
+  second.resolve(fresh);
+  await Promise.all([refreshA, refreshB]);
+  assert.deepEqual(snapshots, [fresh]);
+  assert.equal(calls, 2);
+  loop.stop();
+});
+
+test("dashboard stop resolves refresh waiters and blocks stale publish or timer re-arm", async () => {
+  const first = deferred<SupervisorDashboardSnapshot>();
+  const scheduler = createFakeScheduler();
+  let calls = 0;
+  const snapshots: SupervisorDashboardSnapshot[] = [];
+  const loop = new SupervisorDashboardPollLoop({
+    poll: async () => {
+      calls += 1;
+      return first.promise;
+    },
+  }, 1000, scheduler);
+
+  loop.start(snapshot => snapshots.push(snapshot));
+  await flushMicrotasks();
+  loop.markMutation();
+  let refreshDone = false;
+  const refresh = loop.refresh().then(() => { refreshDone = true; });
+  loop.stop();
+  await refresh;
+  assert.equal(refreshDone, true);
+  first.resolve({ connected: true } as SupervisorDashboardSnapshot);
+  await flushMicrotasks();
+  scheduler.runNext();
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  assert.deepEqual(snapshots, []);
+  assert.equal(scheduler.pendingCount(), 0);
+});
+
+test("dashboard recovers from a polling exception on the next manual refresh", async () => {
+  const second = deferred<SupervisorDashboardSnapshot>();
+  const scheduler = createFakeScheduler();
+  const snapshots: SupervisorDashboardSnapshot[] = [];
+  let calls = 0;
+  const loop = new SupervisorDashboardPollLoop({
+    poll: () => {
+      calls += 1;
+      if (calls === 1) throw new Error("temporary failure");
+      return second.promise;
+    },
+  }, 1000, scheduler);
+
+  loop.start(snapshot => snapshots.push(snapshot));
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  const refresh = loop.refresh();
+  await flushMicrotasks();
+  assert.equal(calls, 2);
+  second.resolve({ connected: true } as SupervisorDashboardSnapshot);
+  await refresh;
+  assert.equal(snapshots.length, 1);
+  loop.stop();
+});
+
+test("dashboard start is idempotent and stop cancels the only scheduled timer", async () => {
+  const scheduler = createFakeScheduler();
+  let calls = 0;
+  const loop = new SupervisorDashboardPollLoop({
+    poll: async () => {
+      calls += 1;
+      return { connected: true } as SupervisorDashboardSnapshot;
+    },
+  }, 1000, scheduler);
+  const snapshots: SupervisorDashboardSnapshot[] = [];
+
+  loop.start(snapshot => snapshots.push(snapshot));
+  loop.start(snapshot => snapshots.push(snapshot));
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  assert.equal(scheduler.pendingCount(), 1);
+  loop.stop();
+  assert.equal(scheduler.pendingCount(), 0);
+  scheduler.runNext();
+  await flushMicrotasks();
+  assert.equal(calls, 1);
+  assert.equal(snapshots.length, 1);
 });
