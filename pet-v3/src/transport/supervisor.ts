@@ -382,7 +382,11 @@ export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashbo
   };
 }
 
-export class NativeSupervisorDashboardAdapter {
+export interface SupervisorDashboardAdapter {
+  poll(): Promise<SupervisorDashboardSnapshot>;
+}
+
+export class NativeSupervisorDashboardAdapter implements SupervisorDashboardAdapter {
   async poll(): Promise<SupervisorDashboardSnapshot> {
     try {
       return normalizeNativeDashboardSnapshot(await invoke<unknown>("supervisor_dashboard_snapshot"));
@@ -441,7 +445,12 @@ export interface SupervisorControlAdapter {
 
 export type AutostartState = { enabled: boolean; available: boolean };
 
-export class NativeSystemIntegrationAdapter {
+export interface SystemIntegrationAdapter {
+  getAutostartState(): Promise<AutostartState>;
+  setAutostartEnabled(enabled: boolean): Promise<AutostartState>;
+}
+
+export class NativeSystemIntegrationAdapter implements SystemIntegrationAdapter {
   async getAutostartState(): Promise<AutostartState> {
     try {
       const value = await invoke<unknown>("get_autostart_state");

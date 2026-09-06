@@ -4,7 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { ControlCenter } from "./App";
 import { applyControlCenterRouteRequest, CONTROL_CENTER_ROUTE_EVENT, isControlCenterRoute, type ControlCenterRouteRequest } from "./route";
-import { NativeSupervisorDashboardAdapter, SupervisorDashboardPollLoop, type SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { SupervisorDashboardPollLoop, type SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { getMockScenario, getSupervisorDashboardAdapter, isTauriRuntime } from "../runtime/adapters";
+import { MockScenarioToolbar } from "../mock/MockScenarioToolbar";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
 import "./center.css";
@@ -12,15 +14,17 @@ import "./center.css";
 const root = document.querySelector<HTMLElement>("#control-center");
 if (!root) throw new Error("Control Center root is missing");
 
-const isTauriRuntime = typeof window !== "undefined"
-  && Object.prototype.hasOwnProperty.call(window, "__TAURI_INTERNALS__");
-
 function RuntimeControlCenter(): ReactElement {
   const [snapshot, setSnapshot] = useState<SupervisorDashboardSnapshot>();
   const [routeRequest, setRouteRequest] = useState<ControlCenterRouteRequest>({ route: "overview", revision: 0 });
   const pollerRef = useRef<SupervisorDashboardPollLoop | undefined>(undefined);
 
   useEffect(() => {
+    if (!isTauriRuntime) {
+      const requested = new URLSearchParams(window.location.search).get("route");
+      if (isControlCenterRoute(requested)) setRouteRequest({ route: requested, revision: 1 });
+      return;
+    }
     let stopped = false;
     let unlisten: (() => void) | undefined;
     let routeRevision = 0;
@@ -61,7 +65,7 @@ function RuntimeControlCenter(): ReactElement {
 
   useEffect(() => {
     let stopped = false;
-    const adapter = new NativeSupervisorDashboardAdapter();
+    const adapter = getSupervisorDashboardAdapter();
     const poller = new SupervisorDashboardPollLoop(adapter, 2500);
     pollerRef.current = poller;
     poller.start(next => { if (!stopped) setSnapshot(next); });
@@ -78,4 +82,5 @@ function RuntimeControlCenter(): ReactElement {
   />;
 }
 
-createRoot(root).render(isTauriRuntime ? <RuntimeControlCenter /> : <ControlCenter />);
+const mockScenario = getMockScenario();
+createRoot(root).render(<>{mockScenario && <MockScenarioToolbar scenario={mockScenario} />}<RuntimeControlCenter /></>);

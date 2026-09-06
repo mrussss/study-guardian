@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { QuickPanel, type QuickPanelMode } from "./QuickPanel";
-import { NativeSupervisorControlAdapter, NativeSupervisorDashboardAdapter, SupervisorDashboardPollLoop, type SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { SupervisorDashboardPollLoop, type SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { getMockScenario, getSupervisorControlAdapter, getSupervisorDashboardAdapter, isTauriRuntime } from "../runtime/adapters";
+import { MockScenarioToolbar } from "../mock/MockScenarioToolbar";
 import type { ControlCenterRoute } from "../center/route";
 import type { TaskPickerAction, TaskPickerActionResult } from "../shared/TaskPicker";
 import "../shared/theme/tokens.css";
@@ -12,13 +14,18 @@ import "./panel.css";
 const root = document.querySelector<HTMLElement>("#quick-panel");
 if (!root) throw new Error("Quick Panel root is missing");
 
-const isTauriRuntime = typeof window !== "undefined"
-  && Object.prototype.hasOwnProperty.call(window, "__TAURI_INTERNALS__");
 const invokeWindowCommand = (command: string, args?: Record<string, unknown>): void => {
   if (isTauriRuntime) void invoke(command, args).catch(() => { /* bounded window command failure */ });
 };
-const openControlCenter = (route: ControlCenterRoute): void => invokeWindowCommand("open_control_center", { route });
-const closeQuickPanel = (): void => invokeWindowCommand("hide_quick_panel");
+const openControlCenter = (route: ControlCenterRoute): void => {
+  if (isTauriRuntime) { invokeWindowCommand("open_control_center", { route }); return; }
+  const url = new URL("/control-center.html", window.location.origin);
+  const scenario = getMockScenario();
+  if (scenario) url.searchParams.set("mock", scenario);
+  url.searchParams.set("route", route);
+  window.open(url, "_blank", "noopener");
+};
+const closeQuickPanel = (): void => { if (isTauriRuntime) invokeWindowCommand("hide_quick_panel"); };
 window.addEventListener("keydown", event => {
   if (event.key === "Escape") closeQuickPanel();
 });
@@ -49,7 +56,7 @@ function RuntimeQuickPanel(): ReactElement {
 
   useEffect(() => {
     let stopped = false;
-    const adapter = new NativeSupervisorDashboardAdapter();
+    const adapter = getSupervisorDashboardAdapter();
     const poller = new SupervisorDashboardPollLoop(adapter, 1800);
     pollerRef.current = poller;
     poller.start(next => { if (!stopped) setSnapshot(next); });
@@ -75,7 +82,7 @@ function RuntimeQuickPanel(): ReactElement {
   const task = optimisticTask ?? serverTask;
   const elapsed = status ? formatElapsed(mode === "BREAK" ? status.break_seconds : status.study_seconds) : "--:--";
   const motivationAvailable = Boolean(motivation);
-  const control = new NativeSupervisorControlAdapter();
+  const control = getSupervisorControlAdapter();
 
   const handleTaskResult = (operation: Promise<TaskPickerActionResult>): Promise<TaskPickerActionResult> => operation;
   const handleTaskPickerResult = async (result: TaskPickerActionResult, action: TaskPickerAction): Promise<void> => {
@@ -123,7 +130,7 @@ function RuntimeQuickPanel(): ReactElement {
     onTaskResult={handleTaskPickerResult}
     onSaveTask={name => handleTaskResult(control.createTaskPreset(name, true).then(async result => {
       if (!result.ok) return result;
-      const latest = await new NativeSupervisorDashboardAdapter().poll();
+      const latest = await getSupervisorDashboardAdapter().poll();
       const created = latest.task_presets?.pinned.find(item => item.name.toLocaleLowerCase() === name.trim().replace(/\s+/g, " ").toLocaleLowerCase());
       return created ? control.selectTaskPreset(created.id) : control.setTask(name);
     }))}
@@ -134,6 +141,5 @@ function RuntimeQuickPanel(): ReactElement {
   />;
 }
 
-createRoot(root).render(isTauriRuntime
-  ? <RuntimeQuickPanel />
-  : <QuickPanel onOpenCenter={() => openControlCenter("overview")} onOpenSettings={() => openControlCenter("settings")} onClose={closeQuickPanel} />);
+const mockScenario = getMockScenario();
+createRoot(root).render(<>{mockScenario && <MockScenarioToolbar scenario={mockScenario} />}<RuntimeQuickPanel /></>);

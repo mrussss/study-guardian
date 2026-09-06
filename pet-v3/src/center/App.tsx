@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
-import { NativeSupervisorControlAdapter, NativeSystemIntegrationAdapter } from "../transport/supervisor";
+import { getSupervisorControlAdapter, getSystemIntegrationAdapter } from "../runtime/adapters";
 import { TaskPicker, type TaskPickerAction, type TaskPickerActionResult } from "../shared/TaskPicker";
 import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
@@ -135,7 +135,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
   const progressLabel = motivation ? `${Math.round(progress * 100)}%` : liveData ? "—" : "72%";
   const targetLabel = motivation ? `${targetMinutes} min` : liveData ? "—" : "120 min";
   const [taskNotice, setTaskNotice] = useState("");
-  const control = new NativeSupervisorControlAdapter();
+  const control = getSupervisorControlAdapter();
   const taskOperation = (operation: Promise<ControlResult>): Promise<ControlResult> => operation;
   const taskResult = async (result: TaskPickerActionResult, action: TaskPickerAction): Promise<void> => {
     const resultRevision = taskMutationRevision.current;
@@ -267,7 +267,7 @@ function HistoryPage({ history }: { history?: SupervisorDashboardSnapshot["histo
 
 function ReviewPage({ review }: { review?: NativeReviewSummary }): ReactElement {
   const [notice, setNotice] = useState("");
-  const generate = async (): Promise<void> => { setNotice("正在整理本地证据…"); const result = await new NativeSupervisorControlAdapter().generateReview(); setNotice(result.ok ? "今日总结已生成，正在刷新" : "今日总结暂时无法生成"); };
+  const generate = async (): Promise<void> => { setNotice("正在整理本地证据…"); const result = await getSupervisorControlAdapter().generateReview(); setNotice(result.ok ? "今日总结已生成，正在刷新" : "今日总结暂时无法生成"); };
   const label = review?.generation_mode === "AI" ? "AI 总结" : "本地总结";
   const reason = review?.generation_mode === "FALLBACK" ? (review.error_code && review.error_code !== "provider_not_configured" ? "AI 暂时不可用，本次已自动使用本地总结。" : "尚未配置 AI，本次使用本地证据生成。") : "通过 Provider、净化和校验链路生成。";
   return <DataPage title="学习复盘" description="摘要来自 canonical Review，不展示原始聊天或屏幕内容。"><section className="surface-section data-card">{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · {reason}</p></div><span className="review-badge">{label}</span></div><div className="review-detail-grid"><div><span className="eyebrow">主题</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>暂无足够主题证据</p>}</div><div><span className="eyebrow">不能确认</span>{review.unfinished.map(item => <p key={item}>{item}</p>)}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div><div><span className="eyebrow">诊断</span><p>{review.status} · revision {review.revision} · attempt {review.attempt_count} · warnings {review.warnings_count}</p></div></div>{review.status === "STALE" && <button className="primary-button" type="button" onClick={() => void generate()}>更新今日总结</button>}</> : <div className="review-generate-empty"><EmptyData text="今日总结将在结束学习后约 5 分钟自动生成" /><button className="primary-button" type="button" onClick={() => void generate()}>立即生成</button></div>}{notice && <span className="settings-notice" role="status">{notice}</span>}</section></DataPage>;
@@ -307,7 +307,7 @@ function AISettingsPanel({ settings: source }: { settings?: NativeAISettings }):
   const fallback: NativeAISettings = { enabled: false, min_confidence: .75, text: { enabled: false, provider: "none", model: "", base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" }, vision: { enabled: false, provider: "none", model: "", base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" } };
   const [draft, setDraft] = useState<NativeAISettings>();
   const [textKey, setTextKey] = useState(""); const [visionKey, setVisionKey] = useState(""); const [notice, setNotice] = useState("");
-  const settings = draft ?? source ?? fallback; const control = new NativeSupervisorControlAdapter();
+  const settings = draft ?? source ?? fallback; const control = getSupervisorControlAdapter();
   const endpoint = (target: "text" | "vision", value: NativeAIEndpointSettings): void => setDraft({ ...settings, [target]: value });
   const save = async (): Promise<void> => { const result = await control.saveAISettings(settings); setNotice(result.ok ? "AI 设置已保存并立即应用" : "AI 设置未通过验证或暂时无法保存"); if (result.ok) setDraft(undefined); };
   const putSecret = async (target: "text" | "vision"): Promise<void> => { const key = target === "text" ? textKey : visionKey; const result = await control.putAISecret(target, key); if (target === "text") setTextKey(""); else setVisionKey(""); setNotice(result.ok ? `${target === "text" ? "文字" : "视觉"} API Key 已安全保存` : "API Key 保存失败"); };
@@ -330,17 +330,17 @@ function SettingsPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }):
   const quietPeriods = quietDraft ?? snapshot?.reminder_settings?.quiet_periods ?? [
     { start: "12:00", end: "14:00" }, { start: "17:30", end: "19:00" }, { start: "21:00", end: "24:00" },
   ];
-  const control = new NativeSupervisorControlAdapter();
+  const control = getSupervisorControlAdapter();
   const [autostart, setAutostart] = useState<{ enabled: boolean; available: boolean }>({ enabled: false, available: true });
   const [autostartBusy, setAutostartBusy] = useState(false);
   useEffect(() => {
     let active = true;
-    void new NativeSystemIntegrationAdapter().getAutostartState().then(state => { if (active) setAutostart(state); });
+    void getSystemIntegrationAdapter().getAutostartState().then(state => { if (active) setAutostart(state); });
     return () => { active = false; };
   }, []);
   const toggleAutostart = async (): Promise<void> => {
     setAutostartBusy(true);
-    const state = await new NativeSystemIntegrationAdapter().setAutostartEnabled(!autostart.enabled);
+    const state = await getSystemIntegrationAdapter().setAutostartEnabled(!autostart.enabled);
     setAutostart(state);
     setNotice(state.available ? (state.enabled ? "已开启开机启动" : "已关闭开机启动") : "系统启动设置暂时不可用");
     setAutostartBusy(false);

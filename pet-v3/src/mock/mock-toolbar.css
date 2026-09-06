@@ -1,0 +1,26 @@
+.mock-scenario-toolbar {
+  position: fixed;
+  z-index: 10000;
+  top: 10px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid rgba(99, 91, 255, .22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 8px 24px rgba(35, 31, 90, .14);
+  color: #373166;
+  font: 600 12px/1.2 Inter, "Segoe UI", sans-serif;
+  backdrop-filter: blur(10px);
+}
+.mock-scenario-toolbar select {
+  max-width: 150px;
+  border: 1px solid #d9d6ee;
+  border-radius: 7px;
+  background: white;
+  color: #302b58;
+  padding: 4px 6px;
+  font: inherit;
+}
