@@ -76,9 +76,8 @@ export function FocusClock({ connected, status, motivation }: { connected: boole
     strokeDashoffset: ringCircumference * (1 - progress),
   };
   const timeLabel = connected && status ? formatSessionClock(displaySeconds) : "--:--:--";
-  const stateLabel = running ? "正在记录有效专注" : status?.user_mode === "BREAK" ? "休息中，秒表暂停" : connected ? "秒表已暂停" : "等待 Supervisor 快照";
 
-  return <section className={`focus-clock ${running ? "is-running" : "is-paused"}`} aria-label="专注秒表">
+  return <section className={`focus-clock ${running ? "is-running" : "is-paused"}`} aria-label={`专注秒表，${timeLabel}，${running ? "运行中" : "已暂停"}`}>
     <div className="focus-clock-face">
       <svg className="focus-clock-ring" viewBox="0 0 140 140" aria-hidden="true">
         <defs><linearGradient id="focusClockGradient" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#c6beff" /><stop offset="100%" stopColor="#8d7dff" /></linearGradient></defs>
@@ -88,6 +87,5 @@ export function FocusClock({ connected, status, motivation }: { connected: boole
       <div className="focus-clock-center"><span>本次专注</span><strong>{timeLabel}</strong></div>
     </div>
     <div className="focus-clock-today"><span>今日累计</span><strong>{connected && motivation ? formatFocusMinutes(motivation.today_credited_focus_minutes) : "—"}</strong></div>
-    <span className="focus-clock-state">{stateLabel}</span>
   </section>;
 }

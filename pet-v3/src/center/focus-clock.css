@@ -9,6 +9,5 @@
 .focus-clock-center strong { color: #fff; font-size: 23px; font-variant-numeric: tabular-nums; font-weight: 650; letter-spacing: -.045em; }
 .focus-clock-today { display: flex; align-items: baseline; gap: 8px; }
 .focus-clock-today strong { color: #fff; font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 650; }
-.focus-clock-state { color: #aaa7cb; font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { .focus-clock-progress { transition: none; } }
 @media (max-width: 640px) { .focus-clock { justify-items: start; min-width: 0; padding: 20px 0 0; border-top: 1px solid rgba(255,255,255,.13); border-left: 0; } .focus-clock-face { width: 176px; height: 176px; } }
