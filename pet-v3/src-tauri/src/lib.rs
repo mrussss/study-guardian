@@ -596,7 +596,13 @@ fn post_supervisor_mode(host: &str, port: u16, token: &str, request: &ModeReques
 }
 
 fn task_preset_path_allowed(path: &str) -> bool {
-    if path == "/v1/task" || path == "/v1/task-presets" { return true; }
+    if path == "/v1/task" || path == "/v1/task-presets" || path == "/v1/missions" { return true; }
+    if let Some(rest) = path.strip_prefix("/v1/missions/") {
+        let mut parts = rest.split('/');
+        let Some(id) = parts.next() else { return false; };
+        if id.is_empty() || id.len() > 128 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') { return false; }
+        return matches!((parts.next(), parts.next()), (Some("complete"), None) | (Some("cancel"), None));
+    }
     let Some(rest) = path.strip_prefix("/v1/task-presets/") else { return false; };
     let mut parts = rest.split('/');
     let Some(id) = parts.next() else { return false; };
@@ -857,6 +863,19 @@ fn sanitize_missions(value: &Value) -> Result<Value, NativeErrorKind> {
         }
         if let Some(completed_at) = optional_text_field(object, "completed_at", 128)? {
             item["completed_at"] = json!(completed_at);
+        }
+        if let Some(linked_task_preset_id) = optional_text_field(object, "linked_task_preset_id", 128)? {
+            item["linked_task_preset_id"] = json!(linked_task_preset_id);
+        }
+        if let Some(linked_task_name) = optional_text_field(object, "linked_task_name", 256)? {
+            item["linked_task_name"] = json!(linked_task_name);
+        }
+        if let Some(link_source) = optional_text_field(object, "link_source", 16)? {
+            if !["MANUAL", "RULE", "AI"].contains(&link_source.as_str()) { return Err(NativeErrorKind::InvalidResponse); }
+            item["link_source"] = json!(link_source);
+        }
+        if object.get("link_confidence").is_some() {
+            item["link_confidence"] = json!(bounded_progress_field(object, "link_confidence")?);
         }
         output.push(item);
     }
@@ -1231,6 +1250,15 @@ fn bounded_task_name(name: &str) -> bool {
     (1..=64).contains(&count)
 }
 
+fn bounded_mission_title(title: &str) -> bool {
+    let count = title.trim().chars().count();
+    (1..=256).contains(&count)
+}
+
+fn bounded_mission_description(description: &str) -> bool {
+    description.chars().count() <= 1024
+}
+
 #[tauri::command]
 async fn supervisor_set_task(task: String) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
@@ -1264,6 +1292,36 @@ async fn supervisor_update_task_preset(id: String, name: String, pinned: bool, s
 #[tauri::command]
 async fn supervisor_delete_task_preset(id: String) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || task_control_result("DELETE", format!("/v1/task-presets/{id}"), json!({})))
+        .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_create_mission(title: String, description: String, due_date: Option<String>, linked_task_name: Option<String>, linked_task_preset_id: Option<String>) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !bounded_mission_title(&title) || !bounded_mission_description(&description) || due_date.as_ref().is_some_and(|value| value.len() > 32) || linked_task_name.as_ref().is_some_and(|value| value.len() > 256) || linked_task_preset_id.as_ref().is_some_and(|value| value.len() > 128) {
+            return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
+        }
+        task_control_result("POST", "/v1/missions".to_string(), json!({
+            "title": title.trim(),
+            "description": description.trim(),
+            "reward_milli_ap": 0,
+            "due_date": due_date,
+            "linked_task_name": linked_task_name,
+            "linked_task_preset_id": linked_task_preset_id,
+            "link_source": "MANUAL",
+        }))
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_complete_mission(id: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || task_control_result("POST", format!("/v1/missions/{id}/complete"), json!({})))
+        .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_cancel_mission(id: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || task_control_result("POST", format!("/v1/missions/{id}/cancel"), json!({})))
         .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
 }
 
@@ -1636,6 +1694,9 @@ pub fn run() {
             supervisor_select_task_preset,
             supervisor_update_task_preset,
             supervisor_delete_task_preset,
+            supervisor_create_mission,
+            supervisor_complete_mission,
+            supervisor_cancel_mission,
             supervisor_set_reminder_settings,
             supervisor_save_ai_settings,
             supervisor_put_ai_secret,
@@ -1710,7 +1771,7 @@ mod tests {
     use super::{
         bounded_control_center_route, bounded_panel_position, bounded_quick_panel_debug_event, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
-        sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event,
+        sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event, task_preset_path_allowed,
         launch_without_pet, requested_launch_route, LaunchRoute, NativeErrorKind,
         SupervisorSnapshot,
     };
@@ -1929,6 +1990,33 @@ mod tests {
             "created_at": "2026-09-04T00:00:00Z",
         }]))
         .is_err());
+        let linked = sanitize_missions(&json!([{
+            "id": "m-2",
+            "title": "Review",
+            "description": "",
+            "reward_milli_ap": 0,
+            "status": "OPEN",
+            "created_at": "2026-09-04T00:00:00Z",
+            "linked_task_preset_id": "go",
+            "linked_task_name": "Go",
+            "link_source": "MANUAL",
+            "link_confidence": 1.0,
+            "token": "must be dropped",
+        }])).expect("valid linked mission");
+        assert_eq!(linked[0]["link_source"], "MANUAL");
+        assert!(linked[0].get("token").is_none());
+        assert!(sanitize_missions(&json!([{
+            "id": "m-3",
+            "title": "Review",
+            "description": "",
+            "reward_milli_ap": 0,
+            "status": "OPEN",
+            "created_at": "2026-09-04T00:00:00Z",
+            "link_source": "UNTRUSTED",
+        }])).is_err());
+        assert!(task_preset_path_allowed("/v1/missions"));
+        assert!(task_preset_path_allowed("/v1/missions/m-2/complete"));
+        assert!(!task_preset_path_allowed("/v1/missions/../../complete"));
         assert_eq!(fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/private"), Err(NativeErrorKind::Unavailable));
         assert_eq!(fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/status"), Err(NativeErrorKind::Unauthorized));
 

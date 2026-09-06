@@ -1,0 +1,14 @@
+.help-drawer-overlay { position: fixed; z-index: 30; inset: 0; display: flex; justify-content: flex-end; background: rgba(31, 20, 63, .32); }
+.help-drawer { display: grid; width: min(430px, 100%); max-height: 100%; grid-template-rows: auto minmax(0, 1fr) auto; color: var(--sg-text); background: var(--sg-surface); box-shadow: -18px 0 48px rgba(27,31,48,.16); }
+.help-drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding: 24px; border-bottom: 1px solid var(--sg-border); }
+.help-drawer-eyebrow { color: var(--sg-accent); font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.help-drawer-header h2 { margin: 6px 0 0; font-size: 21px; letter-spacing: -.04em; }
+.help-drawer-body { overflow-y: auto; padding: 20px 24px; }
+.help-drawer-body section { padding: 0 0 18px; }
+.help-drawer-body h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; color: var(--sg-text); font-size: 14px; }
+.help-drawer-body h3 svg { color: var(--sg-accent); }
+.help-drawer-body p, .help-drawer-body li { color: var(--sg-text-secondary); font-size: 13px; line-height: 1.55; }
+.help-drawer-body p { margin: 0; } .help-drawer-body ol { margin: 0; padding-left: 20px; }
+.help-drawer-footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 15px 24px; border-top: 1px solid var(--sg-border); }
+.help-drawer-footer button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 10px; color: var(--sg-text-secondary); background: var(--sg-surface-muted); border: 1px solid var(--sg-border); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 650; }
+.help-drawer-footer button:hover { color: var(--sg-accent); border-color: var(--sg-accent); }

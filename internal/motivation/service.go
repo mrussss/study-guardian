@@ -34,6 +34,13 @@ type Settings struct {
 	DailyTargetMinutes int       `json:"daily_target_minutes"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
+
+type MissionLink struct {
+	LinkedTaskPresetID string
+	LinkedTaskName     string
+	LinkSource         string
+	LinkConfidence     *float64
+}
 type HistoryDay struct {
 	Date             string `json:"date"`
 	FocusMinutes     int64  `json:"focus_minutes"`
@@ -334,13 +341,28 @@ func (s *Service) Achievements(ctx context.Context, now time.Time) ([]Achievemen
 func (s *Service) Missions(ctx context.Context) ([]storage.Mission, error) {
 	return s.store.ListMissions(ctx)
 }
-func (s *Service) CreateMission(ctx context.Context, title, description string, reward int64, due *string) (storage.Mission, error) {
+func (s *Service) CreateMission(ctx context.Context, title, description string, reward int64, due *string, links ...MissionLink) (storage.Mission, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return storage.Mission{}, fmt.Errorf("title is required")
 	}
 	now := s.clock.Now()
 	m := storage.Mission{ID: fmt.Sprintf("mission-%d", now.UnixNano()), Title: title, Description: description, RewardMilliAP: reward, DueDate: due, CreatedAt: now}
+	if len(links) > 0 {
+		link := links[0]
+		if strings.TrimSpace(link.LinkedTaskPresetID) != "" {
+			value := strings.TrimSpace(link.LinkedTaskPresetID)
+			m.LinkedTaskPresetID = &value
+		}
+		if strings.TrimSpace(link.LinkedTaskName) != "" {
+			value := strings.TrimSpace(link.LinkedTaskName)
+			m.LinkedTaskName = &value
+		}
+		if link.LinkSource == "MANUAL" || link.LinkSource == "RULE" || link.LinkSource == "AI" {
+			m.LinkSource = link.LinkSource
+		}
+		m.LinkConfidence = link.LinkConfidence
+	}
 	return m, s.store.CreateMission(ctx, m)
 }
 func (s *Service) CompleteMission(ctx context.Context, id string) (storage.Mission, bool, error) {

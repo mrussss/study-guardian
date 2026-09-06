@@ -168,6 +168,10 @@ export interface NativeMission {
   created_at: string;
   due_date?: string;
   completed_at?: string;
+  linked_task_preset_id?: string;
+  linked_task_name?: string;
+  link_source?: "MANUAL" | "RULE" | "AI";
+  link_confidence?: number;
 }
 
 export interface NativeReward {
@@ -304,7 +308,11 @@ function validMissions(value: unknown): value is NativeMission[] {
     boundedText(row.id, 128) && boundedText(row.title, 256) && boundedText(row.description, 1024) &&
     nonNegativeInteger(row.reward_milli_ap) && ["OPEN", "COMPLETED", "CANCELLED"].includes(row.status as string) &&
     boundedText(row.created_at, 128) && (row.due_date === undefined || boundedText(row.due_date, 32)) &&
-    (row.completed_at === undefined || boundedText(row.completed_at, 128)));
+    (row.completed_at === undefined || boundedText(row.completed_at, 128)) &&
+    (row.linked_task_preset_id === undefined || boundedText(row.linked_task_preset_id, 128)) &&
+    (row.linked_task_name === undefined || boundedText(row.linked_task_name, 256)) &&
+    (row.link_source === undefined || ["MANUAL", "RULE", "AI"].includes(row.link_source as string)) &&
+    (row.link_confidence === undefined || boundedRatio(row.link_confidence)));
 }
 
 function validRewards(value: unknown): value is NativeReward[] {
@@ -441,6 +449,9 @@ export interface SupervisorControlAdapter {
   testAIConnection(target: "text" | "vision"): Promise<NativeAIConnectionResult>;
   generateReview(): Promise<ControlResult>;
   setDailyTarget(minutes: number): Promise<ControlResult>;
+  createMission(title: string, description: string, dueDate?: string, linkedTaskName?: string, linkedTaskPresetId?: string): Promise<ControlResult>;
+  completeMission(id: string): Promise<ControlResult>;
+  cancelMission(id: string): Promise<ControlResult>;
 }
 
 export type AutostartState = { enabled: boolean; available: boolean };
@@ -542,6 +553,18 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
       return Promise.resolve({ ok: false, error_kind: "rejected" });
     }
     return this.callDailyTarget(minutes);
+  }
+
+  createMission(title: string, description: string, dueDate?: string, linkedTaskName?: string, linkedTaskPresetId?: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_create_mission", { title, description, dueDate: dueDate ?? null, linkedTaskName: linkedTaskName ?? null, linkedTaskPresetId: linkedTaskPresetId ?? null });
+  }
+
+  completeMission(id: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_complete_mission", { id });
+  }
+
+  cancelMission(id: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_cancel_mission", { id });
   }
 
   private async call(mode: "STUDY" | "BREAK" | "OFF", task?: string): Promise<ControlResult> {

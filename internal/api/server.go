@@ -49,7 +49,7 @@ type MotivationManager interface {
 	GetHistory(context.Context, int, time.Time) ([]motivation.HistoryDay, error)
 	Achievements(context.Context, time.Time) ([]motivation.AchievementDefinition, error)
 	Missions(context.Context) ([]storage.Mission, error)
-	CreateMission(context.Context, string, string, int64, *string) (storage.Mission, error)
+	CreateMission(context.Context, string, string, int64, *string, ...motivation.MissionLink) (storage.Mission, error)
 	CompleteMission(context.Context, string) (storage.Mission, bool, error)
 	CancelMission(context.Context, string) error
 	Rewards(context.Context) ([]storage.Reward, error)

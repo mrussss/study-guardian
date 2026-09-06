@@ -6,10 +6,12 @@ import { SupervisorDashboardPollLoop, type SupervisorDashboardSnapshot } from ".
 import { getMockScenario, getSupervisorControlAdapter, getSupervisorDashboardAdapter, isTauriRuntime } from "../runtime/adapters";
 import { MockScenarioToolbar } from "../mock/MockScenarioToolbar";
 import type { ControlCenterRoute } from "../center/route";
-import type { TaskPickerAction, TaskPickerActionResult } from "../shared/TaskPicker";
+import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
+import type { TaskPickerActionResult } from "../shared/task-mutation";
 import { useTaskSelectionState } from "../shared/use-task-selection-state";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
+import "../shared/task-wheel/task-wheel.css";
 import "./panel.css";
 
 const root = document.querySelector<HTMLElement>("#quick-panel");
@@ -78,7 +80,7 @@ function RuntimeQuickPanel(): ReactElement {
   const control = getSupervisorControlAdapter();
 
   const handleTaskResult = (operation: Promise<TaskPickerActionResult>): Promise<TaskPickerActionResult> => operation;
-  const handleTaskPickerResult = async (result: TaskPickerActionResult, action: TaskPickerAction): Promise<void> => {
+  const handleTaskPickerResult = async (result: TaskPickerActionResult, action: TaskWheelAction): Promise<void> => {
     setNotice(result.ok ? (action === "save" ? "常用任务已保存并选中" : "当前任务已更新") : controlNotice(result.error_kind));
     taskSelection.settle(result.ok, result.task);
     if (result.ok && result.task === undefined) {
@@ -113,6 +115,8 @@ function RuntimeQuickPanel(): ReactElement {
     status={status}
     onSelectTask={id => handleTaskResult(control.selectTaskPreset(id))}
     onTemporaryTask={name => handleTaskResult(control.setTask(name))}
+    onUpdateTaskPreset={(id, name, pinned, sortOrder) => handleTaskResult(control.updateTaskPreset(id, name, pinned, sortOrder))}
+    onDeleteTaskPreset={id => handleTaskResult(control.deleteTaskPreset(id))}
     onOptimisticTaskChange={nextTask => { if (nextTask !== undefined) taskSelection.selectOptimistically(nextTask); }}
     onTaskMutationStarted={() => { taskMutationRevision.current += 1; pollerRef.current?.markMutation(); }}
     onTaskResult={handleTaskPickerResult}

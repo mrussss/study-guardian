@@ -1,5 +1,5 @@
 import type {
-  AutostartState, ControlResult, NativeAIConnectionResult, NativeAISettings, NativeTaskPreset,
+  AutostartState, ControlResult, NativeAIConnectionResult, NativeAISettings, NativeMission, NativeTaskPreset,
   SupervisorControlAdapter, SupervisorDashboardAdapter, SupervisorDashboardSnapshot, SystemIntegrationAdapter,
 } from "../transport/supervisor";
 
@@ -71,7 +71,7 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
       { achievement_id: "first", name: "第一次专注", description: "完成首次有效专注", progress: 1, unlocked: true, unlocked_at: "2026-09-01T09:00:00+08:00" },
     ],
     missions: [
-      { id: "mission-go", title: "完成 Go Context 练习", description: "整理取消链路", reward_milli_ap: 400, status: "OPEN", created_at: today },
+      { id: "mission-go", title: "完成 Go Context 练习", description: "整理取消链路", reward_milli_ap: 0, status: "OPEN", created_at: today, linked_task_name: "Go", link_source: "MANUAL" },
       { id: "mission-note", title: "整理本周学习笔记", description: "提炼三个重点", reward_milli_ap: 250, status: "OPEN", created_at: today },
       { id: "mission-focus", title: "完成一次 30 分钟专注", description: "保持连续专注", reward_milli_ap: 300, status: "COMPLETED", created_at: today, completed_at: new Date().toISOString() },
     ],
@@ -92,6 +92,7 @@ export class MockSupervisorRuntime implements SupervisorDashboardAdapter, Superv
   private snapshot: SupervisorDashboardSnapshot;
   private autostart = false;
   private nextPreset = 1;
+  private nextMission = 1;
   constructor(readonly scenario: MockScenarioId) { this.snapshot = initialSnapshot(scenario); }
 
   async poll(): Promise<SupervisorDashboardSnapshot> {
@@ -171,6 +172,27 @@ export class MockSupervisorRuntime implements SupervisorDashboardAdapter, Superv
     if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440 || !this.snapshot.motivation) return { ok: false, error_kind: "rejected" };
     this.snapshot.motivation.daily_target_minutes = minutes;
     this.snapshot.motivation.target_progress = Math.min(1, this.snapshot.motivation.today_credited_focus_minutes / minutes);
+    return { ok: true };
+  }); }
+  createMission(title: string, description: string, dueDate?: string, linkedTaskName?: string, linkedTaskPresetId?: string): Promise<ControlResult> {
+    const normalized = title.trim().replace(/\s+/g, " ");
+    return this.mutate(() => {
+      if (!normalized) return { ok: false, error_kind: "rejected" };
+      const mission: NativeMission = { id: `mock-mission-${this.nextMission++}`, title: normalized, description: description.trim(), reward_milli_ap: 0, status: "OPEN", created_at: new Date().toISOString(), ...(dueDate ? { due_date: dueDate } : {}), ...(linkedTaskName ? { linked_task_name: linkedTaskName, link_source: "MANUAL" as const } : {}), ...(linkedTaskPresetId ? { linked_task_preset_id: linkedTaskPresetId } : {}) };
+      this.snapshot.missions = [mission, ...(this.snapshot.missions ?? [])];
+      return { ok: true };
+    });
+  }
+  completeMission(id: string): Promise<ControlResult> { return this.mutate(() => {
+    const mission = this.snapshot.missions?.find(item => item.id === id);
+    if (!mission) return { ok: false, error_kind: "rejected" };
+    if (mission.status === "OPEN") { mission.status = "COMPLETED"; mission.completed_at = new Date().toISOString(); }
+    return { ok: true };
+  }); }
+  cancelMission(id: string): Promise<ControlResult> { return this.mutate(() => {
+    const mission = this.snapshot.missions?.find(item => item.id === id);
+    if (!mission || mission.status !== "OPEN") return { ok: false, error_kind: "rejected" };
+    mission.status = "CANCELLED";
     return { ok: true };
   }); }
   async getAutostartState(): Promise<AutostartState> { await this.wait(30); return { enabled: this.autostart, available: this.scenario !== "offline" }; }

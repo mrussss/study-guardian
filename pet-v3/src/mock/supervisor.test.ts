@@ -28,6 +28,21 @@ test("updating a preset moves it between pinned and recent collections", async (
   assert.equal(snapshot.task_presets?.recent.some(item => item.id === "english"), false);
   assert.equal(snapshot.task_presets?.pinned.find(item => item.id === "english")?.name, "英语听力");
 });
+test("mock missions support zero-AP linking, completion, and cancellation", async () => {
+  const runtime = new MockSupervisorRuntime("normal");
+  assert.deepEqual(await runtime.createMission("复习 Go", "整理 context", undefined, "Go", "go"), { ok: true });
+  let snapshot = await runtime.poll();
+  const created = snapshot.missions?.find(item => item.title === "复习 Go");
+  assert.ok(created);
+  assert.equal(created.reward_milli_ap, 0);
+  assert.equal(created.linked_task_name, "Go");
+  assert.equal(created.linked_task_preset_id, "go");
+  assert.equal(created.link_source, "MANUAL");
+  assert.deepEqual(await runtime.completeMission(created.id), { ok: true });
+  assert.deepEqual(await runtime.cancelMission("missing"), { ok: false, error_kind: "rejected" });
+  snapshot = await runtime.poll();
+  assert.equal(snapshot.missions?.find(item => item.id === created.id)?.status, "COMPLETED");
+});
 test("offline and failure scenarios return bounded failures", async () => {
   const offline = new MockSupervisorRuntime("offline");
   assert.deepEqual(await offline.poll(), { connected: false, last_error_kind: "unavailable" });

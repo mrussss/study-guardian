@@ -25,6 +25,7 @@ import {
   Trash2,
   Trophy,
   WalletCards,
+  X,
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
@@ -32,8 +33,12 @@ import { BrandMark } from "../shared/BrandMark";
 import { deriveSupervisionState, formatLastActivity, interactionLabels, modeLabels, privacyLabels, relationLabels } from "../shared/models/supervision-state";
 import { useTaskSelectionState } from "../shared/use-task-selection-state";
 import { getSupervisorControlAdapter, getSystemIntegrationAdapter } from "../runtime/adapters";
-import { TaskPicker, type TaskPickerAction, type TaskPickerActionResult } from "../shared/TaskPicker";
-import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { TaskWheel } from "../shared/task-wheel/TaskWheel";
+import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
+import type { TaskPickerActionResult } from "../shared/task-mutation";
+import { HelpDrawer } from "../shared/HelpDrawer";
+import { FocusClock } from "./FocusClock";
+import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
 
@@ -69,7 +74,7 @@ const missionRows = [
 
 const achievement = { title: "一周坚持", description: "连续打卡 7 天，保持稳定的节奏", progress: .71, detail: "5 / 7 天" };
 
-type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void; onTaskChanged?: () => void | Promise<void>; onTaskMutationStarted?: () => void };
+type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void; onTaskChanged?: () => void | Promise<void>; onTaskMutationStarted?: () => void; onRefresh?: () => Promise<void>; onOpenHelp?: () => void };
 
 const modeTitle: Record<"STANDBY" | "STUDY" | "BREAK" | "OFF", string> = {
   STANDBY: "准备开始",
@@ -102,7 +107,7 @@ function navGroup(items: NavItem[], active: string, setActive: (id: string) => v
   </nav>;
 }
 
-function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMutationStarted }: DashboardProps): ReactElement {
+function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMutationStarted, onRefresh, onOpenHelp }: DashboardProps): ReactElement {
   const status = snapshot?.status;
   const motivation = snapshot?.motivation;
   const liveData = live && snapshot?.connected === true;
@@ -116,7 +121,6 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
   const chartData = liveData
     ? (snapshot?.history ?? []).slice().reverse().map(day => ({ label: day.date.slice(5), minutes: day.focus_minutes, target: day.target_minutes, completed: day.target_completed }))
     : focusData;
-  const rows = liveData ? liveMissionRows(snapshot?.missions) : missionRows;
   const liveAchievement = snapshot?.achievements?.filter(item => !item.unlocked).sort((a, b) => a.progress - b.progress)[0] ?? snapshot?.achievements?.[0];
   const achievementView = liveData
     ? liveAchievement
@@ -131,7 +135,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
   const [taskNotice, setTaskNotice] = useState("");
   const control = getSupervisorControlAdapter();
   const taskOperation = (operation: Promise<ControlResult>): Promise<ControlResult> => operation;
-  const taskResult = async (result: TaskPickerActionResult, action: TaskPickerAction): Promise<void> => {
+  const taskResult = async (result: TaskPickerActionResult, action: TaskWheelAction): Promise<void> => {
     setTaskNotice(result.ok ? (action === "save" ? "常用任务已保存并选中" : "当前任务已更新") : "当前任务暂时无法更新");
     taskSelection.settle(result.ok, result.task);
     if (result.ok && result.task === undefined) {
@@ -150,15 +154,14 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
   return <div className="dashboard-page">
     <div className="page-heading">
       <div><p className="heading-kicker">{liveData ? "今天" : "2026 年 9 月 4 日 · 星期五"}</p><h1>{liveData ? "今天，保持一点进展就够了" : "今天，保持一点进展就够了"}</h1><p className="heading-subtitle">{modeCaption}</p></div>
-      <button className="quiet-button" type="button"><CircleHelp size={17} />帮助</button>
+      <button className="quiet-button" type="button" onClick={onOpenHelp}><CircleHelp size={17} />帮助</button>
     </div>
 
     <section className="focus-hero" aria-labelledby="current-focus-title">
       <div className="hero-main">
         <div className="hero-topline"><span className="hero-kicker"><span className="live-dot" />当前状态</span><span className={`hero-health is-${supervision.behaviorTone}`}><ShieldCheck size={15} />{supervision.behaviorLabel}</span></div>
         <h2 id="current-focus-title">{modeTitle[currentMode]}</h2>
-        <p className="hero-task"><BookOpen size={17} />{currentTask}</p>
-        <TaskPicker variant="hero" currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData}
+        <div className="hero-task-control"><BookOpen size={17} /><TaskWheel currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData}
           onOptimisticTaskChange={task => {
             if (task !== undefined) { onTaskMutationStarted?.(); taskSelection.selectOptimistically(task); }
           }}
@@ -166,7 +169,9 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
           onSelect={id => taskOperation(control.selectTaskPreset(id))}
           onTemporary={name => taskOperation(control.setTask(name))}
           onSavePinned={saveTask}
-        />
+          onUpdatePreset={(id, name, pinned, sortOrder) => taskOperation(control.updateTaskPreset(id, name, pinned, sortOrder))}
+          onDeletePreset={id => taskOperation(control.deleteTaskPreset(id))}
+        /></div>
         {taskNotice && <span className="hero-notice" role="status">{taskNotice}</span>}
         <p className="hero-caption">{liveData ? (status?.user_mode === "STUDY" ? `已保持专注 ${formatFocusMinutes(Math.floor(status.study_seconds / 60))}，继续完成眼前这一小段。` : modeCaption) : "已保持专注 42 分钟，继续完成眼前这一小段。"}</p>
         <div className="hero-actions">
@@ -176,10 +181,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
           {currentMode === "OFF" && <><button className="primary-button" type="button" onClick={() => onNavigate?.("review")}><BookOpen size={17} />查看今日复盘</button><button className="secondary-button" type="button" onClick={() => void modeAction("STUDY")}>重新开始学习</button></>}
         </div>
       </div>
-      <div className="hero-progress" aria-label={motivation ? `今日目标 ${progressLabel}` : "今日目标等待数据"}>
-        <div className="progress-ring" style={{ background: `conic-gradient(var(--sg-accent) ${progress * 360}deg, var(--sg-accent-soft) 0)` }}><div><strong>{progressLabel}</strong><span>今日目标</span></div></div>
-        <div className="ring-copy"><strong>{motivation ? currentMinutes : liveData ? "—" : 86} <span>/ {targetLabel}</span></strong><span>今日有效专注</span></div>
-      </div>
+      <FocusClock connected={liveData} status={status} motivation={motivation} />
     </section>
 
     <section className="metric-strip" aria-label="今日概览">
@@ -203,13 +205,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
         </AreaChart></ResponsiveContainer> : <div className="chart-empty">等待 Supervisor 返回近 7 天记录</div>}</div>
       </section>
 
-      <section className="surface-section mission-section" aria-labelledby="missions-title">
-        <div className="section-header"><div><h2 id="missions-title">今日任务</h2><p>完成小步，也算进展</p></div><button className="icon-button" type="button" aria-label="更多任务操作"><MoreHorizontal size={18} /></button></div>
-        <div className="mission-list">{rows.length > 0 ? rows.map(row => <div className={`mission-row ${row.done ? "is-done" : ""}`} key={row.title}>
-          <span className="mission-check">{row.done && <Check size={14} />}</span><div className="mission-copy"><strong>{row.title}</strong><span>{row.note}</span></div><span className="mission-reward">{row.reward}</span>
-        </div>) : <div className="mission-empty">暂无任务记录</div>}</div>
-        <button className="section-link" type="button">查看全部任务<ChevronRight size={16} /></button>
-      </section>
+      <MissionSummary missions={snapshot?.missions} live={liveData} motivation={motivation} onNavigate={onNavigate} onRefresh={onRefresh} />
 
       <section className="surface-section achievement-section" aria-labelledby="achievement-title">
         <div className="section-header"><div><h2 id="achievement-title">下一步成就</h2><p>{liveData ? "来自 Supervisor 的当前进度" : "再坚持两天，就到了"}</p></div><Trophy className="section-icon" size={20} /></div>
@@ -228,16 +224,84 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
 
 function CoffeeIcon(): ReactElement { return <Coffee size={17} />; }
 
-function DataPage({ title, description, children }: { title: string; description: string; children: ReactElement }): ReactElement {
-  return <div className="data-page"><div className="data-page-heading"><div><p className="heading-kicker">StudyGuardian · 本地数据</p><h1>{title}</h1><p>{description}</p></div></div>{children}</div>;
+function DataPage({ title, description, actions, children }: { title: string; description: string; actions?: ReactElement; children: ReactElement }): ReactElement {
+  return <div className="data-page"><div className="data-page-heading"><div><p className="heading-kicker">StudyGuardian · 本地数据</p><h1>{title}</h1><p>{description}</p></div>{actions}</div>{children}</div>;
 }
 
 function EmptyData({ text }: { text: string }): ReactElement {
   return <div className="data-empty"><Sparkles size={20} /><span>{text}</span></div>;
 }
 
-function MissionsPage({ missions }: { missions?: NativeMission[] }): ReactElement {
-  return <DataPage title="任务" description="把下一步拆小一点，完成也算进展。"><section className="surface-section data-card"><div className="section-header"><div><h2>当前任务</h2><p>Supervisor 返回的任务列表</p></div><ListChecks className="section-icon" size={20} /></div>{missions && missions.length > 0 ? <div className="data-list">{liveMissionRows(missions).map(row => <div className={`data-row ${row.done ? "is-done" : ""}`} key={row.title}><div><strong>{row.title}</strong><span>{row.note}</span></div><em>{row.reward}</em></div>)}</div> : <EmptyData text="暂无任务记录" />}</section></DataPage>;
+function MissionSummary({ missions, live, motivation, onNavigate, onRefresh }: { missions?: NativeMission[]; live: boolean; motivation?: NativeMotivationStatus; onNavigate?: (id: string) => void; onRefresh?: () => Promise<void> }): ReactElement {
+  const [busyId, setBusyId] = useState<string>();
+  const [notice, setNotice] = useState("");
+  const control = getSupervisorControlAdapter();
+  const open = (missions ?? []).filter(item => item.status === "OPEN").slice(0, 3);
+  const fallback: NativeMission[] = live ? [] : missionRows.map((row, index) => ({ id: `fallback-${index}`, title: row.title, description: "", reward_milli_ap: 0, status: row.done ? "COMPLETED" as const : "OPEN" as const, created_at: "" }));
+  const items = live ? open : fallback;
+  const complete = async (id: string): Promise<void> => {
+    setBusyId(id); const result = await control.completeMission(id); setBusyId(undefined);
+    if (!result.ok) { setNotice("任务暂时无法完成"); return; }
+    await onRefresh?.();
+  };
+  const completed = (missions ?? []).filter(item => item.status === "COMPLETED").length;
+  const total = (missions ?? []).filter(item => item.status !== "CANCELLED").length;
+  const focusProgress = motivation ? Math.round(motivation.target_progress * 100) : 0;
+  return <section className="surface-section mission-section" aria-labelledby="missions-title">
+    <div className="section-header"><div><h2 id="missions-title">今日任务</h2><p>{live ? `${completed} / ${total} 已完成` : "完成小步，也算进展"}</p></div><button className="text-button" type="button" onClick={() => onNavigate?.("missions")}><Plus size={14} />添加任务</button></div>
+    <div className="mission-list">{items.length > 0 ? items.map(item => <div className={`mission-row ${item.status === "COMPLETED" ? "is-done" : ""}`} key={item.id}>
+      {item.status === "OPEN" ? <button className="mission-check mission-check-button" type="button" disabled={busyId === item.id} aria-label={`完成任务 ${item.title}`} onClick={() => void complete(item.id)}>{busyId === item.id ? "…" : ""}</button> : <span className="mission-check">{item.status === "COMPLETED" && <Check size={14} />}</span>}
+      <div className="mission-copy"><strong>{item.title}</strong><span>{item.status === "COMPLETED" ? "已完成" : item.linked_task_name ? `关联：${item.linked_task_name}` : "今天 · 待完成"}</span></div><span className="mission-reward">{live ? "+0 AP" : item.status === "COMPLETED" ? "已完成" : "待完成"}</span>
+    </div>) : <div className="mission-empty"><span>暂无任务记录</span><button className="text-button" type="button" onClick={() => onNavigate?.("missions")}>添加今日任务</button></div>}</div>
+    <div className="mission-goal"><div><span>今日专注目标</span><strong>{motivation ? `${focusProgress}%` : "—"}</strong></div><div className="thin-progress"><span style={{ width: `${focusProgress}%` }} /></div></div>
+    {notice && <span className="settings-notice" role="status">{notice}</span>}
+    <button className="section-link" type="button" onClick={() => onNavigate?.("missions")}>查看全部任务<ChevronRight size={16} /></button>
+  </section>;
+}
+
+function MissionsPage({ missions, taskPresets, onRefresh }: { missions?: NativeMission[]; taskPresets?: NativeTaskPresetList; onRefresh?: () => Promise<void> }): ReactElement {
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [linkedTask, setLinkedTask] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busyId, setBusyId] = useState<string>();
+  const control = getSupervisorControlAdapter();
+  const allTasks = [...(taskPresets?.pinned ?? []), ...(taskPresets?.recent ?? [])];
+  const active = (missions ?? []).filter(item => item.status === "OPEN");
+  const completed = (missions ?? []).filter(item => item.status === "COMPLETED");
+  const suggested = allTasks.find(item => title.trim().toLocaleLowerCase().includes(item.name.trim().toLocaleLowerCase()));
+  const create = async (): Promise<void> => {
+    if (!title.trim()) { setNotice("请先填写任务标题"); return; }
+    setNotice("正在创建…");
+    const selected = allTasks.find(item => item.name === linkedTask);
+    const result = await control.createMission(title, description, undefined, selected?.name, selected?.id);
+    if (!result.ok) { setNotice("任务创建失败，请稍后重试"); return; }
+    setTitle(""); setDescription(""); setLinkedTask(""); setAdding(false); setNotice("今日任务已添加"); await onRefresh?.();
+  };
+  const complete = async (id: string): Promise<void> => { setBusyId(id); const result = await control.completeMission(id); setBusyId(undefined); setNotice(result.ok ? "任务已完成" : "任务完成失败"); if (result.ok) await onRefresh?.(); };
+  const cancel = async (id: string): Promise<void> => { setBusyId(id); const result = await control.cancelMission(id); setBusyId(undefined); setNotice(result.ok ? "任务已取消" : "任务取消失败"); if (result.ok) await onRefresh?.(); };
+  const startTask = async (mission: NativeMission): Promise<void> => {
+    if (!mission.linked_task_name) { setNotice("请先为任务关联当前专注任务"); return; }
+    setNotice("正在切换当前任务…");
+    const result = mission.linked_task_preset_id ? await control.selectTaskPreset(mission.linked_task_preset_id) : await control.setTask(mission.linked_task_name);
+    if (!result.ok) { setNotice("当前任务切换失败"); return; }
+    const modeResult = await control.setModeStudy(mission.linked_task_name);
+    setNotice(modeResult.ok ? `已开始：${mission.linked_task_name}` : "任务已切换，但学习模式未能启动");
+    await onRefresh?.();
+  };
+  const renderMission = (mission: NativeMission): ReactElement => <div className={`mission-card ${mission.status === "COMPLETED" ? "is-done" : ""}`} key={mission.id}>
+    <div className="mission-card-main"><button className="mission-check mission-check-button" type="button" disabled={mission.status !== "OPEN" || busyId === mission.id} aria-label={`${mission.status === "OPEN" ? "完成" : "已完成"} ${mission.title}`} onClick={() => mission.status === "OPEN" && void complete(mission.id)}>{mission.status === "COMPLETED" && <Check size={14} />}</button><div><strong>{mission.title}</strong>{mission.description && <p>{mission.description}</p>}<span>{mission.linked_task_name ? `关联：${mission.linked_task_name}` : "未关联当前专注任务"}{mission.due_date ? ` · 截止 ${mission.due_date}` : ""}</span></div></div>
+    <div className="mission-card-actions"><em>+0 AP</em>{mission.status === "OPEN" && <><button type="button" onClick={() => void startTask(mission)} disabled={!mission.linked_task_name}>开始此任务</button><button type="button" onClick={() => void cancel(mission.id)} disabled={busyId === mission.id}>取消</button></>}</div>
+  </div>;
+  return <DataPage title="任务" description="把今天要完成的成果拆小一点。" actions={<button className="primary-button page-action-button" type="button" onClick={() => setAdding(true)}><Plus size={16} />添加任务</button>}>
+    <div className="mission-page-content">
+      {adding && <section className="surface-section mission-create-card"><div className="section-header"><div><h2>添加今日任务</h2><p>自定义任务奖励固定为 0 AP。</p></div><button className="icon-button" type="button" aria-label="关闭添加任务" onClick={() => setAdding(false)}><X size={17} /></button></div><div className="mission-form"><label><span>任务标题</span><input autoFocus maxLength={256} value={title} placeholder="例如：完成 Go Context 练习" onChange={event => setTitle(event.target.value)} /></label><label><span>描述（可选）</span><textarea maxLength={1024} value={description} placeholder="写下可验收的下一步" onChange={event => setDescription(event.target.value)} /></label><label><span>关联专注任务</span><select value={linkedTask} onChange={event => setLinkedTask(event.target.value)}><option value="">不关联</option>{allTasks.map(item => <option key={item.id} value={item.name}>{item.name}</option>)}</select></label>{suggested && !linkedTask && <button className="mission-suggestion" type="button" onClick={() => setLinkedTask(suggested.name)}>规则建议关联到“{suggested.name}”</button>}<div className="setting-actions"><button className="primary-button" type="button" onClick={() => void create()}>创建任务</button><button className="secondary-button" type="button" onClick={() => setAdding(false)}>取消</button></div></div></section>}
+      <section className="surface-section mission-page-section"><div className="section-header"><div><h2>今日任务 <span className="mission-count">{completed.length} / {active.length + completed.length} 已完成</span></h2><p>已取消的任务默认隐藏，不会恢复 AP。</p></div><ListChecks className="section-icon" size={20} /></div>{active.length > 0 ? <div className="mission-card-list">{active.map(renderMission)}</div> : <EmptyData text="暂无进行中的任务" />}</section>
+      {completed.length > 0 && <section className="surface-section mission-page-section completed-missions"><div className="section-header"><div><h2>已完成</h2><p>完成记录只读保留</p></div><CheckCircle2 className="section-icon" size={20} /></div><div className="mission-card-list">{completed.map(renderMission)}</div></section>}
+      {notice && <p className="settings-notice mission-page-notice" role="status">{notice}</p>}
+    </div>
+  </DataPage>;
 }
 
 function AchievementsPage({ achievements }: { achievements?: NativeAchievement[] }): ReactElement {
@@ -359,7 +423,7 @@ function SettingsPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }):
   };
   const updateQuiet = (index: number, key: "start" | "end", value: string): void => setQuietDraft(quietPeriods.map((period, itemIndex) => itemIndex === index ? { ...period, [key]: value } : period));
   return <DataPage title="设置" description="设置保存在本机；token 和 AI secret 只在 native 端读取。"><div className="settings-stack">
-    <section className="surface-section data-card settings-card"><div className="section-header"><div><h2>Windows 启动</h2><p>登录 Windows 后在后台启动 StudyGuardian。</p></div><label className="switch-label"><input type="checkbox" checked={autostart.enabled} disabled={!autostart.available || autostartBusy} onChange={() => void toggleAutostart()} />{autostart.enabled ? "开启" : "关闭"}</label></div>{!autostart.available && <small>当前安装中找不到稳定启动器，请重新部署后再试。</small>}</section>
+    <section className="surface-section data-card autostart-card"><div className="section-header"><div><h2>Windows 启动</h2><p>登录 Windows 后在后台启动 StudyGuardian。</p></div><label className="switch-label"><input type="checkbox" checked={autostart.enabled} disabled={!autostart.available || autostartBusy} onChange={() => void toggleAutostart()} />{autostart.enabled ? "开启" : "关闭"}</label></div>{!autostart.available && <small>当前安装中找不到稳定启动器，请重新部署后再试。</small>}</section>
     <section className="surface-section data-card settings-card"><div className="section-header"><div><h2>每日专注目标</h2><p>目标会写入 canonical motivation storage</p></div><Settings2 className="section-icon" size={20} /></div><label className="setting-field"><span>目标分钟数</span><input type="number" min={1} max={1440} value={inputValue} onChange={event => setTargetInput(event.target.value)} /><small>范围 1–1440 分钟</small></label><div className="setting-actions"><button className="primary-button" type="button" onClick={() => void saveTarget()}>保存目标</button></div></section>
     <section className="surface-section data-card settings-card"><div className="section-header"><div><h2>免打扰时段</h2><p>这些时段继续记录学习状态，但不主动弹出提醒。</p></div><ShieldCheck className="section-icon" size={20} /></div>
       <div className="quiet-period-list">{quietPeriods.map((period, index) => <div className="quiet-period-row" key={`${index}-${period.start}-${period.end}`}><input aria-label={`时段 ${index + 1} 开始`} inputMode="numeric" maxLength={5} value={period.start} onChange={event => updateQuiet(index, "start", event.target.value)} /><span>—</span><input aria-label={`时段 ${index + 1} 结束`} inputMode="numeric" maxLength={5} value={period.end} onChange={event => updateQuiet(index, "end", event.target.value)} /><button className="icon-button" type="button" aria-label={`删除时段 ${index + 1}`} onClick={() => setQuietDraft(quietPeriods.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16} /></button></div>)}</div>
@@ -373,10 +437,10 @@ function ComingSoon({ title }: { title: string }): ReactElement {
   return <div className="coming-page"><div className="coming-icon"><Sparkles size={24} /></div><h1>{title}</h1><p>这个入口已经为 Control Center 预留，当前阶段先完成总览与视觉基础。</p><button className="secondary-button" type="button"><Play size={16} />回到总览</button></div>;
 }
 
-function LiveSection({ active, snapshot, live }: { active: string; snapshot?: SupervisorDashboardSnapshot; live: boolean }): ReactElement {
+function LiveSection({ active, snapshot, live, onRefresh }: { active: string; snapshot?: SupervisorDashboardSnapshot; live: boolean; onRefresh?: () => Promise<void> }): ReactElement {
   if (!live) return <ComingSoon title={displayTitle(active)} />;
   switch (active) {
-    case "missions": return <MissionsPage missions={snapshot?.missions} />;
+    case "missions": return <MissionsPage missions={snapshot?.missions} taskPresets={snapshot?.task_presets} onRefresh={onRefresh} />;
     case "achievements": return <AchievementsPage achievements={snapshot?.achievements} />;
     case "rewards": return <RewardsPage rewards={snapshot?.rewards} />;
     case "review": return <ReviewPage review={snapshot?.review} />;
@@ -387,8 +451,9 @@ function LiveSection({ active, snapshot, live }: { active: string; snapshot?: Su
   }
 }
 
-export function ControlCenter({ snapshot, live = false, initialActive = "overview", routeRevision = 0, onTaskChanged, onTaskMutationStarted }: DashboardProps): ReactElement {
+export function ControlCenter({ snapshot, live = false, initialActive = "overview", routeRevision = 0, onTaskChanged, onTaskMutationStarted, onRefresh, onOpenHelp }: DashboardProps): ReactElement {
   const [active, setActive] = useState(initialActive);
+  const [helpOpen, setHelpOpen] = useState(false);
   useEffect(() => setActive(initialActive), [initialActive, routeRevision]);
   const supervision = deriveSupervisionState(live ? Boolean(snapshot?.connected) : true, snapshot?.status);
   const serviceLabel = live ? supervision.systemLabel : "本地服务正常";
@@ -400,11 +465,12 @@ export function ControlCenter({ snapshot, live = false, initialActive = "overvie
         <div className="nav-divider" />
         <div className="nav-label">管理</div>{navGroup(secondaryNav, active, setActive)}
       </div>
-      <div className="center-sidebar-footer"><div className={`sidebar-health is-${live ? supervision.systemTone : "success"}`}><ShieldCheck size={16} /><div><strong>{serviceLabel}</strong><span>{live && !snapshot?.connected ? "等待响应" : "刚刚更新"}</span></div></div><button className="profile-button" type="button" aria-label="打开帮助"><CircleHelp size={16} /></button></div>
+      <div className="center-sidebar-footer"><div className={`sidebar-health is-${live ? supervision.systemTone : "success"}`}><ShieldCheck size={16} /><div><strong>{serviceLabel}</strong><span>{live && !snapshot?.connected ? "等待响应" : "刚刚更新"}</span></div></div><button className="profile-button" type="button" aria-label="打开帮助" onClick={() => setHelpOpen(true)}><CircleHelp size={16} /></button></div>
     </aside>
     <main className="center-main">
       <header className="center-topbar"><div><span className="breadcrumb">StudyGuardian <ChevronRight size={14} />{displayTitle(active)}</span><span className="topbar-note">数据保存在本机</span></div><div className="topbar-actions"><button className="icon-button" type="button" aria-label="查看通知"><Activity size={17} /></button><button className="avatar-button" type="button" aria-label="用户菜单">SG</button></div></header>
-      {active === "overview" ? <Dashboard snapshot={snapshot} live={live} onNavigate={setActive} onTaskChanged={onTaskChanged} onTaskMutationStarted={onTaskMutationStarted} /> : <LiveSection active={active} snapshot={snapshot} live={live} />}
+      {active === "overview" ? <Dashboard snapshot={snapshot} live={live} onNavigate={setActive} onTaskChanged={onTaskChanged} onTaskMutationStarted={onTaskMutationStarted} onRefresh={onRefresh} onOpenHelp={() => setHelpOpen(true)} /> : <LiveSection active={active} snapshot={snapshot} live={live} onRefresh={onRefresh} />}
     </main>
+    <HelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} onNavigate={setActive} />
   </div>;
 }

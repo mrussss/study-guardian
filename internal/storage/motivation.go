@@ -17,14 +17,18 @@ type MotivationDaily struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 type Mission struct {
-	ID            string     `json:"id"`
-	Title         string     `json:"title"`
-	Description   string     `json:"description"`
-	RewardMilliAP int64      `json:"reward_milli_ap"`
-	DueDate       *string    `json:"due_date,omitempty"`
-	Status        string     `json:"status"`
-	CreatedAt     time.Time  `json:"created_at"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	ID                 string     `json:"id"`
+	Title              string     `json:"title"`
+	Description        string     `json:"description"`
+	RewardMilliAP      int64      `json:"reward_milli_ap"`
+	DueDate            *string    `json:"due_date,omitempty"`
+	Status             string     `json:"status"`
+	CreatedAt          time.Time  `json:"created_at"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	LinkedTaskPresetID *string    `json:"linked_task_preset_id,omitempty"`
+	LinkedTaskName     *string    `json:"linked_task_name,omitempty"`
+	LinkSource         string     `json:"link_source,omitempty"`
+	LinkConfidence     *float64   `json:"link_confidence,omitempty"`
 }
 type Reward struct {
 	ID          string `json:"id"`
@@ -291,7 +295,7 @@ func (s *Storage) CheckinDates(ctx context.Context) ([]string, error) {
 }
 
 func (s *Storage) ListMissions(ctx context.Context) ([]Mission, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,title,description,reward_milli_ap,due_date,status,created_at,completed_at FROM missions ORDER BY CASE WHEN status='OPEN' THEN 0 ELSE 1 END, COALESCE(due_date,'9999-12-31'),created_at DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,title,description,reward_milli_ap,due_date,status,created_at,completed_at,linked_task_preset_id,linked_task_name,link_source,link_confidence FROM missions ORDER BY CASE WHEN status='OPEN' THEN 0 ELSE 1 END, COALESCE(due_date,'9999-12-31'),created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +303,7 @@ func (s *Storage) ListMissions(ctx context.Context) ([]Mission, error) {
 	out := make([]Mission, 0)
 	for rows.Next() {
 		var m Mission
-		if err := rows.Scan(&m.ID, &m.Title, &m.Description, &m.RewardMilliAP, &m.DueDate, &m.Status, &m.CreatedAt, &m.CompletedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.Title, &m.Description, &m.RewardMilliAP, &m.DueDate, &m.Status, &m.CreatedAt, &m.CompletedAt, &m.LinkedTaskPresetID, &m.LinkedTaskName, &m.LinkSource, &m.LinkConfidence); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -307,7 +311,7 @@ func (s *Storage) ListMissions(ctx context.Context) ([]Mission, error) {
 	return out, rows.Err()
 }
 func (s *Storage) CreateMission(ctx context.Context, m Mission) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO missions(id,title,description,reward_milli_ap,due_date,status,created_at) VALUES(?,?,?,?,?,'OPEN',?)`, m.ID, m.Title, m.Description, m.RewardMilliAP, m.DueDate, m.CreatedAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO missions(id,title,description,reward_milli_ap,due_date,status,created_at,linked_task_preset_id,linked_task_name,link_source,link_confidence) VALUES(?,?,?,?,?,'OPEN',?,?,?,?,?)`, m.ID, m.Title, m.Description, m.RewardMilliAP, m.DueDate, m.CreatedAt, m.LinkedTaskPresetID, m.LinkedTaskName, m.LinkSource, m.LinkConfidence)
 	return err
 }
 func (s *Storage) CompleteMission(ctx context.Context, id string, now time.Time) (Mission, bool, error) {
@@ -317,7 +321,7 @@ func (s *Storage) CompleteMission(ctx context.Context, id string, now time.Time)
 	}
 	defer tx.Rollback()
 	var m Mission
-	err = tx.QueryRowContext(ctx, `SELECT id,title,description,reward_milli_ap,due_date,status,created_at,completed_at FROM missions WHERE id=?`, id).Scan(&m.ID, &m.Title, &m.Description, &m.RewardMilliAP, &m.DueDate, &m.Status, &m.CreatedAt, &m.CompletedAt)
+	err = tx.QueryRowContext(ctx, `SELECT id,title,description,reward_milli_ap,due_date,status,created_at,completed_at,linked_task_preset_id,linked_task_name,link_source,link_confidence FROM missions WHERE id=?`, id).Scan(&m.ID, &m.Title, &m.Description, &m.RewardMilliAP, &m.DueDate, &m.Status, &m.CreatedAt, &m.CompletedAt, &m.LinkedTaskPresetID, &m.LinkedTaskName, &m.LinkSource, &m.LinkConfidence)
 	if err == sql.ErrNoRows {
 		return Mission{}, false, fmt.Errorf("mission not found")
 	}

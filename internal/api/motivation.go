@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"study-guardian/internal/motivation"
 )
 
 func (s *Server) handleMotivationStatus(w http.ResponseWriter, r *http.Request) {
@@ -105,16 +107,27 @@ func (s *Server) handleMissions(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, v)
 	case http.MethodPost:
 		var req struct {
-			Title         string  `json:"title"`
-			Description   string  `json:"description"`
-			RewardMilliAP int64   `json:"reward_milli_ap"`
-			DueDate       *string `json:"due_date"`
+			Title              string   `json:"title"`
+			Description        string   `json:"description"`
+			DueDate            *string  `json:"due_date"`
+			LinkedTaskPresetID *string  `json:"linked_task_preset_id"`
+			LinkedTaskName     *string  `json:"linked_task_name"`
+			LinkSource         string   `json:"link_source"`
+			LinkConfidence     *float64 `json:"link_confidence"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, fmt.Errorf("invalid request json"), 400)
 			return
 		}
-		v, err := s.motivation.CreateMission(context.Background(), req.Title, req.Description, req.RewardMilliAP, req.DueDate)
+		valueOrEmpty := func(value *string) string {
+			if value == nil {
+				return ""
+			}
+			return *value
+		}
+		v, err := s.motivation.CreateMission(context.Background(), req.Title, req.Description, 0, req.DueDate, motivation.MissionLink{
+			LinkedTaskPresetID: valueOrEmpty(req.LinkedTaskPresetID), LinkedTaskName: valueOrEmpty(req.LinkedTaskName), LinkSource: req.LinkSource, LinkConfidence: req.LinkConfidence,
+		})
 		if err != nil {
 			jsonError(w, err, 400)
 			return

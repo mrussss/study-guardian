@@ -9,7 +9,10 @@ import { getMockScenario, getSupervisorDashboardAdapter, isTauriRuntime } from "
 import { MockScenarioToolbar } from "../mock/MockScenarioToolbar";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
+import "../shared/task-wheel/task-wheel.css";
+import "../shared/help-drawer.css";
 import "./center.css";
+import "./focus-clock.css";
 
 const root = document.querySelector<HTMLElement>("#control-center");
 if (!root) throw new Error("Control Center root is missing");
@@ -79,6 +82,7 @@ function RuntimeControlCenter(): ReactElement {
   return <ControlCenter snapshot={snapshot} live initialActive={routeRequest.route} routeRevision={routeRequest.revision}
     onTaskChanged={() => pollerRef.current?.refresh()}
     onTaskMutationStarted={() => pollerRef.current?.markMutation()}
+    onRefresh={() => pollerRef.current?.refresh() ?? Promise.resolve()}
   />;
 }
 

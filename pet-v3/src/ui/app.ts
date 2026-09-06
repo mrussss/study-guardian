@@ -6,6 +6,7 @@ import { BehaviorEngine, type VisualState } from "../behavior/engine";
 import { mockActivityWatchStale, mockSemantic, mockSupervisorOffline } from "../mock/semantic";
 import type { Activity, CurrentActivityView, Relation, UserMode } from "../model/semantic";
 import { loadSkinManifest } from "../skin";
+import { getPetTaskLabel } from "./task-label";
 import {
   NativeSupervisorAdapter,
   NativeSupervisorControlAdapter,
@@ -224,7 +225,7 @@ export function mountApp(root: HTMLElement): void {
     animation.update(now - lastFrame);
     stateLabel.textContent = state;
     stateLabel.style.color = colors[state];
-    taskLabel.textContent = !connected ? "Supervisor offline" : !semantic.fresh ? "活动状态不可用" : semantic.task;
+    taskLabel.textContent = getPetTaskLabel(connected, semantic.task);
     if (panelOpen) renderPanel();
     draw(state);
     lastFrame = now;

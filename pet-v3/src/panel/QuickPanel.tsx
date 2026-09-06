@@ -16,7 +16,9 @@ import {
 import { clampProgress, formatFocusMinutes } from "../shared/models/dashboard";
 import { BrandMark } from "../shared/BrandMark";
 import { deriveSupervisionState } from "../shared/models/supervision-state";
-import { TaskPicker, type TaskPickerAction, type TaskPickerActionResult } from "../shared/TaskPicker";
+import { TaskWheel } from "../shared/task-wheel/TaskWheel";
+import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
+import type { TaskPickerActionResult } from "../shared/task-mutation";
 import type { NativeSupervisorStatus, NativeTaskPresetList } from "../transport/supervisor";
 
 export type QuickPanelMode = "STANDBY" | "STUDY" | "BREAK" | "OFF";
@@ -37,8 +39,10 @@ export interface QuickPanelProps {
   onSelectTask?: (id: string) => Promise<TaskPickerActionResult>;
   onTemporaryTask?: (name: string) => Promise<TaskPickerActionResult>;
   onSaveTask?: (name: string) => Promise<TaskPickerActionResult>;
+  onUpdateTaskPreset?: (id: string, name: string, pinned: boolean, sortOrder: number) => Promise<TaskPickerActionResult>;
+  onDeleteTaskPreset?: (id: string) => Promise<TaskPickerActionResult>;
   onOptimisticTaskChange?: (task: string | undefined) => void;
-  onTaskResult?: (result: TaskPickerActionResult, action: TaskPickerAction) => void | Promise<void>;
+  onTaskResult?: (result: TaskPickerActionResult, action: TaskWheelAction) => void | Promise<void>;
   onTaskMutationStarted?: () => void;
   onModeAction?: (mode: "STUDY" | "BREAK" | "OFF") => void;
   onOpenCenter?: () => void;
@@ -69,6 +73,8 @@ export function QuickPanel({
   onSelectTask = async () => ({ ok: false }),
   onTemporaryTask = async () => ({ ok: false }),
   onSaveTask = async () => ({ ok: false }),
+  onUpdateTaskPreset,
+  onDeleteTaskPreset,
   onModeAction,
   onOptimisticTaskChange,
   onTaskResult,
@@ -118,10 +124,8 @@ export function QuickPanel({
             <div className="elapsed"><Clock3 size={16} /><span>{elapsed}</span></div>
           </div>
           <p className="focus-description">{copy.description}</p>
-          <div className="task-line"><BookOpen size={15} /><span>{task}</span></div>
+          <div className="task-line"><BookOpen size={15} /><TaskWheel currentTask={task} presets={taskPresets} compact disabled={!connected} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} onUpdatePreset={onUpdateTaskPreset} onDeletePreset={onDeleteTaskPreset} onOptimisticTaskChange={onOptimisticTaskChange} onTaskMutationStarted={onTaskMutationStarted} onResult={onTaskResult} /></div>
         </section>
-
-        <TaskPicker currentTask={task} presets={taskPresets} compact disabled={!connected} onOptimisticTaskChange={nextTask => { if (nextTask !== undefined) onTaskMutationStarted?.(); onOptimisticTaskChange?.(nextTask); }} onResult={onTaskResult} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} />
 
         <div className="quick-actions">
           {mode === "BREAK" ? (

@@ -20,7 +20,7 @@
   --sg-warning-soft: #fff4df;
   --sg-danger: #d95454;
   --sg-shadow-card: 0 10px 30px rgba(27, 31, 48, .05);
-  --sg-shadow-floating: 0 22px 58px rgba(27, 31, 48, .14);
+  --sg-shadow-floating: 0 10px 24px rgba(27, 31, 48, .06);
   --sg-radius-control: 8px;
   --sg-radius-button: 10px;
   --sg-radius-card: 14px;
@@ -46,7 +46,7 @@
   --sg-warning-soft: #46351a;
   --sg-danger: #f17a7a;
   --sg-shadow-card: 0 10px 30px rgba(0, 0, 0, .18);
-  --sg-shadow-floating: 0 22px 58px rgba(0, 0, 0, .34);
+  --sg-shadow-floating: 0 10px 24px rgba(0, 0, 0, .12);
 }
 
 * { box-sizing: border-box; }

@@ -197,7 +197,11 @@ func (s *Storage) migrate() error {
 			due_date TEXT,
 			status TEXT NOT NULL DEFAULT 'OPEN',
 			created_at TIMESTAMP NOT NULL,
-			completed_at TIMESTAMP
+			completed_at TIMESTAMP,
+			linked_task_preset_id TEXT,
+			linked_task_name TEXT,
+			link_source TEXT NOT NULL DEFAULT '',
+			link_confidence REAL
 		);`,
 		`CREATE TABLE IF NOT EXISTS achievements (
 			achievement_id TEXT PRIMARY KEY,
@@ -341,6 +345,40 @@ func (s *Storage) migrate() error {
 		}
 	}
 
+	return s.ensureMissionColumns()
+}
+
+func (s *Storage) ensureMissionColumns() error {
+	rows, err := s.db.Query(`PRAGMA table_info(missions)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	columns := []struct{ name, definition string }{
+		{"linked_task_preset_id", "TEXT"}, {"linked_task_name", "TEXT"}, {"link_source", "TEXT NOT NULL DEFAULT ''"}, {"link_confidence", "REAL"},
+	}
+	for _, column := range columns {
+		if existing[column.name] {
+			continue
+		}
+		if _, err := s.db.Exec(`ALTER TABLE missions ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
