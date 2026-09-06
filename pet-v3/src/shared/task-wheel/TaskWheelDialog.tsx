@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from "react";
 import { ArrowDown, ArrowUp, Plus, Settings2, X } from "lucide-react";
 import { TaskMutationQueue, settleTaskPickerResult, type TaskPickerActionResult } from "../task-mutation";
 import { TaskEditor } from "./TaskEditor";
@@ -22,7 +22,25 @@ type WheelProps = {
   onResult?: (result: TaskPickerActionResult, action: TaskWheelAction) => void | Promise<void>;
 };
 
-const TASK_SLOTS = [0, 1, 2, 3, 4, 5, 7];
+export const TASK_WHEEL_ADD_SLOT = 5;
+export const TASK_WHEEL_TASK_SLOTS = [0, 1, 2, 3, 4, 6, 7];
+
+export function getTaskWheelSlotPosition(slotIndex: number, compact = false): { x: number; y: number } {
+  const angle = -90 + slotIndex * 45;
+  const radius = compact ? 35 : 37;
+  return { x: 50 + Math.cos(angle * Math.PI / 180) * radius, y: 50 + Math.sin(angle * Math.PI / 180) * radius };
+}
+
+function polarPoint(angle: number, radius: number): { x: number; y: number } {
+  return { x: 50 + Math.cos(angle * Math.PI / 180) * radius, y: 50 + Math.sin(angle * Math.PI / 180) * radius };
+}
+
+export function getTaskWheelSectorPath(slotIndex: number): string {
+  const centerAngle = -90 + slotIndex * 45;
+  const start = polarPoint(centerAngle - 22.5, 48);
+  const end = polarPoint(centerAngle + 22.5, 48);
+  return `M 50 50 L ${start.x.toFixed(3)} ${start.y.toFixed(3)} A 48 48 0 0 1 ${end.x.toFixed(3)} ${end.y.toFixed(3)} Z`;
+}
 
 export function TaskWheelDialog({ open, onClose, currentTask, presets, compact = false, disabled = false, onSelect, onTemporary, onSavePinned, onUpdatePreset, onDeletePreset, onOptimisticTaskChange, onTaskMutationStarted, onResult }: WheelProps): ReactElement | null {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -35,7 +53,7 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
   const [manage, setManage] = useState(false);
   const [notice, setNotice] = useState("");
   const pinned = useMemo(() => (presets?.pinned ?? []).slice(0, 7), [presets?.pinned]);
-  const selectableSlots = useMemo(() => TASK_SLOTS.slice(0, pinned.length), [pinned.length]);
+  const selectableSlots = useMemo(() => TASK_WHEEL_TASK_SLOTS.slice(0, pinned.length), [pinned.length]);
   const highlightedTask = pinned[selectableSlots.indexOf(highlight)] ?? pinned[0];
 
   useEffect(() => {
@@ -43,8 +61,10 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
     setNotice("");
     setEditing(null);
     setManage(false);
+    const currentIndex = pinned.findIndex(item => item.name === currentTask);
+    setHighlight(currentIndex >= 0 ? selectableSlots[currentIndex] : selectableSlots[0] ?? 0);
     dialogRef.current?.querySelector<HTMLElement>("[data-wheel-close]")?.focus();
-  }, [open]);
+  }, [open, currentTask, pinned, selectableSlots]);
 
   useEffect(() => {
     if (!open) return;
@@ -104,19 +124,26 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
   };
 
   return <div className="task-wheel-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className={`task-wheel-dialog ${compact ? "is-compact" : ""}`} role="dialog" aria-modal="true" aria-labelledby="task-wheel-title" ref={dialogRef}>
+    <div className={`task-wheel-dialog ${compact ? "is-compact" : ""} ${manage ? "is-managing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="task-wheel-title" ref={dialogRef}>
       <header className="task-wheel-header"><div><span className="task-wheel-eyebrow">快速切换</span><h2 id="task-wheel-title">选择当前专注任务</h2></div><button className="task-wheel-icon-button" type="button" data-wheel-close aria-label="关闭任务轮盘" onClick={onClose}><X size={17} /></button></header>
       <div className="task-wheel-body">
         <div className="task-wheel-stage" aria-label="常用任务轮盘">
+          <svg className="task-wheel-svg" viewBox="0 0 100 100" aria-hidden="true">
+            <circle className="task-wheel-disc" cx="50" cy="50" r="48" />
+            {Array.from({ length: 8 }, (_, slot) => <path className={`task-wheel-sector ${highlight === slot ? "is-highlighted" : ""} ${pinned[selectableSlots.indexOf(slot)]?.name === currentTask ? "is-current" : ""}`} d={getTaskWheelSectorPath(slot)} key={slot} />)}
+            <circle className="task-wheel-center-ring" cx="50" cy="50" r="16" />
+          </svg>
           {Array.from({ length: 8 }, (_, slot) => {
-            const itemIndex = TASK_SLOTS.indexOf(slot);
+            const itemIndex = TASK_WHEEL_TASK_SLOTS.indexOf(slot);
             const item = itemIndex >= 0 ? pinned[itemIndex] : undefined;
-            const isAdd = slot === 6;
-            return <div className={`task-wheel-slot slot-${slot} ${highlight === slot ? "is-highlighted" : ""}`} key={slot}>
-              {isAdd ? <button className="task-wheel-add" type="button" onClick={beginAdd} aria-label="添加常用任务"><Plus size={18} /></button> : item ? <button className={`task-wheel-item ${item.name === currentTask ? "is-current" : ""} ${highlight === slot ? "is-highlighted" : ""}`} type="button" aria-pressed={item.name === currentTask} aria-busy={pendingId === item.id} onClick={() => { setHighlight(slot); void runSelect(item.id, item.name); }}><span>{item.name}</span>{item.name === currentTask && <small>正在使用</small>}</button> : <span className="task-wheel-empty" aria-hidden="true" />}
+            const isAdd = slot === TASK_WHEEL_ADD_SLOT;
+            const position = getTaskWheelSlotPosition(slot, compact);
+            const slotStyle = { "--slot-x": `${position.x}%`, "--slot-y": `${position.y}%` } as CSSProperties;
+            return <div className={`task-wheel-slot ${highlight === slot ? "is-highlighted" : ""}`} style={slotStyle} key={slot}>
+              {isAdd ? <button className="task-wheel-add" type="button" onClick={beginAdd} aria-label="添加常用任务"><Plus size={18} /></button> : item ? <button className={`task-wheel-item ${item.name === currentTask ? "is-current" : ""} ${highlight === slot ? "is-highlighted" : ""}`} type="button" aria-pressed={item.name === currentTask} aria-busy={pendingId === item.id} onClick={() => { setHighlight(slot); void runSelect(item.id, item.name); }}><span>{item.name}</span></button> : <span className="task-wheel-empty" aria-hidden="true" />}
             </div>;
           })}
-          <div className="task-wheel-center"><span>正在使用</span><strong>{currentTask.trim() || "未设置任务"}</strong><small>方向键选择 · Enter 确认</small></div>
+          <div className="task-wheel-center"><span>当前任务</span><strong>{currentTask.trim() || "未设置任务"}</strong></div>
         </div>
         <div className="task-wheel-toolbar"><span>{pinned.length} / 7 个常用任务</span><button type="button" onClick={() => setManage(value => !value)}><Settings2 size={14} />{manage ? "完成管理" : "管理任务"}</button></div>
         {editing === "new" && <TaskEditor name={editorName} onName={setEditorName} onTemporary={() => void runMutation("__temporary__", editorName.trim(), "temporary", () => onTemporary(editorName.trim()))} onSave={() => void runMutation("__save__", editorName.trim(), "save", () => onSavePinned(editorName.trim()))} onCancel={() => setEditing(null)} busy={pendingId !== null} />}
