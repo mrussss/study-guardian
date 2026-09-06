@@ -17,6 +17,9 @@
 - **运行边界**：`D:\StudyGuardianDev` 只保存部署后的运行副本与持久数据；禁止在此直接编辑正式源码。
 - **发布边界**：只有完整产品发布才运行 `scripts/build-windows.sh` 和 `scripts/deploy-windows.sh`。普通 Pet 修改只使用 Pet 专用流程，不得停止 Supervisor 或 Sensor。
 - **工具链**：Pet v3 使用 Node 22.22.1、npm 10.9.4、Rust 1.98.1；构建脚本必须在开始时输出并校验版本。
+- **Windows 原生视觉验收**：涉及透明圆角、失焦隐藏、拖动、托盘、任务栏或真实点击时，使用已安装的 `computer-use` skill，通过专用 `node_repl` 初始化 `@oai/sky`，枚举并选择真实 StudyGuardian 窗口，再用 `sky.get_window_state` 获取截图与可访问性状态。
+- **连接器判定**：统一 `cua_repl` 只返回浏览器时，只能说明该入口为 browser-only；不得据此宣称 Windows 原生 UI 能力不可用。只有专用 Computer Use 恢复流程失败后，才能降级为人工 Gate。
+- **原生操作安全**：应用与窗口标识必须从 `sky.list_apps()` / `sky.list_windows()` 的返回值中选择，禁止猜测句柄；检测到用户输入时立即停止自动操作。命令行构建继续使用项目脚本，不通过 UI 自动化操作终端。
 - **详细说明**：见 `docs/DEVELOPMENT_WORKFLOW.md`。
 
 ## 3. 模块职责与端口约定

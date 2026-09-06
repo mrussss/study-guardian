@@ -52,7 +52,29 @@ http://127.0.0.1:1420/quick-panel.html?mock=normal
 | `progress-complete` | 今日目标已完成 |
 | `reminder` | 分心提醒状态 |
 
-Mock 与 native 使用同一组 `SupervisorDashboardAdapter`、`SupervisorControlAdapter` 和 `SystemIntegrationAdapter` 接口。透明窗口、拖动、托盘、single-instance 和真实 Windows 集成仍必须使用 `native/candidate` 验证。
+Mock 与 native 使用同一组 `SupervisorDashboardAdapter`、`SupervisorControlAdapter` 和 `SystemIntegrationAdapter` 接口。透明窗口、拖动、托盘、single-instance 和真实 Windows 集成仍必须使用 `native/candidate` 构建，并通过下面的原生视觉 Gate 验收。
+
+## Windows 原生视觉 Gate
+
+`native` / `candidate` 的进程、日志和哈希结果不能证明窗口最终画面正确。涉及 Pet、Quick Panel 或 Control Center 的原生行为时，按以下顺序验收：
+
+1. 先完成 `check` 和所需的 `native` / `candidate`，确认被观察的是最新运行产物。
+2. 使用已安装的 `computer-use` skill。专用 `node_repl` 首次调用只初始化 `@oai/sky`：
+
+   ```javascript
+   if (!globalThis.sky) {
+     const { sky } = await import("@oai/sky");
+     globalThis.sky = sky;
+   }
+   ```
+
+3. 调用 `sky.list_apps()` 或 `sky.list_windows()`；从返回对象中选择唯一的 StudyGuardian 进程和目标窗口，禁止猜测 app id、window id 或句柄。
+4. 使用 `sky.get_window_state(..., { include_screenshot: true, include_text: true })` 获取真实窗口截图和可访问性树。按改动范围检查 Pet、Quick Panel 圆角与外部透明区、Control Center、任务切换、失焦隐藏以及可定位时的托盘/任务栏图标。
+5. 报告中写明实际观察到的窗口、截图结论和仍未覆盖的 Gate。日志只能作为事件与链路证据，不能代替画面。
+
+统一 `cua_repl` 只列出浏览器时，说明该统一入口当前配置为 browser-only。此时改用上述专用 Computer Use 通道，不得直接把原生能力标记为不可用。若窗口枚举超时，等待约 2 秒后重试一次；仍失败时重置专用 REPL、重新初始化 `@oai/sky` 并再次枚举。只有这套恢复流程仍无法取得目标窗口时，才能降级为用户人工视觉 Gate。若工具报告检测到用户输入，立即停止 UI 自动操作，保留已取得的证据并说明剩余项目。
+
+构建、启动和日志命令继续通过普通 shell 与项目脚本执行，不使用 Computer Use 操作终端。
 
 ## 缓存维护
 

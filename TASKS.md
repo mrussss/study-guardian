@@ -138,7 +138,7 @@
 - [~] 107. Stage C Quick Panel / Control Center Tauri window orchestration（窗口配置、
   延迟创建/单实例复用、Pet 相邻定位、Escape/显式 hide 生命周期、Quick Panel →
   Control Center 的 overview/settings/review bounded route 与多显示器边界自动验证已完成；
-  focus loss 只记录诊断、不再隐式销毁可交互状态，原生 Windows 窗口视觉/交互仍待人工 Gate）
+  focus loss 已通过原生事件隐藏并有日志覆盖；Computer Use 已取得真实 Quick Panel 截图；完整多次点击、失焦、多显示器与多 DPI 仍待 Gate）
 - [~] 108. Stage D/E 已接入受限 native Supervisor dashboard DTO（status、motivation、history、
   achievements、missions、rewards、AI status）与 Quick Panel 实时 mode/task/进度/模式控制；
   Control Center 其余页面、Review/Study Center parity 与原生窗口人工 Gate 待完成
@@ -180,3 +180,4 @@
 - [x] 128. 固定 Node 22.22.1、npm 10.9.4、Rust 1.98.1，并在 Windows 构建前校验
 - [x] 129. GitHub CI：Pet Web、Go/Python/集成、PowerShell 与部署/缓存安全门禁；Windows native 按 PR/手动触发
 - [x] 130. 同步 AGENTS.md、DEVELOPMENT.md、README 与 Windows/Pet 开发文档
+- [x] 131. 固化 Windows 原生视觉验收通道：使用 computer-use + node_repl/@oai/sky 枚举真实窗口并截图，避免把 browser-only CUA 误判为原生能力不可用

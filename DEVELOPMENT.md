@@ -20,7 +20,20 @@ WSL `~/projects/study-guardian` 是唯一源码真源，`D:\StudyGuardianBuild` 
 
 浏览器 Mock 支持正常、慢请求、失败、离线、快速任务切换、空进度、完成进度和提醒场景。完整命令、URL 和缓存维护见 [Pet v3 开发工作流](docs/DEVELOPMENT_WORKFLOW.md)。
 
-## 2. 完整产品构建与部署
+## 2. Windows 原生视觉验收
+
+`native` 和 `candidate` 证明 Windows 产物可构建、可部署，但不能替代透明窗口、圆角、失焦、托盘、任务栏和实际点击的视觉验收。涉及这些行为时，使用已安装的 `computer-use` skill，并通过专用 `node_repl` 加载 `@oai/sky`：
+
+```javascript
+if (!globalThis.sky) {
+  const { sky } = await import("@oai/sky");
+  globalThis.sky = sky;
+}
+```
+
+随后使用 `sky.list_apps()` / `sky.list_windows()` 选择返回的 StudyGuardian 进程和窗口，并用 `sky.get_window_state(...)` 获取真实截图与可访问性状态。统一 `cua_repl` 若只返回浏览器，表示该入口为 browser-only，不代表原生 UI 能力不可用。详细恢复步骤和验收范围见 [Pet v3 开发工作流](docs/DEVELOPMENT_WORKFLOW.md)。
+
+## 3. 完整产品构建与部署
 
 只有需要同时发布 Supervisor、Sensor、Pet 和 Windows 脚本时使用：
 
@@ -42,7 +55,7 @@ powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\install
 
 Pet 运行时由 `D:\StudyGuardianDev\config\runtime.json` 选择，切换必须遵守对应人工 Gate，详见 `docs/WINDOWS_RUNTIME.md`。
 
-## 3. 自动化测试套件
+## 4. 自动化测试套件
 
 ```bash
 # 本地完整测试
