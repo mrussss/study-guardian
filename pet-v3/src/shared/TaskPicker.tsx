@@ -36,6 +36,7 @@ export function TaskPicker({ currentTask, presets, compact = false, variant = "d
   const isSelected = (_id: string, taskName: string): boolean => taskName === displayedTask;
   const run = async (pendingKey: string, taskName: string, action: TaskPickerAction, operation: () => Promise<TaskPickerActionResult>): Promise<void> => {
     if (disabled || pendingId === pendingKey) return;
+    if (action === "select" && taskName === displayedTask) return;
     const revision = requestRevision.current + 1;
     requestRevision.current = revision;
     setPendingId(pendingKey);

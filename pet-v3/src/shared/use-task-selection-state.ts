@@ -20,10 +20,10 @@ export function taskSelectionReducer(state: TaskSelectionState, action: TaskSele
       return { ...state, authoritativeTask: action.task };
     case "OPTIMISTIC_SELECTED":
       return { ...state, optimisticTask: action.task, pending: true };
-    case "MUTATION_SUCCEEDED":
-      return action.task === undefined
-        ? state
-        : { authoritativeTask: action.task, pending: false };
+    case "MUTATION_SUCCEEDED": {
+      const confirmedTask = action.task ?? state.optimisticTask ?? state.authoritativeTask;
+      return { authoritativeTask: confirmedTask, pending: false };
+    }
     case "MUTATION_FAILED":
       return { authoritativeTask: state.authoritativeTask, pending: false };
   }

@@ -76,6 +76,16 @@ test("clicking a task immediately updates the Hero task and selected chip", asyn
   await waitFor(() => assert.equal(algorithm.getAttribute("aria-busy"), "false"));
 });
 
+test("clicking the current task is a no-op", async () => {
+  let calls = 0;
+  render(<PickerHarness onSelect={async () => { calls += 1; return { ok: true }; }} />);
+  const current = screen.getByRole("button", { name: "八股" });
+  await userEvent.setup().click(current);
+  assert.equal(calls, 0);
+  assert.equal(current.getAttribute("aria-pressed"), "true");
+  assert.equal(current.getAttribute("aria-busy"), "false");
+});
+
 test("only the selected task is pending without disabling the chip", async () => {
   const request = deferred<TaskPickerActionResult>();
   render(<PickerHarness onSelect={async () => request.promise} />);

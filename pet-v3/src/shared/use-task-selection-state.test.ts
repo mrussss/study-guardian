@@ -34,7 +34,9 @@ test("snapshot cannot overwrite the latest optimistic task before confirmation",
 test("success commits atomically and failure restores the last authoritative task", () => {
   const optimistic = taskSelectionReducer(initial, { type: "OPTIMISTIC_SELECTED", task: "八股" });
   assert.deepEqual(taskSelectionReducer(optimistic, { type: "MUTATION_SUCCEEDED", task: "八股" }), { authoritativeTask: "八股", pending: false });
-  assert.deepEqual(taskSelectionReducer(optimistic, { type: "MUTATION_SUCCEEDED" }), optimistic);
+  const confirmedWithoutEcho = taskSelectionReducer(optimistic, { type: "MUTATION_SUCCEEDED" });
+  assert.deepEqual(confirmedWithoutEcho, { authoritativeTask: "八股", pending: false });
+  assert.deepEqual(taskSelectionReducer(confirmedWithoutEcho, { type: "SNAPSHOT_RECEIVED", task: "算法" }), { authoritativeTask: "算法", pending: false });
   assert.deepEqual(taskSelectionReducer(optimistic, { type: "MUTATION_FAILED" }), { authoritativeTask: "Go", pending: false });
 });
 
