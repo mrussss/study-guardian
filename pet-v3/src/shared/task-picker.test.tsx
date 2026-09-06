@@ -76,7 +76,7 @@ test("clicking a task immediately updates the Hero task and selected chip", asyn
   await waitFor(() => assert.equal(algorithm.getAttribute("aria-busy"), "false"));
 });
 
-test("only the selected task is pending and other chips stay enabled", async () => {
+test("only the selected task is pending without disabling the chip", async () => {
   const request = deferred<TaskPickerActionResult>();
   render(<PickerHarness onSelect={async () => request.promise} />);
   const user = userEvent.setup();
@@ -84,7 +84,7 @@ test("only the selected task is pending and other chips stay enabled", async () 
   const go = screen.getByRole("button", { name: "Go" }) as HTMLButtonElement;
   const ba = screen.getByRole("button", { name: "八股" }) as HTMLButtonElement;
   const algorithm = screen.getByRole("button", { name: "算法" }) as HTMLButtonElement;
-  assert.equal(algorithm.disabled, true);
+  assert.equal(algorithm.disabled, false);
   assert.equal(go.disabled, false);
   assert.equal(ba.disabled, false);
   assert.equal(go.getAttribute("aria-busy"), "false");

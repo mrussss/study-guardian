@@ -29,7 +29,7 @@
 .task-picker.is-hero .task-chip.is-active { color: #27234f; background: #fff; border-color: #fff; }
 .task-picker.is-hero .task-chip-add { color: #cbc6f7; }
 .task-picker.is-hero .task-chip:disabled { opacity: 1; }
-.task-picker.is-hero .task-chip[aria-busy="true"] { cursor: wait; box-shadow: 0 0 0 2px rgba(255, 255, 255, .14); }
+.task-picker .task-chip[aria-busy="true"] { cursor: wait; }
 .task-picker.is-hero .task-create-row { padding-inline: 13px; }
 .task-picker.is-hero .task-create-row input { color: #fff; background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .16); }
 .task-picker.is-hero .task-create-row button { color: #e7e5ff; background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .16); }

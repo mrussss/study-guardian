@@ -7,6 +7,7 @@ import { getMockScenario, getSupervisorControlAdapter, getSupervisorDashboardAda
 import { MockScenarioToolbar } from "../mock/MockScenarioToolbar";
 import type { ControlCenterRoute } from "../center/route";
 import type { TaskPickerAction, TaskPickerActionResult } from "../shared/TaskPicker";
+import { useTaskSelectionState } from "../shared/use-task-selection-state";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
 import "./panel.css";
@@ -49,8 +50,6 @@ function controlNotice(kind: string | undefined): string {
 function RuntimeQuickPanel(): ReactElement {
   const [snapshot, setSnapshot] = useState<SupervisorDashboardSnapshot>();
   const [notice, setNotice] = useState<string>();
-  const [optimisticTask, setOptimisticTask] = useState<string>();
-  const [authoritativeTask, setAuthoritativeTask] = useState<string>();
   const pollerRef = useRef<SupervisorDashboardPollLoop | undefined>(undefined);
   const taskMutationRevision = useRef(0);
 
@@ -69,33 +68,21 @@ function RuntimeQuickPanel(): ReactElement {
 
   const status = snapshot?.status;
   const motivation = snapshot?.motivation;
-  const connected = Boolean(snapshot?.connected && status);
+  const connected = Boolean(snapshot?.connected);
   const mode: QuickPanelMode = status?.user_mode ?? "STANDBY";
   const snapshotTask = status?.task || (connected ? "未设置任务" : "正在读取当前任务");
-  useEffect(() => {
-    if (optimisticTask === undefined && status) setAuthoritativeTask(snapshotTask);
-  }, [optimisticTask, snapshotTask, status]);
-  const serverTask = authoritativeTask ?? snapshotTask;
-  useEffect(() => {
-    if (optimisticTask && status?.task === optimisticTask) setOptimisticTask(undefined);
-  }, [optimisticTask, status?.task]);
-  const task = optimisticTask ?? serverTask;
+  const taskSelection = useTaskSelectionState(snapshotTask);
+  const task = taskSelection.task;
   const elapsed = status ? formatElapsed(mode === "BREAK" ? status.break_seconds : status.study_seconds) : "--:--";
   const motivationAvailable = Boolean(motivation);
   const control = getSupervisorControlAdapter();
 
   const handleTaskResult = (operation: Promise<TaskPickerActionResult>): Promise<TaskPickerActionResult> => operation;
   const handleTaskPickerResult = async (result: TaskPickerActionResult, action: TaskPickerAction): Promise<void> => {
-    const resultRevision = taskMutationRevision.current;
     setNotice(result.ok ? (action === "save" ? "常用任务已保存并选中" : "当前任务已更新") : controlNotice(result.error_kind));
-    if (result.ok && result.task !== undefined) {
-      setAuthoritativeTask(result.task);
-      setOptimisticTask(undefined);
-    }
-    const refresh = pollerRef.current?.refresh();
+    taskSelection.settle(result.ok, result.task);
     if (result.ok && result.task === undefined) {
-      await refresh;
-      if (taskMutationRevision.current === resultRevision) setOptimisticTask(undefined);
+      await pollerRef.current?.refresh();
     }
   };
 
@@ -123,9 +110,10 @@ function RuntimeQuickPanel(): ReactElement {
     motivationAvailable={motivationAvailable}
     notice={notice}
     taskPresets={snapshot?.task_presets}
+    status={status}
     onSelectTask={id => handleTaskResult(control.selectTaskPreset(id))}
     onTemporaryTask={name => handleTaskResult(control.setTask(name))}
-    onOptimisticTaskChange={nextTask => setOptimisticTask(nextTask === serverTask ? undefined : nextTask)}
+    onOptimisticTaskChange={nextTask => { if (nextTask !== undefined) taskSelection.selectOptimistically(nextTask); }}
     onTaskMutationStarted={() => { taskMutationRevision.current += 1; pollerRef.current?.markMutation(); }}
     onTaskResult={handleTaskPickerResult}
     onSaveTask={name => handleTaskResult(control.createTaskPreset(name, true).then(async result => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement } from "react";
 import { Plus } from "lucide-react";
 import type { NativeTaskPresetList } from "../transport/supervisor";
 import { TaskMutationQueue, settleTaskPickerResult, type TaskPickerActionResult } from "./task-mutation";
@@ -27,26 +27,18 @@ export function TaskPicker({ currentTask, presets, compact = false, variant = "d
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [optimisticSelection, setOptimisticSelection] = useState<{ id?: string; name: string }>();
   const requestRevision = useRef(0);
   const mutationQueue = useRef(new TaskMutationQueue()).current;
   const pinned = presets?.pinned ?? [];
   const pinnedIDs = new Set(pinned.map(item => item.id));
   const recent = (presets?.recent ?? []).filter(item => !pinnedIDs.has(item.id));
-  const displayedTask = optimisticSelection?.name ?? currentTask;
-  const selectedId = optimisticSelection?.id;
-
-  useEffect(() => {
-    if (optimisticSelection && currentTask === optimisticSelection.name) setOptimisticSelection(undefined);
-  }, [currentTask, optimisticSelection]);
-
-  const isSelected = (id: string, taskName: string): boolean => selectedId ? selectedId === id : taskName === displayedTask;
+  const displayedTask = currentTask;
+  const isSelected = (_id: string, taskName: string): boolean => taskName === displayedTask;
   const run = async (pendingKey: string, taskName: string, action: TaskPickerAction, operation: () => Promise<TaskPickerActionResult>): Promise<void> => {
     if (disabled || pendingId === pendingKey) return;
     const revision = requestRevision.current + 1;
     requestRevision.current = revision;
     setPendingId(pendingKey);
-    setOptimisticSelection({ id: pendingKey.startsWith("__") ? undefined : pendingKey, name: taskName });
     onOptimisticTaskChange?.(taskName);
 
     const queued = await mutationQueue.enqueue(async () => {
@@ -62,7 +54,6 @@ export function TaskPicker({ currentTask, presets, compact = false, variant = "d
     if (!settled.applied) return;
     setPendingId(null);
     if (!settled.result.ok) {
-      setOptimisticSelection(undefined);
       onOptimisticTaskChange?.(undefined);
     } else if (action !== "select") {
       setName("");
@@ -74,11 +65,11 @@ export function TaskPicker({ currentTask, presets, compact = false, variant = "d
   return <section className={`task-picker ${compact ? "is-compact" : ""} ${variant === "hero" ? "is-hero" : ""}`} aria-label="当前学习任务">
     {variant !== "hero" && <div className="task-picker-current"><span>当前任务</span><strong>{displayedTask || "未设置任务"}</strong></div>}
     <div className="task-picker-group"><span>常用</span><div className="task-chip-row">
-      {pinned.map(item => <button className={isSelected(item.id, item.name) ? "task-chip is-active" : "task-chip"} type="button" aria-pressed={isSelected(item.id, item.name)} aria-busy={pendingId === item.id} disabled={disabled || pendingId === item.id} key={item.id} onClick={() => void run(item.id, item.name, "select", () => onSelect(item.id))}>{item.name}</button>)}
+      {pinned.map(item => <button className={isSelected(item.id, item.name) ? "task-chip is-active" : "task-chip"} type="button" aria-pressed={isSelected(item.id, item.name)} aria-busy={pendingId === item.id} disabled={disabled} key={item.id} onClick={() => void run(item.id, item.name, "select", () => onSelect(item.id))}>{item.name}</button>)}
       <button className="task-chip task-chip-add" type="button" aria-label="新建学习任务" disabled={disabled || pendingId === TEMPORARY_PENDING_ID || pendingId === SAVE_PENDING_ID} onClick={() => setEditing(value => !value)}><Plus size={14} /></button>
       {pinned.length === 0 && !editing && <em>还没有常用任务</em>}
     </div></div>
-    {!compact && recent.length > 0 && <div className="task-picker-group"><span>最近使用</span><div className="task-chip-row">{recent.map(item => <button className={isSelected(item.id, item.name) ? "task-chip is-active" : "task-chip"} type="button" aria-pressed={isSelected(item.id, item.name)} aria-busy={pendingId === item.id} disabled={disabled || pendingId === item.id} key={item.id} onClick={() => void run(item.id, item.name, "select", () => onSelect(item.id))}>{item.name}</button>)}</div></div>}
+    {!compact && recent.length > 0 && <div className="task-picker-group"><span>最近使用</span><div className="task-chip-row">{recent.map(item => <button className={isSelected(item.id, item.name) ? "task-chip is-active" : "task-chip"} type="button" aria-pressed={isSelected(item.id, item.name)} aria-busy={pendingId === item.id} disabled={disabled} key={item.id} onClick={() => void run(item.id, item.name, "select", () => onSelect(item.id))}>{item.name}</button>)}</div></div>}
     {editing && <div className="task-create-row"><input autoFocus maxLength={64} value={name} placeholder="输入任务名" onChange={event => setName(event.target.value)} onKeyDown={event => { if (event.key === "Escape") setEditing(false); }} /><button type="button" disabled={disabled || pendingId === TEMPORARY_PENDING_ID || !name.trim()} onClick={() => void run(TEMPORARY_PENDING_ID, name.trim(), "temporary", () => onTemporary(name.trim()))}>仅本次</button><button className="is-primary" type="button" disabled={disabled || pendingId === SAVE_PENDING_ID || !name.trim()} onClick={() => void run(SAVE_PENDING_ID, name.trim(), "save", () => onSavePinned(name.trim()))}>保存常用</button></div>}
   </section>;
 }
