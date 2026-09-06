@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactElement } from "react";
+import { useEffect, useState, type ComponentType, type ReactElement } from "react";
 import {
   Activity,
   ArrowUpRight,
@@ -28,6 +28,9 @@ import {
 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
+import { BrandMark } from "../shared/BrandMark";
+import { deriveSupervisionState, formatLastActivity, interactionLabels, modeLabels, privacyLabels, relationLabels } from "../shared/models/supervision-state";
+import { useTaskSelectionState } from "../shared/use-task-selection-state";
 import { getSupervisorControlAdapter, getSystemIntegrationAdapter } from "../runtime/adapters";
 import { TaskPicker, type TaskPickerAction, type TaskPickerActionResult } from "../shared/TaskPicker";
 import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeReward, NativeReviewSummary, SupervisorDashboardSnapshot } from "../transport/supervisor";
@@ -105,17 +108,8 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
   const liveData = live && snapshot?.connected === true;
   const currentMode = status?.user_mode ?? (liveData ? "STANDBY" : "STUDY");
   const snapshotTask = status?.task || (liveData ? "未设置任务" : "Go Context 与 goroutine");
-  const [authoritativeTask, setAuthoritativeTask] = useState<string>();
-  const [optimisticTask, setOptimisticTask] = useState<string>();
-  const taskMutationRevision = useRef(0);
-  useEffect(() => {
-    if (optimisticTask === undefined && status) setAuthoritativeTask(snapshotTask);
-  }, [optimisticTask, snapshotTask, status]);
-  const serverTask = authoritativeTask ?? snapshotTask;
-  useEffect(() => {
-    if (optimisticTask && status?.task === optimisticTask) setOptimisticTask(undefined);
-  }, [optimisticTask, status?.task]);
-  const currentTask = optimisticTask ?? serverTask;
+  const taskSelection = useTaskSelectionState(snapshotTask);
+  const currentTask = taskSelection.task;
   const currentMinutes = motivation?.today_credited_focus_minutes ?? 0;
   const targetMinutes = motivation?.daily_target_minutes ?? 0;
   const progress = motivation?.target_progress ?? (liveData ? 0 : clampProgress(86 / 120));
@@ -130,7 +124,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
       : { title: "暂无成就数据", description: "完成一次有效专注后，这里会出现下一步目标", progress: 0, detail: "等待记录" }
     : achievement;
   const weeklyFocus = liveData ? totalFocusMinutes(chartData) : 603;
-  const healthLabel = live ? (snapshot?.connected ? "监督正常" : "服务连接中") : "监督正常";
+  const supervision = deriveSupervisionState(live ? Boolean(snapshot?.connected) : true, status);
   const modeCaption = currentMode === "STUDY" ? "把注意力放回当下，剩下的交给节奏。" : currentMode === "BREAK" ? "短暂离开屏幕，再回来继续。" : currentMode === "OFF" ? "今天已经收好，明天再从容开始。" : "给今天留下一点可见的进展。";
   const progressLabel = motivation ? `${Math.round(progress * 100)}%` : liveData ? "—" : "72%";
   const targetLabel = motivation ? `${targetMinutes} min` : liveData ? "—" : "120 min";
@@ -138,16 +132,10 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
   const control = getSupervisorControlAdapter();
   const taskOperation = (operation: Promise<ControlResult>): Promise<ControlResult> => operation;
   const taskResult = async (result: TaskPickerActionResult, action: TaskPickerAction): Promise<void> => {
-    const resultRevision = taskMutationRevision.current;
     setTaskNotice(result.ok ? (action === "save" ? "常用任务已保存并选中" : "当前任务已更新") : "当前任务暂时无法更新");
-    if (result.ok && result.task !== undefined) {
-      setAuthoritativeTask(result.task);
-      setOptimisticTask(undefined);
-    }
-    const refresh = onTaskChanged?.();
+    taskSelection.settle(result.ok, result.task);
     if (result.ok && result.task === undefined) {
-      await refresh;
-      if (taskMutationRevision.current === resultRevision) setOptimisticTask(undefined);
+      await onTaskChanged?.();
     }
   };
   const saveTask = async (name: string): Promise<ControlResult> => {
@@ -167,13 +155,12 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
 
     <section className="focus-hero" aria-labelledby="current-focus-title">
       <div className="hero-main">
-        <div className="hero-topline"><span className="hero-kicker"><span className="live-dot" />当前状态</span><span className="hero-health"><ShieldCheck size={15} />{healthLabel}</span></div>
+        <div className="hero-topline"><span className="hero-kicker"><span className="live-dot" />当前状态</span><span className={`hero-health is-${supervision.behaviorTone}`}><ShieldCheck size={15} />{supervision.behaviorLabel}</span></div>
         <h2 id="current-focus-title">{modeTitle[currentMode]}</h2>
         <p className="hero-task"><BookOpen size={17} />{currentTask}</p>
         <TaskPicker variant="hero" currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData}
           onOptimisticTaskChange={task => {
-            if (task !== undefined) { taskMutationRevision.current += 1; onTaskMutationStarted?.(); }
-            setOptimisticTask(task === serverTask ? undefined : task);
+            if (task !== undefined) { onTaskMutationStarted?.(); taskSelection.selectOptimistically(task); }
           }}
           onResult={taskResult}
           onSelect={id => taskOperation(control.selectTaskPreset(id))}
@@ -275,7 +262,18 @@ function ReviewPage({ review }: { review?: NativeReviewSummary }): ReactElement 
 function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
   const status = snapshot?.status;
   const ai = snapshot?.ai;
-  return <DataPage title="系统状态" description="查看本地 Supervisor 与受限功能的健康状态。"><section className="surface-section data-card"><div className="section-header"><div><h2>本地服务</h2><p>不会显示 token、路径或原始错误</p></div><Activity className="section-icon" size={20} /></div><div className="system-status-grid"><div><span>Supervisor</span><strong>{snapshot?.connected ? "已连接" : "连接中"}</strong></div><div><span>ActivityWatch</span><strong>{status?.activitywatch_ok ? "正常" : "待检查"}</strong></div><div><span>Screen Sensor</span><strong>{status?.screen_sensor_ok ? "正常" : "待检查"}</strong></div><div><span>AI</span><strong>{ai?.enabled && ai.text_configured ? "已配置" : "规则模式"}</strong></div></div></section></DataPage>;
+  const supervision = deriveSupervisionState(Boolean(snapshot?.connected), status);
+  return <DataPage title="系统状态" description="查看本地 Supervisor 与受限功能的健康状态。"><section className="surface-section data-card"><div className="section-header"><div><h2>本地服务</h2><p>不会显示 token、路径或原始错误</p></div><Activity className="section-icon" size={20} /></div><div className="system-status-grid">
+    <div><span>Supervisor</span><strong>{snapshot?.connected ? "已连接" : "离线"}</strong></div>
+    <div><span>当前模式</span><strong>{status ? modeLabels[status.user_mode] : "暂无"}</strong></div>
+    <div><span>交互状态</span><strong>{status ? interactionLabels[status.interaction_state] : "暂无"}</strong></div>
+    <div><span>任务关系</span><strong>{status ? relationLabels[status.task_relation] : "暂无"}</strong></div>
+    <div><span>隐私状态</span><strong>{status ? privacyLabels[status.privacy_state] : "暂无"}</strong></div>
+    <div><span>最近活动</span><strong>{formatLastActivity(status?.last_activity_at)}</strong></div>
+    <div><span>ActivityWatch</span><strong>{status ? (status.activitywatch_ok ? "正常" : "异常") : "待检查"}</strong></div>
+    <div><span>Screen Sensor</span><strong>{status ? (status.screen_sensor_ok ? "正常" : "异常") : "待检查"}</strong></div>
+    <div><span>AI</span><strong>{ai?.enabled && ai.text_configured ? "已配置" : "规则模式"}</strong></div>
+  </div><p className={`system-summary is-${supervision.systemTone}`}>{supervision.systemLabel}</p></section></DataPage>;
 }
 
 const providerHints: Record<string, { base_url: string; model: string }> = {
@@ -392,16 +390,17 @@ function LiveSection({ active, snapshot, live }: { active: string; snapshot?: Su
 export function ControlCenter({ snapshot, live = false, initialActive = "overview", routeRevision = 0, onTaskChanged, onTaskMutationStarted }: DashboardProps): ReactElement {
   const [active, setActive] = useState(initialActive);
   useEffect(() => setActive(initialActive), [initialActive, routeRevision]);
-  const serviceLabel = live ? (snapshot?.connected ? "本地服务正常" : "正在连接本地服务") : "本地服务正常";
+  const supervision = deriveSupervisionState(live ? Boolean(snapshot?.connected) : true, snapshot?.status);
+  const serviceLabel = live ? supervision.systemLabel : "本地服务正常";
   return <div className="control-center-shell">
     <aside className="center-sidebar">
-      <div className="center-brand"><span className="center-brand-mark"><Sparkles size={17} /></span><div><strong>StudyGuardian</strong><span>专注工作台</span></div></div>
+      <div className="center-brand"><BrandMark className="center-brand-mark" /><div><strong>StudyGuardian</strong><span>专注工作台</span></div></div>
       <div className="center-sidebar-content">
         <div className="nav-label">工作台</div>{navGroup(primaryNav, active, setActive)}
         <div className="nav-divider" />
         <div className="nav-label">管理</div>{navGroup(secondaryNav, active, setActive)}
       </div>
-      <div className="center-sidebar-footer"><div className="sidebar-health"><ShieldCheck size={16} /><div><strong>{serviceLabel}</strong><span>{live && !snapshot?.connected ? "等待响应" : "刚刚更新"}</span></div></div><button className="profile-button" type="button" aria-label="打开帮助"><CircleHelp size={16} /></button></div>
+      <div className="center-sidebar-footer"><div className={`sidebar-health is-${live ? supervision.systemTone : "success"}`}><ShieldCheck size={16} /><div><strong>{serviceLabel}</strong><span>{live && !snapshot?.connected ? "等待响应" : "刚刚更新"}</span></div></div><button className="profile-button" type="button" aria-label="打开帮助"><CircleHelp size={16} /></button></div>
     </aside>
     <main className="center-main">
       <header className="center-topbar"><div><span className="breadcrumb">StudyGuardian <ChevronRight size={14} />{displayTitle(active)}</span><span className="topbar-note">数据保存在本机</span></div><div className="topbar-actions"><button className="icon-button" type="button" aria-label="查看通知"><Activity size={17} /></button><button className="avatar-button" type="button" aria-label="用户菜单">SG</button></div></header>

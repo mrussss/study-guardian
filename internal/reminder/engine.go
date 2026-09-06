@@ -17,6 +17,8 @@ type Engine struct {
 	quietPeriods []config.MinutePeriod
 	wasQuiet     bool
 	baseline     reminderBaseline
+	lastMode     state.UserMode
+	hasLastMode  bool
 }
 
 type reminderBaseline struct {
@@ -73,6 +75,7 @@ func (e *Engine) SetSettings(settings config.ReminderConfig) error {
 	e.quietPeriods = periods
 	e.wasQuiet = false
 	e.baseline = reminderBaseline{}
+	e.hasLastMode = false
 	return nil
 }
 
@@ -81,8 +84,17 @@ func (e *Engine) Evaluate(input state.ReminderDecisionInput) *state.ReminderEven
 	defer e.mu.Unlock()
 
 	if input.UserMode == state.UserModeOff {
+		e.lastMode = input.UserMode
+		e.hasLastMode = true
 		return nil
 	}
+	if e.hasLastMode && input.UserMode != e.lastMode {
+		// A new mode starts its reminder clock at the transition tick instead of
+		// inheriting counters accumulated in the previous mode.
+		e.captureBaseline(input)
+	}
+	e.lastMode = input.UserMode
+	e.hasLastMode = true
 	if e.isQuiet(input.Now) {
 		e.wasQuiet = true
 		e.captureBaseline(input)

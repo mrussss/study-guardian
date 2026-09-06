@@ -144,6 +144,57 @@ func TestManagerDistractionReminderTrigger(t *testing.T) {
 	}
 }
 
+func TestManagerSupervisionStateChainAndActivityWatchFailSoft(t *testing.T) {
+	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.UTC)
+	clock := NewFakeClock(now)
+	mgr := NewPersistentManager(clock, config.DefaultConfig(), nil, mockRuleClassifier{}, mockPrivacyEvaluator{}, nil)
+	if err := mgr.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(5 * time.Second)
+	clock.Set(now)
+	active := mgr.Tick(now, "code.exe", "main.go", "", false, false, false)
+	if active.Interaction != InteractionActive || active.Relation != RelationFocused || !active.ActivityValid {
+		t.Fatalf("expected ACTIVE/FOCUSED with healthy ActivityWatch, got %+v", active)
+	}
+
+	now = now.Add(5 * time.Second)
+	clock.Set(now)
+	static := mgr.Tick(now, "code.exe", "main.go", "", true, false, false)
+	if static.Interaction != InteractionIdleStatic || static.IdleStaticSeconds <= 0 {
+		t.Fatalf("expected IDLE_STATIC with unchanged screen, got %+v", static)
+	}
+
+	now = now.Add(5 * time.Second)
+	clock.Set(now)
+	dynamic := mgr.Tick(now, "code.exe", "main.go", "", true, true, false)
+	if dynamic.Interaction != InteractionIdleDynamic || dynamic.IdleStaticSeconds != 0 {
+		t.Fatalf("expected IDLE_DYNAMIC with screen change, got %+v", dynamic)
+	}
+
+	beforeOffline := mgr.GetStatus().ActiveSeconds
+	mgr.SetHealth(false, true)
+	now = now.Add(5 * time.Second)
+	clock.Set(now)
+	offline := mgr.Tick(now, "code.exe", "main.go", "", false, false, false)
+	status := mgr.GetStatus()
+	if offline.Interaction != InteractionUnknown || offline.ActivityValid || status.ActivityWatchOK {
+		t.Fatalf("expected UNKNOWN and unhealthy ActivityWatch, outcome=%+v status=%+v", offline, status)
+	}
+	if status.ActiveSeconds != beforeOffline {
+		t.Fatalf("offline ActivityWatch must not add active seconds: before=%d after=%d", beforeOffline, status.ActiveSeconds)
+	}
+
+	mgr.SetHealth(true, true)
+	now = now.Add(5 * time.Second)
+	clock.Set(now)
+	recovered := mgr.Tick(now, "code.exe", "main.go", "", false, false, false)
+	if recovered.Interaction != InteractionActive || !recovered.ActivityValid {
+		t.Fatalf("expected ACTIVE after ActivityWatch recovery, got %+v", recovered)
+	}
+}
+
 func TestManagerRestartRecoversOnlyInterruptedSession(t *testing.T) {
 	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.Local)
 	dbPath := t.TempDir() + "/studyguardian.db"

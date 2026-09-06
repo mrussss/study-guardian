@@ -14,8 +14,10 @@ import {
   X,
 } from "lucide-react";
 import { clampProgress, formatFocusMinutes } from "../shared/models/dashboard";
+import { BrandMark } from "../shared/BrandMark";
+import { deriveSupervisionState } from "../shared/models/supervision-state";
 import { TaskPicker, type TaskPickerAction, type TaskPickerActionResult } from "../shared/TaskPicker";
-import type { NativeTaskPresetList } from "../transport/supervisor";
+import type { NativeSupervisorStatus, NativeTaskPresetList } from "../transport/supervisor";
 
 export type QuickPanelMode = "STANDBY" | "STUDY" | "BREAK" | "OFF";
 
@@ -28,6 +30,7 @@ export interface QuickPanelProps {
   streakDays?: number;
   balanceAP?: number;
   connected?: boolean;
+  status?: NativeSupervisorStatus;
   motivationAvailable?: boolean;
   notice?: string;
   taskPresets?: NativeTaskPresetList;
@@ -50,10 +53,6 @@ const modeCopy: Record<QuickPanelMode, { kicker: string; title: string; descript
   OFF: { kicker: "今天已结束", title: "完成今天", description: "回看进展，给明天留一条线索" },
 };
 
-function modeStatus(mode: QuickPanelMode): string {
-  return mode === "STUDY" ? "专注正常" : mode === "BREAK" ? "休息计时" : mode === "OFF" ? "已收好" : "等待开始";
-}
-
 export function QuickPanel({
   mode = "STUDY",
   task = "Go Context 与 goroutine",
@@ -63,6 +62,7 @@ export function QuickPanel({
   streakDays = 5,
   balanceAP = 12.43,
   connected = true,
+  status,
   motivationAvailable = true,
   notice,
   taskPresets,
@@ -80,6 +80,7 @@ export function QuickPanel({
   const [localNotice, setLocalNotice] = useState("");
   const copy = modeCopy[mode];
   const progress = clampProgress(targetMinutes > 0 ? focusMinutes / targetMinutes : 0);
+  const supervision = deriveSupervisionState(connected, status);
 
   const action = (nextMode: "STUDY" | "BREAK" | "OFF", message: string): void => {
     onModeAction?.(nextMode);
@@ -94,14 +95,14 @@ export function QuickPanel({
     <section className="quick-panel" aria-label="StudyGuardian 快捷面板">
       <header className="quick-panel-header">
         <div className="brand-lockup">
-          <span className="brand-mark" aria-hidden="true"><Sparkles size={16} strokeWidth={2.2} /></span>
+          <span className="brand-mark"><BrandMark className="brand-mark-image" /></span>
           <div>
             <div className="brand-name">StudyGuardian</div>
             <div className="brand-caption">本地专注陪伴</div>
           </div>
         </div>
         <div className="quick-panel-header-actions">
-          <div className={`health-chip ${connected ? "" : "is-warning"}`}><ShieldCheck size={14} />{connected ? "正常" : "待连接"}</div>
+          <div className={`health-chip is-${supervision.systemTone}`}><ShieldCheck size={14} />{supervision.systemLabel}</div>
           <button className="quick-panel-close" type="button" aria-label="关闭快捷面板" title="关闭 (Esc)" onClick={onClose}><X size={16} /></button>
         </div>
       </header>
@@ -110,7 +111,7 @@ export function QuickPanel({
         <section className="focus-summary" aria-labelledby="quick-state-title">
           <div className="focus-summary-topline">
             <span className="eyebrow">{copy.kicker}</span>
-            <span className="mode-status"><span className="status-dot" />{modeStatus(mode)}</span>
+            <span className={`mode-status is-${supervision.behaviorTone}`}><span className="status-dot" />{supervision.behaviorLabel}</span>
           </div>
           <div className="focus-title-row">
             <h1 id="quick-state-title">{copy.title}</h1>
@@ -150,7 +151,7 @@ export function QuickPanel({
           <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={targetMinutes || 1} aria-valuenow={motivationAvailable ? focusMinutes : 0} aria-label="今日有效专注进度">
             <span style={{ width: `${progress * 100}%` }} />
           </div>
-          <div className="progress-caption"><span>{motivationAvailable && targetMinutes > 0 ? `目标 ${targetMinutes} 分钟` : "等待今日目标"}</span><span>{connected ? "保持现在的节奏" : "正在连接本地服务"}</span></div>
+          <div className="progress-caption"><span>{motivationAvailable && targetMinutes > 0 ? `目标 ${targetMinutes} 分钟` : "等待今日目标"}</span><span>{supervision.systemLabel}</span></div>
         </section>
 
         <div className="quick-metrics">
