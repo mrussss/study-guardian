@@ -45,3 +45,10 @@ powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\set-aut
 默认 quiet periods 是 12:00–14:00、17:30–19:00、21:00–24:00。quiet 只抑制主动提醒，继续记录学习证据；离开 quiet 后不会补发提醒债务。
 
 Review 的 `FALLBACK` 表示确定性本地总结。`AI` 表示结果经过 provider、cloud sanitizer、结构校验和 evidence validator；两种模式都写入 canonical Review storage。
+
+
+## Pet v3 缓存与工具链
+
+`D:\StudyGuardianBuild` 是唯一 Windows 构建缓存根目录，可通过 `scripts/pet-v3.sh cache-status/cache-prune/cache-reset` 管理。生产缓存脚本拒绝其他根目录，并在 reset 前检查是否仍有缓存内工具进程运行。
+
+Windows Pet 构建固定使用缓存内的 Node 22.22.1/npm 10.9.4；首次构建从 Node 官方站点下载 ZIP 并核对官方 SHA256。Rust 由 `pet-v3/rust-toolchain.toml` 固定为 1.98.1。完整日常循环、Mock 场景与 CI 门禁见 [开发工作流](DEVELOPMENT_WORKFLOW.md)。

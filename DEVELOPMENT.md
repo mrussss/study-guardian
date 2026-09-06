@@ -1,59 +1,55 @@
 # StudyGuardian 开发指南
 
-## 1. 快速构建与部署
+## 1. Pet v3 日常开发
 
-### WSL 端构建
+WSL `~/projects/study-guardian` 是唯一源码真源，`D:\StudyGuardianBuild` 是可删除、可重建的 Windows 构建缓存，`D:\StudyGuardianDev` 只保存运行副本和持久数据。不要在 Windows 运行目录编辑源码。
+
 ```bash
-# 运行单元测试并交叉编译 Windows 可执行文件
-./scripts/build-windows.sh
+# React/CSS 与完整状态化浏览器 Mock
+./scripts/pet-v3.sh dev
+
+# 前端测试、TypeScript、Vite 和 diff 检查
+./scripts/pet-v3.sh check
+
+# 复用 D 盘缓存构建 Windows debug EXE
+./scripts/pet-v3.sh native
+
+# 提交前：前端/Rust 测试、构建、Pet 独立部署、哈希核验
+./scripts/pet-v3.sh candidate
 ```
 
-### 部署至 Windows
+浏览器 Mock 支持正常、慢请求、失败、离线、快速任务切换、空进度、完成进度和提醒场景。完整命令、URL 和缓存维护见 [Pet v3 开发工作流](docs/DEVELOPMENT_WORKFLOW.md)。
+
+## 2. 完整产品构建与部署
+
+只有需要同时发布 Supervisor、Sensor、Pet 和 Windows 脚本时使用：
+
 ```bash
-# 复制构建产物至 D:\StudyGuardianDev 并自动保护持久数据
+./scripts/build-windows.sh
 ./scripts/deploy-windows.sh /mnt/d/StudyGuardianDev
 ```
 
-### Windows 启动与停止 (PowerShell)
+完整部署必须保护 `config`、`data`、`logs`、`run`、`handoff` 和虚拟环境。普通 Pet UI 修改不得运行完整产品部署。
+
+### Windows 启动与停止
+
 ```powershell
-# 用户入口：启动组件并打开已有或新的 Control Center
 powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\launch-studyguardian.ps1 -OpenControlCenter
-
-# 后台启动所有组件
 powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\launch-studyguardian.ps1 -Background
-
-# 停止所有组件
 powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\stop-all.ps1
-
-# 创建桌面入口；开机启动保持用户当前选择
 powershell.exe -ExecutionPolicy Bypass -File D:\StudyGuardianDev\scripts\install-windows-integration.ps1
 ```
 
-Pet 运行时由 `D:\StudyGuardianDev\config\runtime.json` 选择。人工 Tauri Pet Gate
-通过前保持 `{"pet_runtime":"pyqt"}`。详见 `docs/WINDOWS_RUNTIME.md`。
+Pet 运行时由 `D:\StudyGuardianDev\config\runtime.json` 选择，切换必须遵守对应人工 Gate，详见 `docs/WINDOWS_RUNTIME.md`。
 
----
-
-## 2. 自动化测试套件
+## 3. 自动化测试套件
 
 ```bash
-# 1. 运行所有 Go 单元测试
-go test -v ./...
+# 本地完整测试
+bash scripts/test-all.sh
 
-# 2. 运行 Python 单元测试
-python3 pet/tests/test_client.py
-python3 sensor/tests/test_sensor.py
-
-# 3. 运行全阶段集成测试
-python3 tests/integration/test_localhost_poc.py
-python3 tests/integration/test_phase1_core.py
-python3 tests/integration/test_phase2_activitywatch.py
-python3 tests/integration/test_phase3_sensor.py
-python3 tests/integration/test_phase4_ai.py
-
-# 4. 运行部署安全测试
-./tests/test_deploy_safety.sh
-
-# 5. Windows PowerShell 路径与快捷方式测试
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\test-windows-integration.ps1
+# Pet 快速门禁
+./scripts/pet-v3.sh check
 ```
+
+完整测试覆盖 Go、Python、集成测试、部署安全、PowerShell 解析、Pet 独立部署和缓存删除边界。GitHub CI 配置见 `.github/workflows/ci.yml`；Windows Tauri 构建在 Pet Pull Request 或手动工作流中运行。

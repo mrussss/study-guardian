@@ -12,4 +12,4 @@ AI 学习监督系统（StudyGuardian）是一个个人自用、长期后台运�
 - **持久数据安全**：CGO-free SQLite 驱动，部署与更新严禁破坏用户配置与历史数据。
 - **稳定 Windows 入口**：桌面快捷方式和可选开机启动都调用自定位 Launcher；重复打开只激活已有 Control Center。
 
-详细架构设计与开发文档请参考 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)、[docs/WINDOWS_RUNTIME.md](docs/WINDOWS_RUNTIME.md)、[集成交付报告](docs/INTEGRATED_PRODUCT_COMPLETION_REPORT.md) 与 [DEVELOPMENT.md](DEVELOPMENT.md)。
+详细架构设计与开发文档请参考 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)、[docs/WINDOWS_RUNTIME.md](docs/WINDOWS_RUNTIME.md)、[集成交付报告](docs/INTEGRATED_PRODUCT_COMPLETION_REPORT.md)、[DEVELOPMENT.md](DEVELOPMENT.md) 与 [Pet v3 开发工作流](docs/DEVELOPMENT_WORKFLOW.md)。

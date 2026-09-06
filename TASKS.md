@@ -170,3 +170,13 @@
 - [~] 121. Desktop shortcut integration（真实快捷方式和冷/重复启动通过；窗口焦点待人工确认）
 - [~] 122. Tauri v3 Windows production packaging/deploy/runtime selection（build/deploy PASS；cutover PENDING USER GATE）
 - [~] 123. Windows startup integration E2E（1 个逻辑 PyQt Pet、Supervisor、Sensor、watchdog 和 Tauri UI shell；reboot/sign-in 未运行）
+
+## Phase 12: Developer workflow acceleration
+
+- [x] 124. 将 WSL 固定为源码真源，D:\StudyGuardianBuild 固定为可重建缓存，D:\StudyGuardianDev 固定为运行与持久数据目录
+- [x] 125. Pet v3 统一入口：dev/check/native/candidate/build/deploy/verify
+- [x] 126. 状态化浏览器 Mock：正常、慢请求、失败、离线、快速切换、进度与提醒场景
+- [x] 127. 安全缓存维护：status/prune/reset、D 盘路径白名单、运行进程拒绝与隔离测试
+- [x] 128. 固定 Node 22.22.1、npm 10.9.4、Rust 1.98.1，并在 Windows 构建前校验
+- [x] 129. GitHub CI：Pet Web、Go/Python/集成、PowerShell 与部署/缓存安全门禁；Windows native 按 PR/手动触发
+- [x] 130. 同步 AGENTS.md、DEVELOPMENT.md、README 与 Windows/Pet 开发文档
