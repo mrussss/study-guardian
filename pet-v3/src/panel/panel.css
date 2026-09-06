@@ -1,18 +1,24 @@
-html:has(#quick-panel), body:has(#quick-panel) { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
-#quick-panel { width: 100%; height: 100%; min-width: 0; min-height: 0; }
-.quick-panel { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--sg-surface); border: 1px solid var(--sg-border); border-radius: var(--sg-radius-panel); box-shadow: var(--sg-shadow-floating); }
+html:has(#quick-panel), body:has(#quick-panel) { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: transparent !important; }
+#quick-panel { box-sizing: border-box; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 8px; overflow: hidden; background: transparent !important; }
+.quick-panel { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; box-sizing: border-box; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--sg-surface); border: 1px solid var(--sg-border); border-radius: var(--sg-radius-panel); box-shadow: var(--sg-shadow-floating); }
 .quick-panel-header, .quick-panel-footer { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; }
 .quick-panel-header { border-bottom: 1px solid var(--sg-border); }
 .quick-panel-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .quick-panel-close { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border-radius: 7px; background: transparent; color: var(--sg-text-secondary); cursor: pointer; }
 .quick-panel-close:hover { background: var(--sg-surface-muted); color: var(--sg-text); }
 .brand-lockup { display: flex; align-items: center; gap: 10px; }
-.brand-mark { display: grid; width: 30px; height: 30px; place-items: center; color: #fff; background: var(--sg-accent); border-radius: 9px; box-shadow: 0 5px 12px color-mix(in srgb, var(--sg-accent) 24%, transparent); }
+.brand-mark { display: grid; width: 30px; height: 30px; place-items: center; overflow: hidden; border-radius: 9px; box-shadow: 0 5px 12px color-mix(in srgb, var(--sg-accent) 24%, transparent); }
+.brand-mark-image { display: block; width: 100%; height: 100%; }
 .brand-name { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 .brand-caption { margin-top: 2px; color: var(--sg-text-tertiary); font-size: 12px; }
 .health-chip, .mode-status { display: inline-flex; align-items: center; gap: 5px; color: var(--sg-success); font-size: 12px; font-weight: 600; }
 .health-chip { padding: 6px 8px; background: var(--sg-success-soft); border-radius: 999px; }
 .health-chip.is-warning { color: var(--sg-warning); background: var(--sg-warning-soft); }
+.health-chip.is-neutral { color: var(--sg-text-secondary); background: var(--sg-surface-muted); }
+.health-chip.is-reminder { color: var(--sg-warning); background: var(--sg-warning-soft); }
+.mode-status.is-warning { color: var(--sg-warning); }
+.mode-status.is-neutral { color: var(--sg-text-secondary); }
+.mode-status.is-reminder { color: var(--sg-warning); }
 .quick-panel-content { display: grid; align-content: start; gap: 16px; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 18px 16px; }
 .focus-summary { padding: 2px 2px 0; }
 .focus-summary-topline, .section-heading-row, .progress-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; }

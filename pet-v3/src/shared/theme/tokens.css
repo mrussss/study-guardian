@@ -52,6 +52,7 @@
 * { box-sizing: border-box; }
 html, body, #quick-panel, #control-center { min-height: 100%; margin: 0; }
 body { background: var(--sg-bg); color: var(--sg-text); }
+html:has(#quick-panel), body:has(#quick-panel), #quick-panel { background: transparent !important; }
 button, input { font: inherit; }
 button { border: 0; }
 button:focus-visible, input:focus-visible { outline: 3px solid color-mix(in srgb, var(--sg-accent) 30%, transparent); outline-offset: 2px; }

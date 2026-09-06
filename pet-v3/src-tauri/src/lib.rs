@@ -242,6 +242,7 @@ fn configured_aux_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, 
             }
             WindowEvent::Focused(false) if is_quick_panel => {
                 record_quick_panel_debug_event("quick-panel:focused-false");
+                schedule_aux_window(window_for_events.app_handle().clone(), AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:focus-lost"));
             }
             _ => {}
         });
@@ -355,7 +356,8 @@ fn bounded_quick_panel_debug_event(event: &str) -> Option<&str> {
         | "quick-panel:focused-false"
         | "quick-panel:hide-reason:explicit"
         | "quick-panel:hide-reason:open-control-center"
-        | "quick-panel:hide-reason:close-request" => Some(event),
+        | "quick-panel:hide-reason:close-request"
+        | "quick-panel:hide-reason:focus-lost" => Some(event),
         _ => None,
     }
 }
@@ -1825,6 +1827,7 @@ mod tests {
         assert_eq!(bounded_quick_panel_debug_event("quick-panel:created"), Some("quick-panel:created"));
         assert_eq!(bounded_quick_panel_debug_event("quick-panel:open-command"), Some("quick-panel:open-command"));
         assert_eq!(bounded_quick_panel_debug_event("quick-panel:hide-reason:explicit"), Some("quick-panel:hide-reason:explicit"));
+        assert_eq!(bounded_quick_panel_debug_event("quick-panel:hide-reason:focus-lost"), Some("quick-panel:hide-reason:focus-lost"));
         assert_eq!(bounded_quick_panel_debug_event("quick-panel:focus-failed:raw-secret"), None);
     }
 
