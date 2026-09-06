@@ -106,3 +106,14 @@ func TestAISettingsValidateAndPersistFallbackModels(t *testing.T) {
 		t.Fatal("duplicate primary/fallback model should be rejected")
 	}
 }
+
+func TestAISettingsAlwaysExposeFallbackModelsAsArrays(t *testing.T) {
+	settings := sanitized(config.DefaultConfig().AI)
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"fallback_models":null`) {
+		t.Fatalf("fallback model lists must be arrays: %s", raw)
+	}
+}

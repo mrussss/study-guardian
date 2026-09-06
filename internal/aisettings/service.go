@@ -88,7 +88,7 @@ func sanitized(aiConfig config.AIConfig) SettingsDTO {
 		return false
 	}
 	toDTO := func(endpoint config.AIEndpointConfig) EndpointDTO {
-		return EndpointDTO{Enabled: endpoint.Enabled, Provider: endpoint.Provider, Model: endpoint.Model, FallbackModels: append([]string(nil), endpoint.FallbackModels...), BaseURL: endpoint.BaseURL, APIKeyConfigured: configured(endpoint), TimeoutSeconds: endpoint.TimeoutSeconds, JSONMode: endpoint.JSONMode}
+		return EndpointDTO{Enabled: endpoint.Enabled, Provider: endpoint.Provider, Model: endpoint.Model, FallbackModels: append([]string{}, endpoint.FallbackModels...), BaseURL: endpoint.BaseURL, APIKeyConfigured: configured(endpoint), TimeoutSeconds: endpoint.TimeoutSeconds, JSONMode: endpoint.JSONMode}
 	}
 	return SettingsDTO{Enabled: aiConfig.Enabled, MinConfidence: aiConfig.MinConfidence, Text: toDTO(aiConfig.Text), Vision: toDTO(aiConfig.Vision)}
 }
