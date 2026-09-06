@@ -103,7 +103,9 @@ func TestIngestChatTurnIsIdempotentAndKeepsEligibilityFrozen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	observed := time.Date(2026, 9, 3, 23, 58, 0, 0, time.FixedZone("CST", 8*60*60))
+	// An unnamed fixed offset matches time.Parse(RFC3339) on a host in a
+	// different timezone and previously made SQLite return a raw string.
+	observed := time.Date(2026, 9, 3, 23, 58, 0, 0, time.FixedZone("", 8*60*60))
 	turn := ChatTurnRecord{TurnKey: "turn-1", ObservedAt: observed, LocalDate: "2026-09-03", ModeAtStart: "STUDY", TaskAtStart: "Go", EligibleForReview: true, Finalized: false}
 	conversation := ChatConversationRecord{Platform: "chatgpt", ExternalConversationID: "conversation-1", ObservedAt: observed}
 	message := ChatMessageRecord{ExternalMessageID: "message-1", Role: "user", Content: "Explain interfaces", IsActive: true}
@@ -127,5 +129,12 @@ func TestIngestChatTurnIsIdempotentAndKeepsEligibilityFrozen(t *testing.T) {
 	}
 	if eligible != 1 || messageCount != 1 {
 		t.Fatalf("eligible=%d messages=%d, want 1/1", eligible, messageCount)
+	}
+	loaded, err := store.LoadChatTurn(context.Background(), "turn-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.ObservedAt.Equal(observed) || loaded.ObservedAt.Location() != time.UTC {
+		t.Fatalf("observed_at=%v location=%v, want UTC representation of %v", loaded.ObservedAt, loaded.ObservedAt.Location(), observed)
 	}
 }

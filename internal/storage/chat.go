@@ -70,6 +70,13 @@ func (s *Storage) IngestChatTurn(ctx context.Context, conversation ChatConversat
 	if ingestedAt.IsZero() {
 		ingestedAt = time.Now()
 	}
+	// Keep SQLite timestamps in UTC. A time parsed from RFC3339 can retain an
+	// unnamed numeric zone when its offset differs from the host timezone;
+	// modernc/sqlite then returns that value as a string instead of time.Time.
+	// Canonical UTC storage keeps reads portable across developer machines and CI.
+	conversation.ObservedAt = conversation.ObservedAt.UTC()
+	turn.ObservedAt = turn.ObservedAt.UTC()
+	ingestedAt = ingestedAt.UTC()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -123,6 +130,11 @@ func (s *Storage) IngestChatTurn(ctx context.Context, conversation ChatConversat
 		}
 		if message.ObservedAt.IsZero() {
 			message.ObservedAt = turn.ObservedAt
+		}
+		message.ObservedAt = message.ObservedAt.UTC()
+		if message.FinalizedAt != nil {
+			finalizedAt := message.FinalizedAt.UTC()
+			message.FinalizedAt = &finalizedAt
 		}
 		if message.MetadataJSON == "" {
 			message.MetadataJSON = "{}"
