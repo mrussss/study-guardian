@@ -18,9 +18,21 @@ Usage: ./scripts/pet-v3.sh <command>
   build        Produce a tested Windows release Pet artifact in dist/windows.
   deploy       Deploy the existing Windows debug artifact and restart Pet only.
   verify       Compare the debug artifact with the running Pet executable.
-  cache-status Show the persistent Windows build-cache size.
+  cache-status Show cache usage by category.
+  cache-prune  Remove expired backups, logs, tests, and stale release cache.
+  cache-reset  Delete the rebuildable D:\StudyGuardianBuild cache.
   release      Run the existing full-product Windows build pipeline.
 EOF
+}
+
+require_node_version() {
+    local required actual
+    required="$(cat "${PET_ROOT}/.nvmrc")"
+    actual="$(node --version 2>/dev/null || true)"
+    if [[ "${actual}" != "v${required}" ]]; then
+        echo "Pet v3 requires Node v${required}; current version is ${actual:-missing}." >&2
+        exit 1
+    fi
 }
 
 require_windows_tools() {
@@ -35,6 +47,7 @@ if [[ -n "$(git -C "${REPO_ROOT}" status --porcelain)" ]]; then git_dirty=true; 
 repo_root_win="$(wslpath -w "${REPO_ROOT}")"
 
 run_frontend_tests() (
+    require_node_version
     cd "${PET_ROOT}"
     npm test
     git -C "${REPO_ROOT}" diff --check
@@ -62,10 +75,12 @@ build_native() {
 command="${1:-help}"
 case "${command}" in
     dev)
+        require_node_version
         cd "${PET_ROOT}"
         exec npm run dev
         ;;
     check)
+        require_node_version
         cd "${PET_ROOT}"
         npm test
         npm run build
@@ -95,10 +110,13 @@ case "${command}" in
         output_path="$(wslpath -w "${REPO_ROOT}/dist/windows/pet-v3/StudyGuardian.exe")"
         build_native Release "${output_path}" true
         ;;
-    cache-status)
+    cache-status|cache-prune|cache-reset)
         require_windows_tools
-        "${POWERSHELL_BIN}" -NoProfile -Command \
-            "\$p='${BUILD_ROOT_WIN}'; if(Test-Path -LiteralPath \$p){\$f=Get-ChildItem -LiteralPath \$p -Recurse -File -Force -ErrorAction SilentlyContinue; [pscustomobject]@{Path=\$p;Files=\$f.Count;SizeGB=[math]::Round(((\$f|Measure-Object Length -Sum).Sum/1GB),2)}|Format-List}else{Write-Host 'Build cache is empty.'}"
+        action=Status
+        [[ "${command}" == cache-prune ]] && action=Prune
+        [[ "${command}" == cache-reset ]] && action=Reset
+        "${POWERSHELL_BIN}" -NoProfile -ExecutionPolicy Bypass -File \
+            "$(wslpath -w "${SCRIPT_DIR}/manage-pet-v3-cache.ps1")" -Action "${action}" -BuildRoot "${BUILD_ROOT_WIN}"
         ;;
     release)
         exec bash "${SCRIPT_DIR}/build-windows.sh"

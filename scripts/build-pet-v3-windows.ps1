@@ -62,7 +62,7 @@ function Get-DependencyFingerprint {
     param([Parameter(Mandatory)] [string]$PetRoot)
     $packageHash = Get-Sha256 -Path (Join-Path $PetRoot "package.json")
     $lockHash = Get-Sha256 -Path (Join-Path $PetRoot "package-lock.json")
-    return "$packageHash`:$lockHash"
+    return "$packageHash`:$lockHash`:node-22.22.1"
 }
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
@@ -96,7 +96,15 @@ Write-Host "Syncing source into persistent staging: $petRoot"
 Invoke-Robocopy -Source $sourcePetRoot -Destination $petRoot -ExcludedDirectories @(".git", "node_modules", "target", "dist")
 Invoke-Robocopy -Source $sourceAssetRoot -Destination $assetRoot -ExcludedDirectories @(".git", "node_modules", "target", "dist", "__pycache__")
 
-$npm = (Get-Command npm.cmd -ErrorAction Stop).Source
+$nodeToolScript = Join-Path $RepoRoot "scripts\ensure-windows-node.ps1"
+if (-not (Test-Path -LiteralPath $nodeToolScript -PathType Leaf)) { throw "Pinned Node bootstrap is missing: $nodeToolScript" }
+$nodeHome = (& $nodeToolScript -BuildRoot $BuildRoot | Select-Object -Last 1)
+$nodeExe = Join-Path $nodeHome "node.exe"
+$npm = Join-Path $nodeHome "npm.cmd"
+$env:PATH = "$nodeHome;$env:PATH"
+$nodeVersion = (& $nodeExe --version).Trim()
+if ($nodeVersion -ne "v22.22.1") { throw "Windows Node must be v22.22.1; received $nodeVersion" }
+
 $cargo = Get-Command cargo.exe -ErrorAction SilentlyContinue
 if (-not $cargo) {
     $cargoCandidate = "D:\develop\Rust\cargo\bin\cargo.exe"
@@ -106,6 +114,13 @@ if (-not $cargo) {
     }
 }
 if (-not $cargo) { throw "Windows Rust toolchain is unavailable" }
+Push-Location $petRoot
+try {
+    $rustVersion = (& rustc.exe --version).Trim()
+    $cargoVersion = (& $cargo.Source --version).Trim()
+} finally { Pop-Location }
+if (-not $rustVersion.StartsWith("rustc 1.98.1 ")) { throw "Windows Rust must be 1.98.1; received $rustVersion" }
+Write-Host "==> Toolchain: Node $nodeVersion; $rustVersion; $cargoVersion"
 
 $env:npm_config_cache = $npmCache
 $env:CARGO_TARGET_DIR = $targetRoot
@@ -138,8 +153,6 @@ $built = Join-Path $targetRoot "$profileDirectory\studyguardian-pet-v3.exe"
 if (-not (Test-Path -LiteralPath $built -PathType Leaf)) { throw "Tauri executable was not produced: $built" }
 Copy-Item -LiteralPath $built -Destination $artifactPath -Force
 $hash = Get-Sha256 -Path $artifactPath
-$nodeVersion = (& node.exe --version).Trim()
-$cargoVersion = (& $cargo.Source --version).Trim()
 $buildManifest = [ordered]@{
     product = "StudyGuardian Pet v3"
     configuration = $Configuration
