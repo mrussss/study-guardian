@@ -61,9 +61,13 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
     setNotice("");
     setEditing(null);
     setManage(false);
+    dialogRef.current?.querySelector<HTMLElement>("[data-wheel-close]")?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const currentIndex = pinned.findIndex(item => item.name === currentTask);
     setHighlight(currentIndex >= 0 ? selectableSlots[currentIndex] : selectableSlots[0] ?? 0);
-    dialogRef.current?.querySelector<HTMLElement>("[data-wheel-close]")?.focus();
   }, [open, currentTask, pinned, selectableSlots]);
 
   useEffect(() => {
