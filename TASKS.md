@@ -181,3 +181,10 @@
 - [x] 129. GitHub CI：Pet Web、Go/Python/集成、PowerShell 与部署/缓存安全门禁；Windows native 按 PR/手动触发
 - [x] 130. 同步 AGENTS.md、DEVELOPMENT.md、README 与 Windows/Pet 开发文档
 - [x] 131. 固化 Windows 原生视觉验收通道：使用 computer-use + node_repl/@oai/sky 枚举真实窗口并截图，避免把 browser-only CUA 误判为原生能力不可用
+
+## Phase 13: AI relay routing
+
+- [x] 132. 增加 AIHubMix OpenAI-compatible profile、文本/视觉预设与安全的 API Key 配置入口
+- [x] 133. 文本、视觉与 Daily Review 共享有序模型链；仅瞬态、限流和返回结构错误触发 fallback
+- [x] 134. 保留单模型配置兼容；备用模型默认空、最多三个，并在 UI 标明潜在计费
+- [ ] 135. 使用用户 AIHubMix Key 完成真实文字/视觉/Review E2E，并记录实际模型、延迟、限流与费用行为

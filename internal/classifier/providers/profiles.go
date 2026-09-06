@@ -20,6 +20,7 @@ type Profile struct {
 
 var profiles = map[string]Profile{
 	"none":              {ID: "none"},
+	"aihubmix":          {ID: "aihubmix", DefaultBaseURL: "https://aihubmix.com/v1", DefaultAPIKeyEnv: "AIHUBMIX_API_KEY", SupportsJSONMode: true, SupportsVision: true},
 	"openai":            {ID: "openai", DefaultBaseURL: "https://api.openai.com/v1", DefaultAPIKeyEnv: "OPENAI_API_KEY", SupportsJSONMode: true},
 	"openai-compatible": {ID: "openai-compatible", SupportsJSONMode: false},
 	"deepseek":          {ID: "deepseek", DefaultBaseURL: "https://api.deepseek.com", DefaultAPIKeyEnv: "DEEPSEEK_API_KEY", SupportsJSONMode: true},
@@ -103,7 +104,7 @@ func New(cfg *config.Config) *Registry {
 				} else {
 					st.TextConfigured = key != "" || text.Provider == "ollama" || localEndpoint(endpoint)
 					if st.TextConfigured {
-						r.provider = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: endpoint, APIKey: key, Model: text.Model, JSONMode: text.JSONMode, SupportsJSONMode: p.SupportsJSONMode, Timeout: time.Duration(text.TimeoutSeconds) * time.Second, Temperature: text.Temperature})
+						r.provider = buildProviderChain(text, endpoint, key, p)
 					} else {
 						st.Warning = "API key is not configured; rules only"
 					}
@@ -113,7 +114,11 @@ func New(cfg *config.Config) *Registry {
 	} else if text.Provider != "" && text.Provider != "none" {
 		st.Warning = "unknown AI provider; rules only"
 	}
-	if provider, ok := r.provider.(*classifier.OpenAICompatibleProvider); ok {
+	if provider, ok := r.provider.(interface {
+		CooldownUntil() time.Time
+		LastError() string
+		LastSuccessAt() time.Time
+	}); ok {
 		r.cooldown = provider.CooldownUntil
 		r.lastError = provider.LastError
 		r.lastSuccessAt = provider.LastSuccessAt
@@ -133,7 +138,7 @@ func New(cfg *config.Config) *Registry {
 				}
 				visionKey := resolveKey(vision, vp.DefaultAPIKeyEnv)
 				if visionKey != "" || vision.Provider == "ollama" || localEndpoint(visionEndpoint) {
-					r.vision = classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{Endpoint: visionEndpoint, APIKey: visionKey, Model: vision.Model, JSONMode: vision.JSONMode, SupportsJSONMode: vp.SupportsJSONMode, Timeout: time.Duration(vision.TimeoutSeconds) * time.Second, Temperature: vision.Temperature})
+					r.vision = buildProviderChain(vision, visionEndpoint, visionKey, vp)
 				} else if st.Warning == "" {
 					st.Warning = "AI vision API key is not configured; vision fallback disabled"
 				}
@@ -144,6 +149,24 @@ func New(cfg *config.Config) *Registry {
 	}
 	r.status = st
 	return r
+}
+
+func buildProviderChain(endpointConfig config.AIEndpointConfig, endpoint, key string, profile Profile) classifier.TaskRelationProvider {
+	models := append([]string{endpointConfig.Model}, endpointConfig.FallbackModels...)
+	items := make([]classifier.TaskRelationProvider, 0, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		items = append(items, classifier.NewOpenAICompatibleProviderWithOptions(classifier.ProviderOptions{
+			Endpoint: endpoint, APIKey: key, Model: model, JSONMode: endpointConfig.JSONMode,
+			SupportsJSONMode: profile.SupportsJSONMode,
+			Timeout:          time.Duration(endpointConfig.TimeoutSeconds) * time.Second,
+			Temperature:      endpointConfig.Temperature,
+		}))
+	}
+	return classifier.NewModelFallbackProvider(items...)
 }
 
 func localEndpoint(raw string) bool {
@@ -177,7 +200,7 @@ func (r *Registry) Provider() classifier.TaskRelationProvider       { return r.p
 func (r *Registry) VisionProvider() classifier.TaskRelationProvider { return r.vision }
 func (r *Registry) Status() Status {
 	st := r.status
-	if r.provider != nil {
+	if r.cooldown != nil {
 		if u := r.cooldown(); !u.IsZero() {
 			st.CooldownUntil = &u
 		}

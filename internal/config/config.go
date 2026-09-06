@@ -93,6 +93,7 @@ type AIEndpointConfig struct {
 	Enabled        bool     `yaml:"enabled"`
 	Provider       string   `yaml:"provider"`
 	Model          string   `yaml:"model"`
+	FallbackModels []string `yaml:"fallback_models,omitempty" json:"fallback_models,omitempty"`
 	BaseURL        string   `yaml:"base_url"`
 	APIKeyEnv      string   `yaml:"api_key_env"`
 	APIKeyFile     string   `yaml:"api_key_file"`
@@ -123,6 +124,7 @@ type ReviewProviderConfig struct {
 	InheritTextProfile bool     `yaml:"inherit_text_profile"`
 	Provider           string   `yaml:"provider"`
 	Model              string   `yaml:"model"`
+	FallbackModels     []string `yaml:"fallback_models,omitempty"`
 	BaseURL            string   `yaml:"base_url"`
 	APIKeyEnv          string   `yaml:"api_key_env"`
 	APIKeyFile         string   `yaml:"api_key_file"`

@@ -117,3 +117,29 @@ func TestNewConfiguredProviderInheritsTextProfileAndChecksModel(t *testing.T) {
 		t.Fatalf("missing model provider=%T status=%+v", provider, status)
 	}
 }
+
+func TestReviewModelFallbackUsesNextModelAfterInvalidSchema(t *testing.T) {
+	var models []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		models = append(models, request.Model)
+		content := `{"schema_version":0}`
+		if request.Model == "paid-model" {
+			content = `{"schema_version":1,"date":"2026-09-06","headline":"复盘","topics":[],"accomplishments":[],"unfinished":[],"difficulties":[],"behavior":{"distraction_count":0,"largest_distraction_seconds":0,"average_recovery_seconds":0},"tomorrow_priority":"继续"}`
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": content}}}})
+	}))
+	defer server.Close()
+	first, _ := NewProvider(ProviderOptions{Name: "aihubmix", Endpoint: server.URL, Model: "free-model", Timeout: time.Second})
+	second, _ := NewProvider(ProviderOptions{Name: "aihubmix", Endpoint: server.URL, Model: "paid-model", Timeout: time.Second})
+	document, metadata, err := NewModelFallbackProvider(first, second).Generate(context.Background(), ReviewInput{Date: "2026-09-06"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Headline != "复盘" || metadata.Model != "paid-model" || len(models) != 2 {
+		t.Fatalf("document=%+v metadata=%+v models=%v", document, metadata, models)
+	}
+}

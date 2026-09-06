@@ -66,6 +66,7 @@ ai:
   text:
     provider: "none"
     model: ""
+    fallback_models: []
     base_url: ""
     api_key_env: ""
     api_key_file: ""
@@ -76,6 +77,7 @@ ai:
     enabled: false
     provider: "none"
     model: ""
+    fallback_models: []
     base_url: ""
     api_key_env: ""
     api_key_file: ""
@@ -97,6 +99,7 @@ review:
     inherit_text_profile: true
     provider: ""
     model: ""
+    fallback_models: []
     base_url: ""
     api_key_env: ""
     api_key_file: ""

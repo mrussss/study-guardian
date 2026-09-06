@@ -25,6 +25,62 @@ type Provider interface {
 	Generate(context.Context, ReviewInput) (Document, ProviderMetadata, error)
 }
 
+type ModelFallbackProvider struct {
+	providers []Provider
+}
+
+func NewModelFallbackProvider(providers ...Provider) Provider {
+	items := make([]Provider, 0, len(providers))
+	for _, provider := range providers {
+		if provider != nil {
+			items = append(items, provider)
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	if len(items) == 1 {
+		return items[0]
+	}
+	return &ModelFallbackProvider{providers: items}
+}
+
+func (p *ModelFallbackProvider) Generate(ctx context.Context, input ReviewInput) (Document, ProviderMetadata, error) {
+	var lastMetadata ProviderMetadata
+	var lastErr error
+	for index, provider := range p.providers {
+		document, metadata, err := provider.Generate(ctx, input)
+		lastMetadata = metadata
+		if err == nil {
+			return document, metadata, nil
+		}
+		lastErr = err
+		if index == len(p.providers)-1 || !shouldFallbackReviewModel(ctx, err) {
+			break
+		}
+	}
+	return Document{}, lastMetadata, lastErr
+}
+
+func shouldFallbackReviewModel(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	var providerErr ProviderError
+	if !errors.As(err, &providerErr) {
+		return false
+	}
+	switch providerErr.Kind {
+	case ProviderErrorTimeout, ProviderErrorUnavailable, ProviderErrorNetwork, ProviderErrorInvalidJSON, ProviderErrorSchemaInvalid, ProviderErrorUnsupported:
+		return true
+	case ProviderErrorHTTP:
+		var httpErr ai.HTTPError
+		return errors.As(err, &httpErr) && (httpErr.Status == 404 || httpErr.Status == 408 || httpErr.Status == 429 || httpErr.Status >= 500)
+	default:
+		return false
+	}
+}
+
 type ProviderMetadata struct {
 	Provider      string `json:"provider"`
 	Model         string `json:"model"`
@@ -180,6 +236,7 @@ func NewConfiguredProvider(cfg *config.Config) (Provider, ProviderStatus) {
 	reviewConfig := cfg.Review.Provider
 	providerName := strings.TrimSpace(reviewConfig.Provider)
 	model := strings.TrimSpace(reviewConfig.Model)
+	fallbackModels := append([]string(nil), reviewConfig.FallbackModels...)
 	endpoint := strings.TrimSpace(reviewConfig.BaseURL)
 	apiKey := resolveReviewKey(reviewConfig.APIKeyEnv, reviewConfig.APIKeyFile)
 	jsonMode := reviewConfig.JSONMode
@@ -189,6 +246,7 @@ func NewConfiguredProvider(cfg *config.Config) (Provider, ProviderStatus) {
 		text := cfg.AI.Text
 		providerName = strings.TrimSpace(text.Provider)
 		model = strings.TrimSpace(text.Model)
+		fallbackModels = append([]string(nil), text.FallbackModels...)
 		endpoint = strings.TrimSpace(text.BaseURL)
 		apiKey = resolveEndpointKey(text.APIKeyEnv, text.APIKeyFile, "")
 		jsonMode = text.JSONMode
@@ -222,13 +280,18 @@ func NewConfiguredProvider(cfg *config.Config) (Provider, ProviderStatus) {
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 30
 	}
-	provider, err := NewProvider(ProviderOptions{Name: providerName, Endpoint: endpoint, APIKey: apiKey, Model: model, JSONMode: jsonMode, SupportsJSONMode: profile.SupportsJSONMode, Timeout: time.Duration(timeoutSeconds) * time.Second, Temperature: temperature})
-	if err != nil {
-		status.Warning = "review provider configuration is invalid"
-		return nil, status
+	models := append([]string{model}, fallbackModels...)
+	chain := make([]Provider, 0, len(models))
+	for _, candidate := range models {
+		provider, err := NewProvider(ProviderOptions{Name: providerName, Endpoint: endpoint, APIKey: apiKey, Model: strings.TrimSpace(candidate), JSONMode: jsonMode, SupportsJSONMode: profile.SupportsJSONMode, Timeout: time.Duration(timeoutSeconds) * time.Second, Temperature: temperature})
+		if err != nil {
+			status.Warning = "review provider configuration is invalid"
+			return nil, status
+		}
+		chain = append(chain, provider)
 	}
 	status.Configured = true
-	return provider, status
+	return NewModelFallbackProvider(chain...), status
 }
 
 func resolveReviewKey(envName, fileName string) string {

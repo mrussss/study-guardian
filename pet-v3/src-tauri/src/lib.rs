@@ -704,6 +704,18 @@ fn text_field(object: &serde_json::Map<String, Value>, key: &str, max_bytes: usi
         .ok_or(NativeErrorKind::InvalidResponse)
 }
 
+fn string_array_field(object: &serde_json::Map<String, Value>, key: &str, max_items: usize, max_bytes: usize) -> Result<Vec<String>, NativeErrorKind> {
+    let Some(value) = object.get(key) else { return Ok(Vec::new()); };
+    let rows = value.as_array().ok_or(NativeErrorKind::InvalidResponse)?;
+    if rows.len() > max_items { return Err(NativeErrorKind::InvalidResponse); }
+    rows.iter().map(|row| {
+        row.as_str()
+            .filter(|value| !value.trim().is_empty() && value.len() <= max_bytes)
+            .map(str::to_string)
+            .ok_or(NativeErrorKind::InvalidResponse)
+    }).collect()
+}
+
 fn optional_text_field(object: &serde_json::Map<String, Value>, key: &str, max_bytes: usize) -> Result<Option<String>, NativeErrorKind> {
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
@@ -910,6 +922,7 @@ fn sanitize_ai_settings(value: &Value) -> Result<Value, NativeErrorKind> {
             "enabled": bool_field(row, "enabled")?,
             "provider": text_field(row, "provider", 64)?,
             "model": text_field(row, "model", 128)?,
+            "fallback_models": string_array_field(row, "fallback_models", 3, 128)?,
             "base_url": text_field(row, "base_url", 1024)?,
             "api_key_configured": bool_field(row, "api_key_configured")?,
             "timeout_seconds": non_negative_i64_field(row, "timeout_seconds")?,
@@ -1328,6 +1341,7 @@ async fn supervisor_cancel_mission(id: String) -> SupervisorControlResult {
 #[derive(Deserialize, Serialize)]
 struct AIEndpointInput {
     enabled: bool, provider: String, model: String, base_url: String,
+    fallback_models: Vec<String>,
     api_key_configured: bool, timeout_seconds: i64, json_mode: String,
 }
 
@@ -1771,7 +1785,7 @@ mod tests {
     use super::{
         bounded_control_center_route, bounded_panel_position, bounded_quick_panel_debug_event, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
-        sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event, task_preset_path_allowed,
+        sanitize_ai_settings, sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event, task_preset_path_allowed,
         launch_without_pet, requested_launch_route, LaunchRoute, NativeErrorKind,
         SupervisorSnapshot,
     };
@@ -1859,6 +1873,21 @@ mod tests {
         assert!(!encoded.contains("must-never-cross-boundary"));
         assert!(!encoded.contains("auth.token"));
         assert!(!encoded.contains("last_error_kind"));
+    }
+
+    #[test]
+    fn ai_settings_sanitizer_accepts_bounded_model_fallbacks_and_old_single_model_shape() {
+        let endpoint = json!({
+            "enabled": true, "provider": "aihubmix", "model": "free-model",
+            "fallback_models": ["paid-model"], "base_url": "https://aihubmix.com/v1",
+            "api_key_configured": true, "timeout_seconds": 6, "json_mode": "auto"
+        });
+        let sanitized = sanitize_ai_settings(&json!({
+            "enabled": true, "min_confidence": 0.75, "text": endpoint,
+            "vision": {"enabled": false, "provider": "none", "model": "", "base_url": "", "api_key_configured": false, "timeout_seconds": 8, "json_mode": "auto"}
+        })).expect("valid AI settings");
+        assert_eq!(sanitized["text"]["fallback_models"], json!(["paid-model"]));
+        assert_eq!(sanitized["vision"]["fallback_models"], json!([]));
     }
 
     #[test]

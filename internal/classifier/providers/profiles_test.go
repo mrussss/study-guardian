@@ -9,6 +9,7 @@ import (
 
 func TestRequiredProviderProfiles(t *testing.T) {
 	cases := map[string]string{
+		"aihubmix":    "https://aihubmix.com/v1",
 		"openai":      "https://api.openai.com/v1",
 		"deepseek":    "https://api.deepseek.com",
 		"kimi":        "https://api.moonshot.cn/v1",

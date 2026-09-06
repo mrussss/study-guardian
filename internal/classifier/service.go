@@ -145,7 +145,11 @@ func (s *Service) Classify(
 			timeoutSeconds = 8
 		}
 	}
-	aiCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+	attemptCount := 1
+	if chain, ok := provider.(interface{ AttemptCount() int }); ok && chain.AttemptCount() > 1 {
+		attemptCount = chain.AttemptCount()
+	}
+	aiCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds*attemptCount)*time.Second)
 	defer cancel()
 
 	resp, err := provider.Classify(aiCtx, aiReq)

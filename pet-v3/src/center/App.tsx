@@ -340,33 +340,38 @@ function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): R
   </div><p className={`system-summary is-${supervision.systemTone}`}>{supervision.systemLabel}</p></section></DataPage>;
 }
 
-const providerHints: Record<string, { base_url: string; model: string }> = {
-  none: { base_url: "", model: "" }, deepseek: { base_url: "https://api.deepseek.com", model: "deepseek-chat" },
-  qwen: { base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
-  kimi: { base_url: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  zhipu: { base_url: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
-  siliconflow: { base_url: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct" },
-  doubao: { base_url: "https://ark.cn-beijing.volces.com/api/v3", model: "" },
-  openai: { base_url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-  "openai-compatible": { base_url: "", model: "" }, ollama: { base_url: "http://127.0.0.1:11434/v1", model: "qwen2.5" },
+const providerHints: Record<string, { base_url: string; model: string; fallback_models: string[] }> = {
+  none: { base_url: "", model: "", fallback_models: [] },
+  aihubmix: { base_url: "https://aihubmix.com/v1", model: "coding-glm-5.3-flash-free", fallback_models: ["coding-glm-5.3-flash"] },
+  deepseek: { base_url: "https://api.deepseek.com", model: "deepseek-chat", fallback_models: [] },
+  qwen: { base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", fallback_models: [] },
+  kimi: { base_url: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k", fallback_models: [] },
+  zhipu: { base_url: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", fallback_models: [] },
+  siliconflow: { base_url: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct", fallback_models: [] },
+  doubao: { base_url: "https://ark.cn-beijing.volces.com/api/v3", model: "", fallback_models: [] },
+  openai: { base_url: "https://api.openai.com/v1", model: "gpt-4o-mini", fallback_models: [] },
+  "openai-compatible": { base_url: "", model: "", fallback_models: [] }, ollama: { base_url: "http://127.0.0.1:11434/v1", model: "qwen2.5", fallback_models: [] },
 };
+
+const providerLabels: Record<string, string> = { aihubmix: "AIHubMix 中转", "openai-compatible": "其他 OpenAI 兼容服务" };
 
 function AIEndpointEditor({ title, target, endpoint, keyValue, onKeyValue, onChange, onPutSecret, onDeleteSecret, onTest }: {
   title: string; target: "text" | "vision"; endpoint: NativeAIEndpointSettings; keyValue: string; onKeyValue: (value: string) => void;
   onChange: (value: NativeAIEndpointSettings) => void; onPutSecret: () => void; onDeleteSecret: () => void; onTest: () => void;
 }): ReactElement {
   const changeProvider = (provider: string): void => {
-    const hint = providerHints[provider] ?? { base_url: "", model: "" };
-    onChange({ ...endpoint, provider, enabled: target === "text" ? provider !== "none" : endpoint.enabled, base_url: hint.base_url, model: hint.model });
+    const hint = providerHints[provider] ?? { base_url: "", model: "", fallback_models: [] };
+    const visionHint = provider === "aihubmix" ? { model: "ox-alpha", fallback_models: ["glm-5.3-flash"] } : hint;
+    onChange({ ...endpoint, provider, enabled: target === "text" ? provider !== "none" : endpoint.enabled, base_url: hint.base_url, model: target === "vision" ? visionHint.model : hint.model, fallback_models: target === "vision" ? visionHint.fallback_models : hint.fallback_models });
   };
   return <div className="ai-endpoint-card"><div className="ai-endpoint-heading"><div><strong>{title}</strong><span>{target === "vision" ? "仅在文字判断仍不确定且明确启用时使用" : "本地规则无法判断时才调用"}</span></div>{target === "vision" && <label className="switch-label"><input type="checkbox" checked={endpoint.enabled} onChange={event => onChange({ ...endpoint, enabled: event.target.checked })} />启用</label>}</div>
-    <div className="ai-field-grid"><label><span>服务商</span><select value={endpoint.provider} onChange={event => changeProvider(event.target.value)}>{Object.keys(providerHints).map(value => <option value={value} key={value}>{value}</option>)}</select></label><label><span>模型</span><input value={endpoint.model} onChange={event => onChange({ ...endpoint, model: event.target.value })} /></label><label className="wide"><span>API 地址</span><input value={endpoint.base_url} onChange={event => onChange({ ...endpoint, base_url: event.target.value })} /></label><label><span>JSON 模式</span><select value={endpoint.json_mode} onChange={event => onChange({ ...endpoint, json_mode: event.target.value as NativeAIEndpointSettings["json_mode"] })}><option value="auto">自动</option><option value="json_object">JSON Object</option><option value="off">关闭</option></select></label><label><span>超时（秒）</span><input type="number" min={1} max={120} value={endpoint.timeout_seconds} onChange={event => onChange({ ...endpoint, timeout_seconds: Number(event.target.value) })} /></label></div>
+    <div className="ai-field-grid"><label><span>服务商</span><select value={endpoint.provider} onChange={event => changeProvider(event.target.value)}>{Object.keys(providerHints).map(value => <option value={value} key={value}>{providerLabels[value] ?? value}</option>)}</select></label><label><span>主模型</span><input value={endpoint.model} onChange={event => onChange({ ...endpoint, model: event.target.value })} /></label><label className="wide"><span>API 地址</span><input value={endpoint.base_url} onChange={event => onChange({ ...endpoint, base_url: event.target.value })} /></label><label className="wide"><span>备用模型（按顺序，逗号分隔）</span><input value={endpoint.fallback_models.join(", ")} onChange={event => onChange({ ...endpoint, fallback_models: event.target.value.split(",").map(value => value.trim()).filter(Boolean).slice(0, 3) })} /><small>仅在限流、超时、服务异常或无效返回时切换；备用模型可能产生费用。</small></label><label><span>JSON 模式</span><select value={endpoint.json_mode} onChange={event => onChange({ ...endpoint, json_mode: event.target.value as NativeAIEndpointSettings["json_mode"] })}><option value="auto">自动</option><option value="json_object">JSON Object</option><option value="off">关闭</option></select></label><label><span>单模型超时（秒）</span><input type="number" min={1} max={120} value={endpoint.timeout_seconds} onChange={event => onChange({ ...endpoint, timeout_seconds: Number(event.target.value) })} /></label></div>
     <div className="secret-row"><span className={endpoint.api_key_configured ? "secret-state is-set" : "secret-state"}>{endpoint.api_key_configured ? "API Key 已配置" : "API Key 未配置"}</span><input type="password" autoComplete="new-password" value={keyValue} placeholder="输入新 Key（不会回显）" onChange={event => onKeyValue(event.target.value)} /><button type="button" disabled={!keyValue.trim()} onClick={onPutSecret}>保存 Key</button>{endpoint.api_key_configured && <button type="button" onClick={onDeleteSecret}>删除 Key</button>}<button className="test-button" type="button" onClick={onTest}>测试连接</button></div>
   </div>;
 }
 
 function AISettingsPanel({ settings: source }: { settings?: NativeAISettings }): ReactElement {
-  const fallback: NativeAISettings = { enabled: false, min_confidence: .75, text: { enabled: false, provider: "none", model: "", base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" }, vision: { enabled: false, provider: "none", model: "", base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" } };
+  const fallback: NativeAISettings = { enabled: false, min_confidence: .75, text: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" }, vision: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" } };
   const [draft, setDraft] = useState<NativeAISettings>();
   const [textKey, setTextKey] = useState(""); const [visionKey, setVisionKey] = useState(""); const [notice, setNotice] = useState("");
   const settings = draft ?? source ?? fallback; const control = getSupervisorControlAdapter();

@@ -24,13 +24,14 @@ import (
 const SettingKey = "ai.config.v1"
 
 type EndpointDTO struct {
-	Enabled          bool   `json:"enabled"`
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	BaseURL          string `json:"base_url"`
-	APIKeyConfigured bool   `json:"api_key_configured"`
-	TimeoutSeconds   int    `json:"timeout_seconds"`
-	JSONMode         string `json:"json_mode"`
+	Enabled          bool     `json:"enabled"`
+	Provider         string   `json:"provider"`
+	Model            string   `json:"model"`
+	FallbackModels   []string `json:"fallback_models"`
+	BaseURL          string   `json:"base_url"`
+	APIKeyConfigured bool     `json:"api_key_configured"`
+	TimeoutSeconds   int      `json:"timeout_seconds"`
+	JSONMode         string   `json:"json_mode"`
 }
 
 type SettingsDTO struct {
@@ -87,7 +88,7 @@ func sanitized(aiConfig config.AIConfig) SettingsDTO {
 		return false
 	}
 	toDTO := func(endpoint config.AIEndpointConfig) EndpointDTO {
-		return EndpointDTO{Enabled: endpoint.Enabled, Provider: endpoint.Provider, Model: endpoint.Model, BaseURL: endpoint.BaseURL, APIKeyConfigured: configured(endpoint), TimeoutSeconds: endpoint.TimeoutSeconds, JSONMode: endpoint.JSONMode}
+		return EndpointDTO{Enabled: endpoint.Enabled, Provider: endpoint.Provider, Model: endpoint.Model, FallbackModels: append([]string(nil), endpoint.FallbackModels...), BaseURL: endpoint.BaseURL, APIKeyConfigured: configured(endpoint), TimeoutSeconds: endpoint.TimeoutSeconds, JSONMode: endpoint.JSONMode}
 	}
 	return SettingsDTO{Enabled: aiConfig.Enabled, MinConfidence: aiConfig.MinConfidence, Text: toDTO(aiConfig.Text), Vision: toDTO(aiConfig.Vision)}
 }
@@ -103,6 +104,7 @@ func (s *Service) Save(ctx context.Context, input SettingsDTO) (SettingsDTO, err
 	next.MinConfidence = input.MinConfidence
 	applyEndpoint := func(current config.AIEndpointConfig, dto EndpointDTO) config.AIEndpointConfig {
 		current.Enabled, current.Provider, current.Model, current.BaseURL = dto.Enabled, strings.ToLower(strings.TrimSpace(dto.Provider)), strings.TrimSpace(dto.Model), strings.TrimSpace(dto.BaseURL)
+		current.FallbackModels = normalizeFallbackModels(dto.FallbackModels)
 		current.TimeoutSeconds, current.JSONMode = dto.TimeoutSeconds, strings.TrimSpace(dto.JSONMode)
 		return current
 	}
@@ -134,12 +136,36 @@ func validateDTO(input SettingsDTO) error {
 		if endpoint.Provider != "none" && endpoint.Model == "" {
 			return fmt.Errorf("%s model is required", label)
 		}
+		if len(endpoint.FallbackModels) > 3 {
+			return fmt.Errorf("%s supports at most 3 fallback models", label)
+		}
+		seen := map[string]struct{}{strings.TrimSpace(endpoint.Model): {}}
+		for _, model := range endpoint.FallbackModels {
+			model = strings.TrimSpace(model)
+			if model == "" || len(model) > 128 {
+				return fmt.Errorf("%s fallback model must be non-empty and at most 128 characters", label)
+			}
+			if _, exists := seen[model]; exists {
+				return fmt.Errorf("%s model chain contains a duplicate", label)
+			}
+			seen[model] = struct{}{}
+		}
 		if endpoint.Provider == "openai-compatible" && endpoint.BaseURL == "" {
 			return fmt.Errorf("%s base_url is required", label)
 		}
 		_ = profile
 	}
 	return nil
+}
+
+func normalizeFallbackModels(models []string) []string {
+	out := make([]string, 0, len(models))
+	for _, model := range models {
+		if model = strings.TrimSpace(model); model != "" {
+			out = append(out, model)
+		}
+	}
+	return out
 }
 
 func (s *Service) PutSecret(ctx context.Context, target, secret string) (SettingsDTO, error) {
@@ -275,6 +301,9 @@ func (s *Service) Test(ctx context.Context, target string) TestResult {
 	_, err := provider.Classify(ctx, request)
 	result.LatencyMS = time.Since(started).Milliseconds()
 	if err == nil {
+		if selected, ok := provider.(interface{ LastModel() string }); ok && selected.LastModel() != "" {
+			result.Model = selected.LastModel()
+		}
 		result.OK = true
 		return result
 	}

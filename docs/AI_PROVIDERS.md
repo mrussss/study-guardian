@@ -23,7 +23,34 @@ ai:
     provider: none
 ```
 
-内置 profile：`openai`、`openai-compatible`、`deepseek`、`qwen`、`kimi`、`zhipu`、`siliconflow`、`doubao`、`ollama`、`none`。Qwen 开箱默认使用共享地址 `https://dashscope.aliyuncs.com/compatible-mode/v1`，密钥环境变量为 `DASHSCOPE_API_KEY`。密钥解析顺序是 endpoint 的 `api_key_env`、profile 默认环境变量、`api_key_file`；日志和错误不会输出密钥。
+内置 profile：`aihubmix`、`openai`、`openai-compatible`、`deepseek`、`qwen`、`kimi`、`zhipu`、`siliconflow`、`doubao`、`ollama`、`none`。AIHubMix 使用 OpenAI 兼容地址 `https://aihubmix.com/v1` 和环境变量 `AIHUBMIX_API_KEY`；Qwen 开箱默认使用共享地址 `https://dashscope.aliyuncs.com/compatible-mode/v1`，密钥环境变量为 `DASHSCOPE_API_KEY`。密钥解析顺序是 endpoint 的 `api_key_env`、profile 默认环境变量、`api_key_file`；日志和错误不会输出密钥。
+
+每个文本或视觉端点都可以配置一个主模型和最多三个备用模型。`model` 保持为主模型字段，`fallback_models` 是有序列表，因此旧的单模型配置无需迁移：
+
+```yaml
+ai:
+  enabled: true
+  text:
+    enabled: true
+    provider: aihubmix
+    model: coding-glm-5.3-flash-free
+    fallback_models:
+      - coding-glm-5.3-flash
+    base_url: https://aihubmix.com/v1
+    timeout_seconds: 6
+    json_mode: auto
+  vision:
+    enabled: false
+    provider: aihubmix
+    model: ox-alpha
+    fallback_models:
+      - glm-5.3-flash
+    base_url: https://aihubmix.com/v1
+    timeout_seconds: 8
+    json_mode: auto
+```
+
+Control Center 选择“AIHubMix 中转”时会填入上述当前推荐链路，但仍由用户保存并配置 Key 后才生效。备用模型可能计费；列表为空时永远不会自动切换到第二个模型。视觉仍默认关闭。
 
 文本和视觉 provider 是两个独立实例。视觉分类只有在配置了 `vision.enabled`、视觉 provider 和模型，并且调用方提供经过隐私门禁处理的图片时才启用；不能仅凭 provider 名称推断支持视觉。`temperature` 是可选指针：默认请求完全省略该字段，只有用户明确配置时才发送。
 
@@ -31,7 +58,9 @@ Windows 上可运行 `scripts/configure-ai.ps1`。脚本先生成带时间戳的
 
 ## JSON 与退避
 
-`json_mode: auto` 仅对声明支持 JSON mode 的 profile 发送 `response_format=json_object`。若服务明确以 HTTP 400/422 表示不支持，最多降级重试一次；401/403、429、5xx 和超时不会盲目重试，并进入短暂 cooldown。非法结构化返回会回退到本地规则。
+`json_mode: auto` 仅对声明支持 JSON mode 的 profile 发送 `response_format=json_object`。若服务明确以 HTTP 400/422 表示不支持，当前模型最多降级重试一次。模型链只在 404、408、429、5xx、网络/超时、无效 JSON 或业务结构损坏时前进；400、401、403、422 等配置、鉴权或请求错误立即停止，避免付费备用模型掩盖错误。实时分类链中的每个模型保有独立 cooldown，整条链失败后才回退本地规则。
+
+Daily Review 在 `inherit_text_profile: true` 时继承完整文字模型链，并保存真正成功的模型名。所有模型都失败后仍使用 deterministic fallback，不影响复盘可用性。
 
 视觉请求只在文本分类结果仍为 `UNKNOWN` 或低于最小置信度、且调用方提供经过隐私门禁和缩放的 `analysis_image_base64` 时发送；敏感应用/域名不会进入视觉请求。实际流程是 `Rules -> Text AI -> Vision AI fallback`，而不是“只要有截图就直接走 Vision”。文本和视觉请求分别使用配置的 timeout（默认 6 秒 / 8 秒），不再由 Classifier 统一压成 3 秒。
 
@@ -41,4 +70,4 @@ Windows 上可运行 `scripts/configure-ai.ps1`。脚本先生成带时间戳的
 
 现代 Control Center 通过 `/v1/settings/ai` 保存文本和视觉端点，并在保存后立即重建运行时 provider。`GET /v1/settings/ai` 只返回脱敏配置和 `secret_configured`，不会返回 key、secret 文件名或绝对路径。
 
-密钥使用 `/v1/settings/ai/secret` 单独写入或删除。Supervisor 在 `config/secrets` 中原子替换密钥文件；React 输入框不回显已经保存的值。`POST /v1/settings/ai/test` 会向选定 provider 发出最小结构化请求，并只返回 provider、model、延迟和有限错误种类。没有真实凭据时不得把连接测试标记为 PASS。
+密钥使用 `/v1/settings/ai/secret` 单独写入或删除。Supervisor 在 `config/secrets` 中原子替换密钥文件；React 输入框不回显已经保存的值。`POST /v1/settings/ai/test` 会向选定 provider 发出最小结构化请求，并只返回 provider、实际成功的 model、延迟和有限错误种类。测试会遵守模型链，因此主模型失败时可能调用配置的付费备用模型；没有真实凭据时不得把连接测试标记为 PASS。

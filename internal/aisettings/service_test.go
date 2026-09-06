@@ -87,3 +87,22 @@ func TestAIConnectionFailureCategoryIsBounded(t *testing.T) {
 		t.Fatalf("result=%+v", result)
 	}
 }
+
+func TestAISettingsValidateAndPersistFallbackModels(t *testing.T) {
+	store, _ := storage.OpenSQLite(":memory:")
+	defer store.Close()
+	service := New(config.DefaultConfig(), store, filepath.Join(t.TempDir(), "secrets"), nil, nil)
+	input := service.Settings()
+	input.Text = EndpointDTO{Enabled: true, Provider: "aihubmix", Model: "free-model", FallbackModels: []string{"paid-model"}, BaseURL: "https://aihubmix.com/v1", TimeoutSeconds: 6, JSONMode: "auto"}
+	saved, err := service.Save(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Text.FallbackModels) != 1 || saved.Text.FallbackModels[0] != "paid-model" {
+		t.Fatalf("saved fallback models=%v", saved.Text.FallbackModels)
+	}
+	input.Text.FallbackModels = []string{"free-model"}
+	if _, err := service.Save(context.Background(), input); err == nil {
+		t.Fatal("duplicate primary/fallback model should be rejected")
+	}
+}

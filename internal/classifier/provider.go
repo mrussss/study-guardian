@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -34,6 +35,124 @@ type ClassificationResponse struct {
 type TaskRelationProvider interface {
 	Classify(context.Context, ClassificationRequest) (*ClassificationResponse, error)
 	Name() string
+}
+
+// ModelFallbackProvider tries an ordered list of independently cooled-down
+// model clients. It only advances for transient/provider-shape failures; bad
+// credentials and bad requests stop immediately so a paid fallback cannot
+// hide a configuration error.
+type ModelFallbackProvider struct {
+	providers     []TaskRelationProvider
+	mu            sync.RWMutex
+	lastModel     string
+	lastSuccessAt time.Time
+	lastError     string
+}
+
+func NewModelFallbackProvider(items ...TaskRelationProvider) TaskRelationProvider {
+	providers := make([]TaskRelationProvider, 0, len(items))
+	for _, provider := range items {
+		if provider != nil {
+			providers = append(providers, provider)
+		}
+	}
+	if len(providers) == 0 {
+		return nil
+	}
+	if len(providers) == 1 {
+		return providers[0]
+	}
+	return &ModelFallbackProvider{providers: providers}
+}
+
+func (p *ModelFallbackProvider) Name() string {
+	names := make([]string, 0, len(p.providers))
+	for _, provider := range p.providers {
+		names = append(names, provider.Name())
+	}
+	return "model fallback [" + strings.Join(names, " -> ") + "]"
+}
+
+func (p *ModelFallbackProvider) LastModel() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.lastModel
+}
+
+func (p *ModelFallbackProvider) AttemptCount() int { return len(p.providers) }
+
+func (p *ModelFallbackProvider) LastSuccessAt() time.Time {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.lastSuccessAt
+}
+
+func (p *ModelFallbackProvider) LastError() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.lastError
+}
+
+func (p *ModelFallbackProvider) CooldownUntil() time.Time { return time.Time{} }
+
+func (p *ModelFallbackProvider) Classify(ctx context.Context, req ClassificationRequest) (*ClassificationResponse, error) {
+	var lastErr error
+	for index, provider := range p.providers {
+		response, err := provider.Classify(ctx, req)
+		if err == nil {
+			p.mu.Lock()
+			p.lastModel, p.lastSuccessAt, p.lastError = providerModelName(provider), time.Now(), ""
+			p.mu.Unlock()
+			return response, nil
+		}
+		lastErr = err
+		p.mu.Lock()
+		p.lastError = boundedProviderError(err)
+		p.mu.Unlock()
+		if index == len(p.providers)-1 || !shouldFallbackModel(ctx, err) {
+			break
+		}
+	}
+	return nil, lastErr
+}
+
+func providerModelName(provider TaskRelationProvider) string {
+	if value, ok := provider.(*OpenAICompatibleProvider); ok {
+		return value.Model
+	}
+	return provider.Name()
+}
+
+func shouldFallbackModel(ctx context.Context, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	var httpErr ai.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.Status == 404 || httpErr.Status == 408 || httpErr.Status == 429 || httpErr.Status >= 500
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	for _, fragment := range []string{"provider cooldown", "failed to decode ai response", "empty response", "structured json classification", "missing required field", "invalid classification", "classification confidence", "classification activity", "classification reason_short", "provider api error"} {
+		if strings.Contains(message, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func boundedProviderError(err error) string {
+	var httpErr ai.HTTPError
+	if errors.As(err, &httpErr) {
+		return fmt.Sprintf("HTTP %d", httpErr.Status)
+	}
+	return "provider request failed"
 }
 
 const (

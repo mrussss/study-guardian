@@ -125,3 +125,53 @@ func TestOpenAICompatibleProviderOmitsTemperatureUnlessConfigured(t *testing.T) 
 		t.Fatalf("temperature=%v, want %v", body["temperature"], temperature)
 	}
 }
+
+func TestModelFallbackProviderUsesNextModelForRetryableFailure(t *testing.T) {
+	var models []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		models = append(models, body.Model)
+		if body.Model == "free-model" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"quota reached"}}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": `{"relation":"FOCUSED","confidence":0.9,"activity":"go","task_related":true,"reason_short":"task"}`}}}})
+	}))
+	defer server.Close()
+	primary := NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "free-model", Timeout: time.Second})
+	fallback := NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "paid-model", Timeout: time.Second})
+	provider := NewModelFallbackProvider(primary, fallback)
+	if _, err := provider.Classify(context.Background(), ClassificationRequest{Task: "Go"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 || models[0] != "free-model" || models[1] != "paid-model" {
+		t.Fatalf("models=%v", models)
+	}
+	if selected := provider.(interface{ LastModel() string }).LastModel(); selected != "paid-model" {
+		t.Fatalf("selected model=%q", selected)
+	}
+}
+
+func TestModelFallbackProviderStopsOnAuthenticationFailure(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad key"}}`))
+	}))
+	defer server.Close()
+	provider := NewModelFallbackProvider(
+		NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "free-model", Timeout: time.Second}),
+		NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "paid-model", Timeout: time.Second}),
+	)
+	if _, err := provider.Classify(context.Background(), ClassificationRequest{Task: "Go"}); err == nil {
+		t.Fatal("expected authentication failure")
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d, want 1", calls)
+	}
+}

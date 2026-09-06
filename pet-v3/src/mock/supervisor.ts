@@ -54,8 +54,8 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
     ] },
     ai_settings: {
       enabled: false, min_confidence: 0.75,
-      text: { enabled: false, provider: "none", model: "", base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" },
-      vision: { enabled: false, provider: "none", model: "", base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" },
+      text: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" },
+      vision: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" },
     },
     history: [
       { date: today, focus_minutes: focusMinutes, target_minutes: 120, checkin_completed: progress === 1, target_completed: progress === 1 },

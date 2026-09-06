@@ -121,6 +121,7 @@ export interface NativeAIEndpointSettings {
   enabled: boolean;
   provider: string;
   model: string;
+  fallback_models: string[];
   base_url: string;
   api_key_configured: boolean;
   timeout_seconds: number;
@@ -273,7 +274,7 @@ function validMotivation(value: unknown): value is NativeMotivationStatus {
 
 function validAISettings(value: unknown): value is NativeAISettings {
   if (!record(value) || typeof value.enabled !== "boolean" || !boundedRatio(value.min_confidence)) return false;
-  const validEndpoint = (endpoint: unknown): endpoint is NativeAIEndpointSettings => record(endpoint) && typeof endpoint.enabled === "boolean" && boundedText(endpoint.provider, 64) && boundedText(endpoint.model, 128) && boundedText(endpoint.base_url, 1024) && typeof endpoint.api_key_configured === "boolean" && Number.isSafeInteger(endpoint.timeout_seconds) && Number(endpoint.timeout_seconds) >= 1 && Number(endpoint.timeout_seconds) <= 120 && ["auto", "json_object", "off"].includes(endpoint.json_mode as string);
+  const validEndpoint = (endpoint: unknown): endpoint is NativeAIEndpointSettings => record(endpoint) && typeof endpoint.enabled === "boolean" && boundedText(endpoint.provider, 64) && boundedText(endpoint.model, 128) && Array.isArray(endpoint.fallback_models) && endpoint.fallback_models.length <= 3 && endpoint.fallback_models.every(model => boundedText(model, 128) && model.trim() !== "") && boundedText(endpoint.base_url, 1024) && typeof endpoint.api_key_configured === "boolean" && Number.isSafeInteger(endpoint.timeout_seconds) && Number(endpoint.timeout_seconds) >= 1 && Number(endpoint.timeout_seconds) <= 120 && ["auto", "json_object", "off"].includes(endpoint.json_mode as string);
   return validEndpoint(value.text) && validEndpoint(value.vision);
 }
 

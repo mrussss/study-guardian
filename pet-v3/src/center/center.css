@@ -212,6 +212,7 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .ai-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ai-field-grid label { display: grid; gap: 5px; color: var(--sg-text-tertiary); font-size: 12px; }
 .ai-field-grid label.wide { grid-column: 1 / -1; }
+.ai-field-grid small { color: var(--sg-text-tertiary); font-size: 11px; line-height: 1.5; }
 .ai-field-grid input, .ai-field-grid select, .secret-row input { min-width: 0; height: 36px; padding: 0 9px; color: var(--sg-text); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 8px; }
 .secret-row { display: grid; grid-template-columns: auto minmax(140px, 1fr) auto auto auto; align-items: center; gap: 7px; }
 .secret-row button { height: 34px; padding: 0 9px; color: var(--sg-text-secondary); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; }
