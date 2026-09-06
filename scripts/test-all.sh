@@ -20,9 +20,18 @@ python3 -m unittest discover -s tests/integration -p 'test*.py'
 echo "=== Deploy safety ==="
 bash tests/test_deploy_safety.sh
 
+echo "=== PowerShell syntax ==="
+POWERSHELL_BIN="${POWERSHELL_BIN:-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe}"
+"${POWERSHELL_BIN}" -NoProfile -ExecutionPolicy Bypass -File \
+    "$(wslpath -w "${REPO_ROOT}/tests/test_powershell_parse.ps1")"
+
 echo "=== Pet v3 deploy safety ==="
 POWERSHELL_BIN="${POWERSHELL_BIN:-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe}"
 "${POWERSHELL_BIN}" -NoProfile -ExecutionPolicy Bypass -File \
     "$(wslpath -w "${REPO_ROOT}/tests/test_pet_v3_deploy.ps1")"
+
+echo "=== Pet v3 cache safety ==="
+"${POWERSHELL_BIN}" -NoProfile -ExecutionPolicy Bypass -File \
+    "$(wslpath -w "${REPO_ROOT}/tests/test_pet_v3_cache.ps1")"
 
 echo "All automated tests passed."

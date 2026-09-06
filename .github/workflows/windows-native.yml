@@ -1,0 +1,40 @@
+name: Windows native Pet
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "pet-v3/**"
+      - "pet/assets/**"
+      - ".github/workflows/windows-native.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tauri-debug:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: pet-v3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: pet-v3/package-lock.json
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pet-v3/src-tauri
+      - run: npm ci
+      - run: npm test
+      - run: npm run tauri build -- --debug --no-bundle

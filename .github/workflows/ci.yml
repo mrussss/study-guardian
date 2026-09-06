@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pet-web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: pet-v3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: pet-v3/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: go test ./...
+      - run: python3 -m unittest discover -s pet/tests -p 'test*.py'
+      - run: python3 -m unittest discover -s sensor/tests -p 'test*.py'
+      - run: python3 -m unittest discover -s tests/integration -p 'test*.py'
+      - run: bash tests/test_deploy_safety.sh
+
+  powershell-safety:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell scripts
+        shell: pwsh
+        run: ./tests/test_powershell_parse.ps1
+      - name: Test Pet deployment safety
+        shell: pwsh
+        run: ./tests/test_pet_v3_deploy.ps1
+      - name: Test Pet cache safety
+        shell: pwsh
+        run: ./tests/test_pet_v3_cache.ps1
