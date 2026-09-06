@@ -64,3 +64,40 @@ func TestNormalizeTaskNameUsesWhitespaceAndLatinCase(t *testing.T) {
 		t.Fatalf("display=%q key=%q err=%v", display, key, err)
 	}
 }
+
+func TestPinnedTaskPresetsKeepCreatedOrderAfterUse(t *testing.T) {
+	store, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	base := time.Date(2026, 9, 5, 8, 0, 0, 0, time.UTC)
+	for index, name := range []string{"Go", "八股", "算法"} {
+		if _, err := store.CreateTaskPreset(ctx, name, true, 0, base.Add(time.Duration(index)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, name := range []string{"八股", "Go", "算法", "八股"} {
+		if _, err := store.RecordTaskUse(ctx, name, base.Add(time.Hour+time.Duration(index)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pinned, err := store.ListPinnedTaskPresets(ctx, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pinned) != 3 || pinned[0].Name != "Go" || pinned[1].Name != "八股" || pinned[2].Name != "算法" {
+		t.Fatalf("pinned order changed after use: %+v", pinned)
+	}
+	if pinned[1].UseCount != 2 {
+		t.Fatalf("use count was not recorded: %+v", pinned[1])
+	}
+	recent, err := store.ListRecentTaskPresets(ctx, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 3 || recent[0].Name != "八股" || recent[1].Name != "算法" || recent[2].Name != "Go" {
+		t.Fatalf("recent order changed unexpectedly: %+v", recent)
+	}
+}

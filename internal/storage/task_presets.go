@@ -66,7 +66,7 @@ func (s *Storage) GetTaskPreset(ctx context.Context, id string) (TaskPreset, err
 }
 
 func (s *Storage) ListPinnedTaskPresets(ctx context.Context, limit int) ([]TaskPreset, error) {
-	return s.listTaskPresets(ctx, `WHERE pinned = 1 ORDER BY sort_order ASC, COALESCE(last_used_at, created_at) DESC LIMIT ?`, limit)
+	return s.listTaskPresets(ctx, `WHERE pinned = 1 ORDER BY sort_order ASC, created_at ASC, id ASC LIMIT ?`, limit)
 }
 
 func (s *Storage) ListRecentTaskPresets(ctx context.Context, limit int) ([]TaskPreset, error) {
