@@ -42,18 +42,17 @@ export function deriveSupervisionState(connected: boolean, status?: NativeSuperv
     return { behaviorLabel: "状态暂不可用", behaviorTone: "warning", systemLabel: "Supervisor 已连接", systemTone: "success" };
   }
 
-  const systemLabel = !status.activitywatch_ok
-    ? "活动数据异常"
-    : !status.screen_sensor_ok
-      ? "屏幕采集异常"
+  const systemLabel = !status.screen_sensor_ok
+    ? "屏幕采集异常"
+    : !status.activitywatch_ok
+      ? "活动数据异常"
       : "本地服务正常";
   const systemTone: SupervisionTone = systemLabel === "本地服务正常" ? "success" : "warning";
 
-  if (!status.activitywatch_ok) return { behaviorLabel: "活动数据异常", behaviorTone: "warning", systemLabel, systemTone };
-  if (!status.screen_sensor_ok) return { behaviorLabel: "屏幕采集异常", behaviorTone: "warning", systemLabel, systemTone };
   if (status.user_mode === "STANDBY") return { behaviorLabel: "等待开始", behaviorTone: "neutral", systemLabel, systemTone };
   if (status.user_mode === "BREAK") return { behaviorLabel: "休息中", behaviorTone: "neutral", systemLabel, systemTone };
   if (status.user_mode === "OFF") return { behaviorLabel: "今日已结束", behaviorTone: "neutral", systemLabel, systemTone };
+  if (status.user_mode === "STUDY" && !status.activitywatch_ok) return { behaviorLabel: "状态暂不可用", behaviorTone: "warning", systemLabel, systemTone };
   if (status.privacy_state === "SENSITIVE") return { behaviorLabel: "隐私保护中", behaviorTone: "neutral", systemLabel, systemTone };
   if (status.interaction_state === "UNKNOWN") return { behaviorLabel: "状态暂不可用", behaviorTone: "warning", systemLabel, systemTone };
   if (status.interaction_state === "IDLE_STATIC") return { behaviorLabel: "暂时离开", behaviorTone: "reminder", systemLabel, systemTone };

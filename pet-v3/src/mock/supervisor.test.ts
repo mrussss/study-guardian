@@ -5,6 +5,8 @@ import { MockSupervisorRuntime, parseMockScenario } from "./supervisor";
 test("mock scenarios parse only supported values", () => {
   assert.equal(parseMockScenario("?mock=slow"), "slow");
   assert.equal(parseMockScenario("?mock=offline"), "offline");
+  assert.equal(parseMockScenario("?mock=sensor-failure"), "sensor-failure");
+  assert.equal(parseMockScenario("?mock=activitywatch-failure"), "activitywatch-failure");
   assert.equal(parseMockScenario("?mock=unknown"), "normal");
 });
 test("normal mock mutates task, mode, target, and settings through production interfaces", async () => {
@@ -43,4 +45,13 @@ test("progress and reminder scenarios expose deterministic visual states", async
   assert.equal(complete.motivation?.checkin_completed, true);
   assert.equal(reminder.status?.task_relation, "DISTRACTED");
   assert.equal(reminder.motivation?.last_event?.type, "DISTRACTION");
+});
+
+test("service failure scenarios expose independent health flags", async () => {
+  const sensorFailure = await new MockSupervisorRuntime("sensor-failure").poll();
+  const activityWatchFailure = await new MockSupervisorRuntime("activitywatch-failure").poll();
+  assert.equal(sensorFailure.status?.screen_sensor_ok, false);
+  assert.equal(sensorFailure.status?.activitywatch_ok, true);
+  assert.equal(activityWatchFailure.status?.screen_sensor_ok, true);
+  assert.equal(activityWatchFailure.status?.activitywatch_ok, false);
 });

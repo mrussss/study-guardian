@@ -8,6 +8,7 @@ export const MOCK_SCENARIOS = [
   { id: "failure", label: "请求失败" }, { id: "offline", label: "Supervisor 离线" },
   { id: "rapid", label: "快速任务切换" }, { id: "progress-empty", label: "尚未开始" },
   { id: "progress-complete", label: "目标已完成" }, { id: "reminder", label: "提醒状态" },
+  { id: "sensor-failure", label: "屏幕采集异常" }, { id: "activitywatch-failure", label: "活动数据异常" },
 ] as const;
 export type MockScenarioId = typeof MOCK_SCENARIOS[number]["id"];
 
@@ -21,6 +22,8 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
   const today = new Date().toISOString().slice(0, 10);
   const progress = scenario === "progress-empty" ? 0 : scenario === "progress-complete" ? 1 : 0.43;
   const focusMinutes = Math.round(120 * progress);
+  const sensorFailure = scenario === "sensor-failure";
+  const activityWatchFailure = scenario === "activitywatch-failure";
   return {
     connected: scenario !== "offline",
     status: {
@@ -28,8 +31,8 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
       interaction_state: "ACTIVE", task_relation: scenario === "reminder" ? "DISTRACTED" : "FOCUSED",
       privacy_state: "NORMAL", confidence: scenario === "reminder" ? 0.58 : 0.94,
       task: scenario === "rapid" ? "Go" : "算法", study_seconds: focusMinutes * 60 + 17,
-      break_seconds: 0, active_seconds: focusMinutes * 60 + 17, activitywatch_ok: true,
-      screen_sensor_ok: true, last_activity_at: new Date().toISOString(),
+      break_seconds: 0, active_seconds: focusMinutes * 60 + 17, activitywatch_ok: !activityWatchFailure,
+      screen_sensor_ok: !sensorFailure, last_activity_at: new Date().toISOString(),
     },
     motivation: {
       today_credited_focus_minutes: focusMinutes, total_credited_focus_minutes: 1842 + focusMinutes,

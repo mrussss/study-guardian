@@ -34,9 +34,26 @@ test("supervision health fails soft without exposing raw service data", () => {
   assert.equal(deriveSupervisionState(false, undefined).behaviorLabel, "监督离线");
   assert.equal(deriveSupervisionState(true, undefined).behaviorLabel, "状态暂不可用");
   assert.equal(deriveSupervisionState(true, undefined).systemLabel, "Supervisor 已连接");
-  assert.equal(deriveSupervisionState(true, { ...base, activitywatch_ok: false }).behaviorLabel, "活动数据异常");
   assert.equal(deriveSupervisionState(true, { ...base, screen_sensor_ok: false }).systemLabel, "屏幕采集异常");
   assert.equal(deriveSupervisionState(true, { ...base, privacy_state: "SENSITIVE" }).behaviorLabel, "隐私保护中");
+});
+
+test("service health never overrides mode behavior", () => {
+  const sensorFailure = { ...base, screen_sensor_ok: false };
+  const activityWatchFailure = { ...base, activitywatch_ok: false };
+  assert.deepEqual(deriveSupervisionState(true, { ...sensorFailure, user_mode: "STANDBY" }), {
+    behaviorLabel: "等待开始", behaviorTone: "neutral", systemLabel: "屏幕采集异常", systemTone: "warning",
+  });
+  assert.equal(deriveSupervisionState(true, { ...sensorFailure, user_mode: "BREAK" }).behaviorLabel, "休息中");
+  assert.equal(deriveSupervisionState(true, { ...sensorFailure, user_mode: "OFF" }).behaviorLabel, "今日已结束");
+  assert.deepEqual(deriveSupervisionState(true, { ...sensorFailure, interaction_state: "IDLE_STATIC" }), {
+    behaviorLabel: "暂时离开", behaviorTone: "reminder", systemLabel: "屏幕采集异常", systemTone: "warning",
+  });
+  assert.deepEqual(deriveSupervisionState(true, activityWatchFailure), {
+    behaviorLabel: "状态暂不可用", behaviorTone: "warning", systemLabel: "活动数据异常", systemTone: "warning",
+  });
+  assert.equal(deriveSupervisionState(true, { ...activityWatchFailure, user_mode: "BREAK" }).behaviorLabel, "休息中");
+  assert.equal(deriveSupervisionState(true, { ...activityWatchFailure, user_mode: "OFF" }).behaviorLabel, "今日已结束");
 });
 
 test("last activity uses bounded friendly relative labels", () => {
