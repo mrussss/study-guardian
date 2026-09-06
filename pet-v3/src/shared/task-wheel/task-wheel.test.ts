@@ -16,5 +16,5 @@ test("task wheel uses equal angular slots with the plus action at 135 degrees", 
 test("task wheel sector paths are generated from the same symmetric geometry", () => {
   const paths = Array.from({ length: 8 }, (_, index) => getTaskWheelSectorPath(index));
   assert.equal(new Set(paths).size, 8);
-  assert.ok(paths.every(path => path.startsWith("M 50 50 L ") && path.endsWith(" Z")));
+  assert.ok(paths.every(path => path.startsWith("M ") && !path.startsWith("M 50 50") && path.includes("A 48 48") && path.includes("A 18 18") && path.endsWith(" Z")));
 });

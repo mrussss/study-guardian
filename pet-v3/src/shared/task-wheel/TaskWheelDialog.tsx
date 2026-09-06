@@ -37,9 +37,11 @@ function polarPoint(angle: number, radius: number): { x: number; y: number } {
 
 export function getTaskWheelSectorPath(slotIndex: number): string {
   const centerAngle = -90 + slotIndex * 45;
-  const start = polarPoint(centerAngle - 22.5, 48);
-  const end = polarPoint(centerAngle + 22.5, 48);
-  return `M 50 50 L ${start.x.toFixed(3)} ${start.y.toFixed(3)} A 48 48 0 0 1 ${end.x.toFixed(3)} ${end.y.toFixed(3)} Z`;
+  const outerStart = polarPoint(centerAngle - 22.5, 48);
+  const outerEnd = polarPoint(centerAngle + 22.5, 48);
+  const innerEnd = polarPoint(centerAngle + 22.5, 18);
+  const innerStart = polarPoint(centerAngle - 22.5, 18);
+  return `M ${outerStart.x.toFixed(3)} ${outerStart.y.toFixed(3)} A 48 48 0 0 1 ${outerEnd.x.toFixed(3)} ${outerEnd.y.toFixed(3)} L ${innerEnd.x.toFixed(3)} ${innerEnd.y.toFixed(3)} A 18 18 0 0 0 ${innerStart.x.toFixed(3)} ${innerStart.y.toFixed(3)} Z`;
 }
 
 export function TaskWheelDialog({ open, onClose, currentTask, presets, compact = false, disabled = false, onSelect, onTemporary, onSavePinned, onUpdatePreset, onDeletePreset, onOptimisticTaskChange, onTaskMutationStarted, onResult }: WheelProps): ReactElement | null {
@@ -54,6 +56,8 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
   const [notice, setNotice] = useState("");
   const pinned = useMemo(() => (presets?.pinned ?? []).slice(0, 7), [presets?.pinned]);
   const selectableSlots = useMemo(() => TASK_WHEEL_TASK_SLOTS.slice(0, pinned.length), [pinned.length]);
+  const currentIndex = pinned.findIndex(item => item.name === currentTask);
+  const currentSlot = currentIndex >= 0 ? selectableSlots[currentIndex] : selectableSlots[0] ?? 0;
   const highlightedTask = pinned[selectableSlots.indexOf(highlight)] ?? pinned[0];
 
   useEffect(() => {
@@ -66,9 +70,8 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
 
   useEffect(() => {
     if (!open) return;
-    const currentIndex = pinned.findIndex(item => item.name === currentTask);
-    setHighlight(currentIndex >= 0 ? selectableSlots[currentIndex] : selectableSlots[0] ?? 0);
-  }, [open, currentTask, pinned, selectableSlots]);
+    setHighlight(currentSlot);
+  }, [open, currentSlot]);
 
   useEffect(() => {
     if (!open) return;
@@ -113,6 +116,12 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
 
   const runSelect = (id: string, name: string): Promise<void> => runMutation(id, name, "select", () => onSelect(id));
   const beginAdd = (): void => { setNotice(""); setEditing("new"); setEditorName(""); };
+  const activateSlot = (slot: number): void => {
+    if (slot === TASK_WHEEL_ADD_SLOT) { beginAdd(); return; }
+    const itemIndex = TASK_WHEEL_TASK_SLOTS.indexOf(slot);
+    const item = itemIndex >= 0 ? pinned[itemIndex] : undefined;
+    if (item) { setHighlight(slot); void runSelect(item.id, item.name); }
+  };
   const beginRename = (item: { id: string; name: string }): void => { setNotice(""); setEditing(item.id); setEditorName(item.name); };
   const saveRename = async (item: { id: string; name: string; pinned: boolean; sort_order: number }): Promise<void> => {
     if (!onUpdatePreset || !editorName.trim()) return;
@@ -131,10 +140,10 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
     <div className={`task-wheel-dialog ${compact ? "is-compact" : ""} ${manage ? "is-managing" : ""}`} role="dialog" aria-modal="true" aria-labelledby="task-wheel-title" ref={dialogRef}>
       <header className="task-wheel-header"><div><span className="task-wheel-eyebrow">快速切换</span><h2 id="task-wheel-title">选择当前专注任务</h2></div><button className="task-wheel-icon-button" type="button" data-wheel-close aria-label="关闭任务轮盘" onClick={onClose}><X size={17} /></button></header>
       <div className="task-wheel-body">
-        <div className="task-wheel-stage" aria-label="常用任务轮盘">
+        <div className="task-wheel-stage" aria-label="常用任务轮盘" onPointerLeave={() => setHighlight(currentSlot)}>
           <svg className="task-wheel-svg" viewBox="0 0 100 100" aria-hidden="true">
             <circle className="task-wheel-disc" cx="50" cy="50" r="48" />
-            {Array.from({ length: 8 }, (_, slot) => <path className={`task-wheel-sector ${highlight === slot ? "is-highlighted" : ""} ${pinned[selectableSlots.indexOf(slot)]?.name === currentTask ? "is-current" : ""}`} d={getTaskWheelSectorPath(slot)} key={slot} />)}
+            {Array.from({ length: 8 }, (_, slot) => <path className={`task-wheel-sector ${highlight === slot ? "is-highlighted" : ""} ${pinned[selectableSlots.indexOf(slot)]?.name === currentTask ? "is-current" : ""}`} d={getTaskWheelSectorPath(slot)} onPointerEnter={() => setHighlight(slot)} onClick={() => activateSlot(slot)} key={slot} />)}
             <circle className="task-wheel-center-ring" cx="50" cy="50" r="16" />
           </svg>
           {Array.from({ length: 8 }, (_, slot) => {
@@ -143,7 +152,7 @@ export function TaskWheelDialog({ open, onClose, currentTask, presets, compact =
             const isAdd = slot === TASK_WHEEL_ADD_SLOT;
             const position = getTaskWheelSlotPosition(slot, compact);
             const slotStyle = { "--slot-x": `${position.x}%`, "--slot-y": `${position.y}%` } as CSSProperties;
-            return <div className={`task-wheel-slot ${highlight === slot ? "is-highlighted" : ""}`} style={slotStyle} key={slot}>
+            return <div className={`task-wheel-slot ${highlight === slot ? "is-highlighted" : ""}`} style={slotStyle} onPointerEnter={() => setHighlight(slot)} key={slot}>
               {isAdd ? <button className="task-wheel-add" type="button" onClick={beginAdd} aria-label="添加常用任务"><Plus size={18} /></button> : item ? <button className={`task-wheel-item ${item.name === currentTask ? "is-current" : ""} ${highlight === slot ? "is-highlighted" : ""}`} type="button" aria-pressed={item.name === currentTask} aria-busy={pendingId === item.id} onClick={() => { setHighlight(slot); void runSelect(item.id, item.name); }}><span>{item.name}</span></button> : <span className="task-wheel-empty" aria-hidden="true" />}
             </div>;
           })}
