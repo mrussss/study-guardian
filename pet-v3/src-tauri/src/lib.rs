@@ -930,7 +930,26 @@ fn sanitize_ai_settings(value: &Value) -> Result<Value, NativeErrorKind> {
         }))
     };
     let min_confidence = object.get("min_confidence").and_then(Value::as_f64).filter(|value| value.is_finite() && (0.0..=1.0).contains(value)).ok_or(NativeErrorKind::InvalidResponse)?;
-    Ok(json!({ "enabled": bool_field(object, "enabled")?, "min_confidence": min_confidence, "text": endpoint("text")?, "vision": endpoint("vision")? }))
+    Ok(json!({ "enabled": bool_field(object, "enabled")?, "min_confidence": min_confidence, "proxy": sanitize_ai_proxy(object.get("proxy"))?, "text": endpoint("text")?, "vision": endpoint("vision")? }))
+}
+
+fn valid_manual_proxy_url(value: &str) -> bool {
+    let value = value.trim();
+    let Some(authority) = value.strip_prefix("http://").or_else(|| value.strip_prefix("https://")) else { return false; };
+    !authority.is_empty() && !authority.contains(['@', '/', '?', '#']) && authority.chars().all(|character| !character.is_control() && !character.is_whitespace())
+}
+
+fn sanitize_ai_proxy(value: Option<&Value>) -> Result<Value, NativeErrorKind> {
+    let Some(row) = value else { return Ok(json!({ "mode": "environment", "url": "" })); };
+    let object = row.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let mode = enum_field(object, "mode", &["environment", "direct", "manual"])?;
+    let url = text_field(object, "url", 2048)?;
+    if mode == "manual" {
+        if !valid_manual_proxy_url(&url) { return Err(NativeErrorKind::InvalidResponse); }
+    } else if !url.is_empty() {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    Ok(json!({ "mode": mode, "url": if mode == "manual" { url } else { String::new() } }))
 }
 
 fn sanitize_reminder_settings(value: &Value) -> Result<Value, NativeErrorKind> {
@@ -1345,11 +1364,14 @@ struct AIEndpointInput {
     api_key_configured: bool, timeout_seconds: i64, json_mode: String,
 }
 
+#[derive(Default, Deserialize, Serialize)]
+struct AIProxyInput { mode: String, url: String }
+
 #[derive(Deserialize, Serialize)]
-struct AISettingsInput { enabled: bool, min_confidence: f64, text: AIEndpointInput, vision: AIEndpointInput }
+struct AISettingsInput { enabled: bool, min_confidence: f64, #[serde(default)] proxy: AIProxyInput, text: AIEndpointInput, vision: AIEndpointInput }
 
 fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value, NativeErrorKind> {
-    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("POST", "/v1/settings/ai/test") | ("POST", "/v1/review/generate"));
+    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("POST", "/v1/settings/ai/test") | ("POST", "/v1/settings/ai/proxy/test") | ("POST", "/v1/review/generate"));
     if !allowed { return Err(NativeErrorKind::Rejected); }
     let (host, port, token) = supervisor_credentials()?;
     if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
@@ -1400,9 +1422,28 @@ async fn supervisor_test_ai_connection(target: String) -> Value {
         let body = serde_json::to_vec(&json!({ "target": target })).unwrap_or_default();
         match ai_supervisor_request("POST", "/v1/settings/ai/test", &body).and_then(|value| {
             let row = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
-            Ok(json!({ "ok": bool_field(row, "ok")?, "provider": text_field(row, "provider", 64)?, "model": text_field(row, "model", 128)?, "latency_ms": non_negative_i64_field(row, "latency_ms")?, "error_kind": optional_text_field(row, "error_kind", 64)? }))
+            let error_kind = optional_text_field(row, "error_kind", 64)?;
+            if let Some(kind) = error_kind.as_deref() { if !valid_ai_error_kind(kind) { return Err(NativeErrorKind::InvalidResponse); } }
+            Ok(json!({ "ok": bool_field(row, "ok")?, "provider": text_field(row, "provider", 64)?, "model": text_field(row, "model", 128)?, "latency_ms": non_negative_i64_field(row, "latency_ms")?, "error_kind": error_kind }))
         }) { Ok(value) => value, Err(kind) => json!({ "ok": false, "provider": "", "model": "", "latency_ms": 0, "error_kind": kind.as_str() }) }
     }).await.unwrap_or_else(|_| json!({ "ok": false, "provider": "", "model": "", "latency_ms": 0, "error_kind": "unavailable" }))
+}
+
+fn valid_ai_error_kind(value: &str) -> bool {
+    matches!(value, "authentication_failed" | "model_not_found" | "model_unavailable" | "model_rate_limited" | "account_rate_limited" | "timeout" | "network_unavailable" | "proxy_unreachable" | "tls_failed" | "invalid_response" | "invalid_output" | "provider_unavailable" | "unavailable" | "rate_limited")
+}
+
+#[tauri::command]
+async fn supervisor_test_ai_proxy() -> Value {
+    tauri::async_runtime::spawn_blocking(move || {
+        match ai_supervisor_request("POST", "/v1/settings/ai/proxy/test", b"{}").and_then(|value| {
+            let row = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+            let mode = enum_field(row, "mode", &["environment", "direct", "manual"])?;
+            let error_kind = optional_text_field(row, "error_kind", 64)?;
+            if let Some(kind) = error_kind.as_deref() { if !valid_ai_error_kind(kind) { return Err(NativeErrorKind::InvalidResponse); } }
+            Ok(json!({ "ok": bool_field(row, "ok")?, "mode": mode, "latency_ms": non_negative_i64_field(row, "latency_ms")?, "error_kind": error_kind }))
+        }) { Ok(value) => value, Err(kind) => json!({ "ok": false, "mode": "environment", "latency_ms": 0, "error_kind": kind.as_str() }) }
+    }).await.unwrap_or_else(|_| json!({ "ok": false, "mode": "environment", "latency_ms": 0, "error_kind": "unavailable" }))
 }
 
 #[tauri::command]
@@ -1716,6 +1757,7 @@ pub fn run() {
             supervisor_put_ai_secret,
             supervisor_delete_ai_secret,
             supervisor_test_ai_connection,
+            supervisor_test_ai_proxy,
             supervisor_generate_review,
             supervisor_set_daily_target,
             open_quick_panel,
@@ -1888,6 +1930,16 @@ mod tests {
         })).expect("valid AI settings");
         assert_eq!(sanitized["text"]["fallback_models"], json!(["paid-model"]));
         assert_eq!(sanitized["vision"]["fallback_models"], json!([]));
+        assert_eq!(sanitized["proxy"], json!({"mode": "environment", "url": ""}));
+    }
+
+    #[test]
+    fn ai_proxy_sanitizer_accepts_modes_and_rejects_secret_bearing_urls() {
+        assert_eq!(super::sanitize_ai_proxy(Some(&json!({"mode": "direct", "url": ""}))).unwrap(), json!({"mode": "direct", "url": ""}));
+        assert_eq!(super::sanitize_ai_proxy(Some(&json!({"mode": "manual", "url": "http://127.0.0.1:7890"}))).unwrap(), json!({"mode": "manual", "url": "http://127.0.0.1:7890"}));
+        for url in ["http://user:secret@127.0.0.1:7890", "http://127.0.0.1:7890/path", "socks5://127.0.0.1:7890"] {
+            assert!(super::sanitize_ai_proxy(Some(&json!({"mode": "manual", "url": url}))).is_err(), "accepted unsafe URL {url}");
+        }
     }
 
     #[test]

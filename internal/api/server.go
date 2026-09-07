@@ -82,6 +82,7 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/settings/ai", s.withAuth(s.handleAISettings))
 	mux.HandleFunc("/v1/settings/ai/secret", s.withAuth(s.handleAISecret))
 	mux.HandleFunc("/v1/settings/ai/test", s.withAuth(s.handleAITest))
+	mux.HandleFunc("/v1/settings/ai/proxy/test", s.withAuth(s.handleAIProxyTest))
 	mux.HandleFunc("/v1/feedback", s.withAuth(s.handleFeedback))
 	mux.HandleFunc("/v1/motivation/status", s.withAuth(s.handleMotivationStatus))
 	mux.HandleFunc("/v1/motivation/settings", s.withAuth(s.handleMotivationSettings))

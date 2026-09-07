@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"study-guardian/internal/aisettings"
 )
@@ -14,6 +15,7 @@ type AISettingsManager interface {
 	PutSecret(context.Context, string, string) (aisettings.SettingsDTO, error)
 	DeleteSecret(context.Context, string) (aisettings.SettingsDTO, error)
 	Test(context.Context, string) aisettings.TestResult
+	TestProxy(context.Context) aisettings.ProxyTestResult
 }
 
 func (s *Server) SetAISettings(manager AISettingsManager) { s.aiSettings = manager }
@@ -96,6 +98,25 @@ func (s *Server) handleAITest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), aiOperationTimeout)
 	defer cancel()
 	result := s.aiSettings.Test(ctx, input.Target)
+	status := http.StatusOK
+	if !result.OK {
+		status = http.StatusBadGateway
+	}
+	writeTaskPresetJSON(w, status, result)
+}
+
+func (s *Server) handleAIProxyTest(w http.ResponseWriter, r *http.Request) {
+	if s.aiSettings == nil {
+		writeTaskPresetError(w, http.StatusServiceUnavailable, "AI settings unavailable")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeTaskPresetError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	result := s.aiSettings.TestProxy(ctx)
 	status := http.StatusOK
 	if !result.OK {
 		status = http.StatusBadGateway

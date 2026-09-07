@@ -126,6 +126,16 @@ test("dashboard snapshot accepts canonical data and drops invalid optional secti
   assert.deepEqual(normalizeNativeDashboardSnapshot({ connected: true, status, missions: [{ ...snapshot.missions?.[0], status: "INVALID" }] }).missions, undefined);
 });
 
+test("legacy dashboard AI settings without proxy normalize to environment mode", () => {
+  const endpoint = { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" } as const;
+  const snapshot = normalizeNativeDashboardSnapshot({
+    connected: true,
+    status: { user_mode: "STANDBY", interaction_state: "UNKNOWN", task_relation: "UNKNOWN", privacy_state: "NORMAL", confidence: 0, task: "", study_seconds: 0, break_seconds: 0, active_seconds: 0, activitywatch_ok: true, screen_sensor_ok: true },
+    ai_settings: { enabled: false, min_confidence: 0.75, text: endpoint, vision: { ...endpoint, timeout_seconds: 8 } },
+  });
+  assert.deepEqual(snapshot.ai_settings?.proxy, { mode: "environment", url: "" });
+});
+
 test("poll loop prevents overlap and stops cleanly", async () => {
   let resolvePoll: (() => void) | undefined;
   let calls = 0;

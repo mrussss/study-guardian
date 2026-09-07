@@ -128,19 +128,42 @@ export interface NativeAIEndpointSettings {
   json_mode: "auto" | "json_object" | "off";
 }
 
+export type AIProxyMode = "environment" | "direct" | "manual";
+
+export interface NativeAIProxySettings {
+  mode: AIProxyMode;
+  url: string;
+}
+
 export interface NativeAISettings {
   enabled: boolean;
   min_confidence: number;
+  proxy: NativeAIProxySettings;
   text: NativeAIEndpointSettings;
   vision: NativeAIEndpointSettings;
 }
+
+export type AIConnectionErrorKind = "authentication_failed" | "model_not_found" | "model_unavailable" | "model_rate_limited" | "account_rate_limited" | "timeout" | "network_unavailable" | "proxy_unreachable" | "tls_failed" | "invalid_response" | "invalid_output" | "provider_unavailable" | "unavailable" | "rate_limited";
 
 export interface NativeAIConnectionResult {
   ok: boolean;
   provider: string;
   model: string;
   latency_ms: number;
-  error_kind?: "authentication_failed" | "rate_limited" | "timeout" | "network_unavailable" | "model_not_found" | "invalid_response" | "provider_unavailable" | "unavailable";
+  error_kind?: AIConnectionErrorKind;
+}
+
+export interface NativeAIProxyTestResult {
+  ok: boolean;
+  mode: AIProxyMode;
+  latency_ms: number;
+  error_kind?: AIConnectionErrorKind;
+}
+
+const AI_ERROR_KINDS: AIConnectionErrorKind[] = ["authentication_failed", "model_not_found", "model_unavailable", "model_rate_limited", "account_rate_limited", "timeout", "network_unavailable", "proxy_unreachable", "tls_failed", "invalid_response", "invalid_output", "provider_unavailable", "unavailable", "rate_limited"];
+
+function aiErrorKind(value: unknown): AIConnectionErrorKind | undefined {
+  return typeof value === "string" && AI_ERROR_KINDS.includes(value as AIConnectionErrorKind) ? value as AIConnectionErrorKind : undefined;
 }
 
 export interface NativeHistoryDay {
@@ -272,10 +295,17 @@ function validMotivation(value: unknown): value is NativeMotivationStatus {
       boundedText(lastEvent.type, 64) && boundedText(lastEvent.message, 512) && boundedText(lastEvent.created_at, 128)));
 }
 
-function validAISettings(value: unknown): value is NativeAISettings {
-  if (!record(value) || typeof value.enabled !== "boolean" || !boundedRatio(value.min_confidence)) return false;
+function validAIProxy(value: unknown): value is NativeAIProxySettings {
+  return record(value) && ["environment", "direct", "manual"].includes(value.mode as string) && boundedText(value.url, 2048) && (value.mode === "manual" || value.url === "");
+}
+
+function normalizedAISettings(value: unknown): NativeAISettings | undefined {
+  if (!record(value) || typeof value.enabled !== "boolean" || !boundedRatio(value.min_confidence)) return undefined;
   const validEndpoint = (endpoint: unknown): endpoint is NativeAIEndpointSettings => record(endpoint) && typeof endpoint.enabled === "boolean" && boundedText(endpoint.provider, 64) && boundedText(endpoint.model, 128) && Array.isArray(endpoint.fallback_models) && endpoint.fallback_models.length <= 3 && endpoint.fallback_models.every(model => boundedText(model, 128) && model.trim() !== "") && boundedText(endpoint.base_url, 1024) && typeof endpoint.api_key_configured === "boolean" && Number.isSafeInteger(endpoint.timeout_seconds) && Number(endpoint.timeout_seconds) >= 1 && Number(endpoint.timeout_seconds) <= 120 && ["auto", "json_object", "off"].includes(endpoint.json_mode as string);
-  return validEndpoint(value.text) && validEndpoint(value.vision);
+  if (!validEndpoint(value.text) || !validEndpoint(value.vision)) return undefined;
+  const proxy = value.proxy === undefined ? { mode: "environment" as const, url: "" } : value.proxy;
+  if (!validAIProxy(proxy)) return undefined;
+  return { enabled: value.enabled, min_confidence: value.min_confidence, proxy, text: value.text, vision: value.vision };
 }
 
 function validReminderSettings(value: unknown): value is NativeReminderSettings {
@@ -375,13 +405,14 @@ export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashbo
   if (!record(raw) || raw.connected !== true || !validStatus(raw.status)) {
     return { connected: false, last_error_kind: record(raw) ? errorKind(raw.last_error_kind) ?? "invalid_response" : "invalid_response" };
   }
+  const aiSettings = normalizedAISettings(raw.ai_settings);
   return {
     connected: true,
     status: raw.status,
     ...(validMotivation(raw.motivation) ? { motivation: raw.motivation } : {}),
     ...(validTaskPresets(raw.task_presets) ? { task_presets: raw.task_presets } : {}),
     ...(validReminderSettings(raw.reminder_settings) ? { reminder_settings: raw.reminder_settings } : {}),
-    ...(validAISettings(raw.ai_settings) ? { ai_settings: raw.ai_settings } : {}),
+    ...(aiSettings ? { ai_settings: aiSettings } : {}),
     ...(validHistory(raw.history) ? { history: raw.history } : {}),
     ...(validAchievements(raw.achievements) ? { achievements: raw.achievements } : {}),
     ...(validMissions(raw.missions) ? { missions: raw.missions } : {}),
@@ -448,6 +479,7 @@ export interface SupervisorControlAdapter {
   putAISecret(target: "text" | "vision", apiKey: string): Promise<ControlResult>;
   deleteAISecret(target: "text" | "vision"): Promise<ControlResult>;
   testAIConnection(target: "text" | "vision"): Promise<NativeAIConnectionResult>;
+  testAIProxy(): Promise<NativeAIProxyTestResult>;
   generateReview(): Promise<ControlResult>;
   setDailyTarget(minutes: number): Promise<ControlResult>;
   createMission(title: string, description: string, dueDate?: string, linkedTaskName?: string, linkedTaskPresetId?: string): Promise<ControlResult>;
@@ -540,9 +572,19 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
   async testAIConnection(target: "text" | "vision"): Promise<NativeAIConnectionResult> {
     try {
       const raw = await invoke<unknown>("supervisor_test_ai_connection", { target });
-      if (!record(raw) || typeof raw.ok !== "boolean" || !boundedText(raw.provider, 64) || !boundedText(raw.model, 128) || !nonNegativeInteger(raw.latency_ms) || (raw.error_kind !== undefined && raw.error_kind !== null && !boundedText(raw.error_kind, 64))) return { ok: false, provider: "", model: "", latency_ms: 0, error_kind: "invalid_response" };
-      return { ok: raw.ok, provider: raw.provider, model: raw.model, latency_ms: raw.latency_ms, ...(typeof raw.error_kind === "string" ? { error_kind: raw.error_kind as NativeAIConnectionResult["error_kind"] } : {}) };
+      const errorKind = record(raw) ? aiErrorKind(raw.error_kind) : undefined;
+      if (!record(raw) || typeof raw.ok !== "boolean" || !boundedText(raw.provider, 64) || !boundedText(raw.model, 128) || !nonNegativeInteger(raw.latency_ms) || (raw.error_kind !== undefined && raw.error_kind !== null && !errorKind)) return { ok: false, provider: "", model: "", latency_ms: 0, error_kind: "invalid_response" };
+      return { ok: raw.ok, provider: raw.provider, model: raw.model, latency_ms: raw.latency_ms, ...(errorKind ? { error_kind: errorKind } : {}) };
     } catch { return { ok: false, provider: "", model: "", latency_ms: 0, error_kind: "unavailable" }; }
+  }
+
+  async testAIProxy(): Promise<NativeAIProxyTestResult> {
+    try {
+      const raw = await invoke<unknown>("supervisor_test_ai_proxy");
+      const errorKind = record(raw) ? aiErrorKind(raw.error_kind) : undefined;
+      if (!record(raw) || typeof raw.ok !== "boolean" || !["environment", "direct", "manual"].includes(raw.mode as string) || !nonNegativeInteger(raw.latency_ms) || (raw.error_kind !== undefined && raw.error_kind !== null && !errorKind)) return { ok: false, mode: "environment", latency_ms: 0, error_kind: "invalid_response" };
+      return { ok: raw.ok, mode: raw.mode as AIProxyMode, latency_ms: raw.latency_ms, ...(errorKind ? { error_kind: errorKind } : {}) };
+    } catch { return { ok: false, mode: "environment", latency_ms: 0, error_kind: "unavailable" }; }
   }
 
   generateReview(): Promise<ControlResult> {

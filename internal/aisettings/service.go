@@ -3,9 +3,9 @@ package aisettings
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,9 +33,15 @@ type EndpointDTO struct {
 	JSONMode         string   `json:"json_mode"`
 }
 
+type ProxyDTO struct {
+	Mode string `json:"mode"`
+	URL  string `json:"url"`
+}
+
 type SettingsDTO struct {
 	Enabled       bool        `json:"enabled"`
 	MinConfidence float64     `json:"min_confidence"`
+	Proxy         ProxyDTO    `json:"proxy"`
 	Text          EndpointDTO `json:"text"`
 	Vision        EndpointDTO `json:"vision"`
 }
@@ -44,6 +50,13 @@ type TestResult struct {
 	OK        bool   `json:"ok"`
 	Provider  string `json:"provider"`
 	Model     string `json:"model"`
+	LatencyMS int64  `json:"latency_ms"`
+	ErrorKind string `json:"error_kind,omitempty"`
+}
+
+type ProxyTestResult struct {
+	OK        bool   `json:"ok"`
+	Mode      string `json:"mode"`
 	LatencyMS int64  `json:"latency_ms"`
 	ErrorKind string `json:"error_kind,omitempty"`
 }
@@ -89,7 +102,11 @@ func sanitized(aiConfig config.AIConfig) SettingsDTO {
 	toDTO := func(endpoint config.AIEndpointConfig) EndpointDTO {
 		return EndpointDTO{Enabled: endpoint.Enabled, Provider: endpoint.Provider, Model: endpoint.Model, FallbackModels: append([]string{}, endpoint.FallbackModels...), BaseURL: endpoint.BaseURL, APIKeyConfigured: configured(endpoint), TimeoutSeconds: endpoint.TimeoutSeconds, JSONMode: endpoint.JSONMode}
 	}
-	return SettingsDTO{Enabled: aiConfig.Enabled, MinConfidence: aiConfig.MinConfidence, Text: toDTO(aiConfig.Text), Vision: toDTO(aiConfig.Vision)}
+	proxy := ProxyDTO{Mode: aiConfig.Proxy.Mode}
+	if aiConfig.Proxy.Mode == config.AIProxyManual {
+		proxy.URL = aiConfig.Proxy.URL
+	}
+	return SettingsDTO{Enabled: aiConfig.Enabled, MinConfidence: aiConfig.MinConfidence, Proxy: proxy, Text: toDTO(aiConfig.Text), Vision: toDTO(aiConfig.Vision)}
 }
 
 func (s *Service) Save(ctx context.Context, input SettingsDTO) (SettingsDTO, error) {
@@ -101,6 +118,14 @@ func (s *Service) Save(ctx context.Context, input SettingsDTO) (SettingsDTO, err
 	next := s.cfg.AI
 	next.Enabled = input.Enabled
 	next.MinConfidence = input.MinConfidence
+	proxy := config.AIProxyConfig{Mode: strings.ToLower(strings.TrimSpace(input.Proxy.Mode)), URL: strings.TrimSpace(input.Proxy.URL)}
+	if proxy.Mode == "" {
+		proxy.Mode = config.AIProxyEnvironment
+	}
+	if err := config.ValidateAIProxyConfig(proxy); err != nil {
+		return SettingsDTO{}, err
+	}
+	next.Proxy = proxy
 	applyEndpoint := func(current config.AIEndpointConfig, dto EndpointDTO) config.AIEndpointConfig {
 		current.Enabled, current.Provider, current.Model, current.BaseURL = dto.Enabled, strings.ToLower(strings.TrimSpace(dto.Provider)), strings.TrimSpace(dto.Model), strings.TrimSpace(dto.BaseURL)
 		current.FallbackModels = normalizeFallbackModels(dto.FallbackModels)
@@ -120,6 +145,13 @@ func (s *Service) Save(ctx context.Context, input SettingsDTO) (SettingsDTO, err
 func validateDTO(input SettingsDTO) error {
 	if input.MinConfidence < 0 || input.MinConfidence > 1 {
 		return fmt.Errorf("min_confidence must be between 0 and 1")
+	}
+	proxy := config.AIProxyConfig{Mode: strings.ToLower(strings.TrimSpace(input.Proxy.Mode)), URL: strings.TrimSpace(input.Proxy.URL)}
+	if proxy.Mode == "" {
+		proxy.Mode = config.AIProxyEnvironment
+	}
+	if err := config.ValidateAIProxyConfig(proxy); err != nil {
+		return err
 	}
 	for label, endpoint := range map[string]EndpointDTO{"text": input.Text, "vision": input.Vision} {
 		profile, ok := providers.ProfileFor(endpoint.Provider)
@@ -321,6 +353,81 @@ func (s *Service) Test(ctx context.Context, target string) TestResult {
 	return result
 }
 
+// TestProxy performs a bounded GET /models through the saved proxy policy.
+// Any syntactically valid HTTP response proves that the route is reachable;
+// the response body is deliberately discarded and never crosses the API.
+func (s *Service) TestProxy(ctx context.Context) ProxyTestResult {
+	s.mu.RLock()
+	proxy := s.cfg.AI.Proxy
+	text := s.cfg.AI.Text
+	legacyKey := s.cfg.AI.APIKey
+	s.mu.RUnlock()
+	if proxy.Mode == "" {
+		proxy.Mode = config.AIProxyEnvironment
+	}
+	result := ProxyTestResult{Mode: proxy.Mode}
+	profile, ok := providers.ProfileFor(text.Provider)
+	if !ok || text.Provider == "none" {
+		result.ErrorKind = "provider_unavailable"
+		return result
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(text.BaseURL), "/")
+	if endpoint == "" {
+		endpoint = strings.TrimRight(profile.DefaultBaseURL, "/")
+	}
+	if endpoint == "" {
+		result.ErrorKind = "provider_unavailable"
+		return result
+	}
+	client, err := ai.NewHTTPClient(10*time.Second, proxy)
+	if err != nil {
+		result.ErrorKind = classifyTestError(err)
+		return result
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/models", nil)
+	if err != nil {
+		result.ErrorKind = classifyTestError(err)
+		return result
+	}
+	apiKey := resolveAIKey(text, profile.DefaultAPIKeyEnv)
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(legacyKey)
+	}
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	started := time.Now()
+	response, err := client.Do(request)
+	result.LatencyMS = time.Since(started).Milliseconds()
+	if err != nil {
+		result.ErrorKind = classifyTestError(err)
+		return result
+	}
+	defer response.Body.Close()
+	_, _ = io.CopyN(io.Discard, response.Body, 64*1024)
+	result.OK = true
+	return result
+}
+
+func resolveAIKey(endpoint config.AIEndpointConfig, fallbackEnv string) string {
+	if endpoint.APIKeyEnv != "" {
+		if value := strings.TrimSpace(os.Getenv(endpoint.APIKeyEnv)); value != "" {
+			return value
+		}
+	}
+	if fallbackEnv != "" {
+		if value := strings.TrimSpace(os.Getenv(fallbackEnv)); value != "" {
+			return value
+		}
+	}
+	if endpoint.APIKeyFile != "" {
+		if data, err := os.ReadFile(endpoint.APIKeyFile); err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+	return ""
+}
+
 func fixedTestJPEG() string {
 	// A real 1x1 JPEG keeps the connection probe aligned with the production
 	// image data URL emitted by the screen sensor.
@@ -328,33 +435,30 @@ func fixedTestJPEG() string {
 }
 
 func classifyTestError(err error) string {
-	if errors.Is(err, context.DeadlineExceeded) {
+	switch ai.ClassifyError(err).Kind {
+	case ai.FailureAuthentication:
+		return "authentication_failed"
+	case ai.FailureModelNotFound:
+		return "model_not_found"
+	case ai.FailureModelUnavailable:
+		return "model_unavailable"
+	case ai.FailureModelRateLimited:
+		return "model_rate_limited"
+	case ai.FailureAccountRateLimited:
+		return "account_rate_limited"
+	case ai.FailureProviderUnavailable:
+		return "provider_unavailable"
+	case ai.FailureProxyUnreachable:
+		return "proxy_unreachable"
+	case ai.FailureTLSFailed:
+		return "tls_failed"
+	case ai.FailureTimeout, ai.FailureProviderTimeout, ai.FailureModelTimeout:
 		return "timeout"
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timeout"
-	}
-	var httpErr ai.HTTPError
-	if errors.As(err, &httpErr) {
-		switch {
-		case httpErr.Status == 401 || httpErr.Status == 403:
-			return "authentication_failed"
-		case httpErr.Status == 408:
-			return "timeout"
-		case httpErr.Status == 429:
-			return "rate_limited"
-		case httpErr.Status == 404:
-			return "model_not_found"
-		case httpErr.Status >= 500:
-			return "provider_unavailable"
-		default:
-			return "invalid_response"
-		}
-	}
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "decode") || strings.Contains(message, "invalid") || strings.Contains(message, "empty response") {
+	case ai.FailureInvalidOutput:
 		return "invalid_response"
+	case ai.FailureNetworkUnreachable:
+		return "network_unavailable"
+	default:
+		return "unavailable"
 	}
-	return "network_unavailable"
 }

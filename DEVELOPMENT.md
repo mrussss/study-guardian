@@ -66,3 +66,9 @@ bash scripts/test-all.sh
 ```
 
 完整测试覆盖 Go、Python、集成测试、部署安全、PowerShell 解析、Pet 独立部署和缓存删除边界。GitHub CI 配置见 `.github/workflows/ci.yml`；Windows Tauri 构建在 Pet Pull Request 或手动工作流中运行。
+
+## 5. AI 网络与模型 fallback
+
+AI 的 `ai.proxy` 是文字、视觉和 Daily Review 共享的 transport 策略。默认 `environment` 只读取 Supervisor 进程的 `HTTP_PROXY`/`HTTPS_PROXY`；`direct` 强制直连；`manual` 仅接受不带凭据、路径、查询或片段的 `http(s)` 主机地址。Control Center 保存草稿后才能执行“测试网络”，该测试请求文字端点的 `/models`，合法 HTTP 响应即视为网络可达，不返回响应正文。
+
+模型 fallback 只接受明确的模型级失败：模型不存在、无可用通道、明确模型限流或无效输出。裸 429、账号/配额、鉴权、DNS/TCP、代理、TLS、取消和未归属超时都停止当前 provider 的模型链。没有真实凭据时，不能把模型连接测试或视觉 JPEG E2E 标记为通过。

@@ -1,5 +1,5 @@
 import type {
-  AutostartState, ControlResult, NativeAIConnectionResult, NativeAISettings, NativeMission, NativeTaskPreset,
+  AutostartState, ControlResult, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeMission, NativeTaskPreset,
   SupervisorControlAdapter, SupervisorDashboardAdapter, SupervisorDashboardSnapshot, SystemIntegrationAdapter,
 } from "../transport/supervisor";
 
@@ -54,6 +54,7 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
     ] },
     ai_settings: {
       enabled: false, min_confidence: 0.75,
+      proxy: { mode: "environment", url: "" },
       text: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" },
       vision: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" },
     },
@@ -166,6 +167,12 @@ export class MockSupervisorRuntime implements SupervisorDashboardAdapter, Superv
     const failure = await this.beforeMutation(); const endpoint = this.snapshot.ai_settings?.[target];
     if (failure || !endpoint) return { ok: false, provider: endpoint?.provider ?? "", model: endpoint?.model ?? "", latency_ms: 0, error_kind: failure?.error_kind === "timeout" ? "timeout" : "provider_unavailable" };
     return { ok: true, provider: endpoint.provider || "mock", model: endpoint.model || "mock-model", latency_ms: this.scenario === "slow" ? 900 : 42 };
+  }
+  async testAIProxy(): Promise<NativeAIProxyTestResult> {
+    const failure = await this.beforeMutation();
+    const mode = this.snapshot.ai_settings?.proxy?.mode ?? "environment";
+    if (failure) return { ok: false, mode, latency_ms: 0, error_kind: failure.error_kind === "timeout" ? "timeout" : "proxy_unreachable" };
+    return { ok: true, mode, latency_ms: this.scenario === "slow" ? 900 : 42 };
   }
   generateReview(): Promise<ControlResult> { return this.mutate(() => { if (this.snapshot.review) { this.snapshot.review.status = "READY"; this.snapshot.review.revision += 1; } return { ok: true }; }); }
   setDailyTarget(minutes: number): Promise<ControlResult> { return this.mutate(() => {

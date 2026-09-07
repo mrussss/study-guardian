@@ -94,7 +94,7 @@ func TestAIConnectionFailureCategoryIsBounded(t *testing.T) {
 
 func TestAIConnectionReportsRateLimitInsteadOfInvalidResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":{"message":"model rate limited"}}`, http.StatusTooManyRequests)
+		http.Error(w, `{"error":{"code":"account_rate_limited","message":"model rate limited"}}`, http.StatusTooManyRequests)
 	}))
 	defer server.Close()
 	store, _ := storage.OpenSQLite(":memory:")
@@ -105,7 +105,7 @@ func TestAIConnectionReportsRateLimitInsteadOfInvalidResponse(t *testing.T) {
 	_, _ = service.Save(context.Background(), input)
 	_, _ = service.PutSecret(context.Background(), "text", "configured")
 	result := service.Test(context.Background(), "text")
-	if result.OK || result.ErrorKind != "rate_limited" {
+	if result.OK || result.ErrorKind != "account_rate_limited" {
 		t.Fatalf("result=%+v", result)
 	}
 }
@@ -137,5 +137,35 @@ func TestAISettingsAlwaysExposeFallbackModelsAsArrays(t *testing.T) {
 	}
 	if strings.Contains(string(raw), `"fallback_models":null`) {
 		t.Fatalf("fallback model lists must be arrays: %s", raw)
+	}
+}
+
+func TestProxyTestUsesSavedProxyAndDoesNotReturnResponseBody(t *testing.T) {
+	var path string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.String()
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"secret":"must not cross API"}`))
+	}))
+	defer proxy.Close()
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	service := New(config.DefaultConfig(), store, filepath.Join(t.TempDir(), "secrets"), nil, nil)
+	input := service.Settings()
+	input.Proxy = ProxyDTO{Mode: config.AIProxyManual, URL: proxy.URL}
+	input.Text = EndpointDTO{Enabled: true, Provider: "openai-compatible", Model: "probe", BaseURL: "http://example.invalid/v1", TimeoutSeconds: 2, JSONMode: "auto"}
+	if _, err := service.Save(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	result := service.TestProxy(context.Background())
+	if !result.OK || result.Mode != config.AIProxyManual || result.LatencyMS < 0 || path != "http://example.invalid/v1/models" {
+		t.Fatalf("result=%+v path=%q", result, path)
+	}
+	encoded, _ := json.Marshal(result)
+	if strings.Contains(string(encoded), "must not cross API") || strings.Contains(string(encoded), proxy.URL) {
+		t.Fatalf("proxy test leaked response or URL: %s", encoded)
 	}
 }

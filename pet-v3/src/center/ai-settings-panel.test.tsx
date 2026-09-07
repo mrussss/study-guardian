@@ -29,6 +29,7 @@ function deferred<T>(): Deferred<T> {
 const initialSettings: NativeAISettings = {
   enabled: false,
   min_confidence: .75,
+  proxy: { mode: "environment", url: "" },
   text: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" },
   vision: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" },
 };
@@ -40,6 +41,7 @@ function controlAdapter(overrides: Partial<SupervisorControlAdapter> = {}): Supe
     createTaskPreset: ok, selectTaskPreset: ok, updateTaskPreset: ok, deleteTaskPreset: ok,
     setReminderSettings: ok, saveAISettings: ok, putAISecret: ok, deleteAISecret: ok,
     testAIConnection: async () => ({ ok: true, provider: "aihubmix", model: "coding-glm-5.3-free", latency_ms: 42 }),
+    testAIProxy: async () => ({ ok: true, mode: "environment", latency_ms: 42 }),
     generateReview: ok, setDailyTarget: ok, createMission: ok, completeMission: ok, cancelMission: ok,
     ...overrides,
   } as SupervisorControlAdapter;
@@ -105,9 +107,24 @@ test("a rejected draft is not followed by a secret write and keeps the Key for r
 test("a provider rate limit is explained instead of reported as an invalid response", async () => {
   const configured = { ...initialSettings, text: { ...initialSettings.text, enabled: true, provider: "aihubmix", model: "coding-glm-5.3-free", api_key_configured: true } };
   const control = controlAdapter({
-    testAIConnection: async () => ({ ok: false, provider: "aihubmix", model: "coding-glm-5.3-free", latency_ms: 100, error_kind: "rate_limited" }),
+    testAIConnection: async () => ({ ok: false, provider: "aihubmix", model: "coding-glm-5.3-free", latency_ms: 100, error_kind: "model_rate_limited" }),
   });
   render(<AISettingsPanel settings={configured} control={control} />);
   await userEvent.setup().click(screen.getAllByRole("button", { name: "测试连接" })[0]);
-  await waitFor(() => assert.equal(screen.getByRole("status").textContent, "连接失败 · 模型当前限流，请稍后重试"));
+  await waitFor(() => assert.equal(screen.getByRole("status").textContent, "连接失败 · 当前模型限流，请稍后重试"));
+});
+
+test("proxy test saves the selected draft before testing and supports manual mode", async () => {
+  const calls: string[] = [];
+  const control = controlAdapter({
+    saveAISettings: async settings => { calls.push(`save:${settings.proxy.mode}:${settings.proxy.url}`); return { ok: true }; },
+    testAIProxy: async () => { calls.push("proxy-test"); return { ok: true, mode: "manual", latency_ms: 17 }; },
+  });
+  render(<AISettingsPanel settings={initialSettings} control={control} />);
+  const user = userEvent.setup();
+  await user.selectOptions(screen.getByLabelText("代理模式"), "manual");
+  await user.type(screen.getByPlaceholderText("http://127.0.0.1:7890"), "http://127.0.0.1:7890");
+  await user.click(screen.getByRole("button", { name: "测试网络" }));
+  await waitFor(() => assert.deepEqual(calls, ["save:manual:http://127.0.0.1:7890", "proxy-test"]));
+  assert.match(screen.getByRole("status").textContent ?? "", /网络可达.*17ms/);
 });

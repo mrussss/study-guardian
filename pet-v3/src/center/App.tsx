@@ -342,7 +342,7 @@ function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): R
 
 const providerHints: Record<string, { base_url: string; model: string; fallback_models: string[]; timeout_seconds?: number }> = {
   none: { base_url: "", model: "", fallback_models: [] },
-  aihubmix: { base_url: "https://aihubmix.com/v1", model: "coding-glm-5.3-free", fallback_models: ["coding-glm-5.3"], timeout_seconds: 20 },
+  aihubmix: { base_url: "https://aihubmix.com/v1", model: "coding-glm-5.3-free", fallback_models: [], timeout_seconds: 20 },
   deepseek: { base_url: "https://api.deepseek.com", model: "deepseek-chat", fallback_models: [] },
   qwen: { base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", fallback_models: [] },
   kimi: { base_url: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k", fallback_models: [] },
@@ -361,7 +361,7 @@ function AIEndpointEditor({ title, target, endpoint, keyValue, onKeyValue, onCha
 }): ReactElement {
   const changeProvider = (provider: string): void => {
     const hint = providerHints[provider] ?? { base_url: "", model: "", fallback_models: [] };
-    const visionHint = provider === "aihubmix" ? { model: "ox-alpha", fallback_models: ["glm-5.3-flash"] } : hint;
+    const visionHint = provider === "aihubmix" ? { model: "ox-alpha", fallback_models: [] } : hint;
     onChange({ ...endpoint, provider, enabled: target === "text" ? provider !== "none" : endpoint.enabled, base_url: hint.base_url, model: target === "vision" ? visionHint.model : hint.model, fallback_models: target === "vision" ? visionHint.fallback_models : hint.fallback_models, timeout_seconds: hint.timeout_seconds ?? endpoint.timeout_seconds });
   };
   return <div className="ai-endpoint-card"><div className="ai-endpoint-heading"><div><strong>{title}</strong><span>{target === "vision" ? "仅在文字判断仍不确定且明确启用时使用" : "本地规则无法判断时才调用"}</span></div>{target === "vision" && <label className="switch-label"><input type="checkbox" checked={endpoint.enabled} onChange={event => onChange({ ...endpoint, enabled: event.target.checked })} />启用</label>}</div>
@@ -379,11 +379,11 @@ export function AISettingsPanel({ settings: source, onRefresh, control: controlO
   onRefresh?: () => Promise<void>;
   control?: ReturnType<typeof getSupervisorControlAdapter>;
 }): ReactElement {
-  const fallback: NativeAISettings = { enabled: false, min_confidence: .75, text: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" }, vision: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" } };
+  const fallback: NativeAISettings = { enabled: false, min_confidence: .75, proxy: { mode: "environment", url: "" }, text: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" }, vision: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" } };
   const [draft, setDraft] = useState<NativeAISettings>();
   const [textKey, setTextKey] = useState(""); const [visionKey, setVisionKey] = useState(""); const [notice, setNotice] = useState("");
-  const [busyTarget, setBusyTarget] = useState<"text" | "vision" | "settings">();
-  const settings = draft ?? source ?? fallback; const control = controlOverride ?? getSupervisorControlAdapter();
+  const [busyTarget, setBusyTarget] = useState<"text" | "vision" | "proxy" | "settings">();
+  const settings = draft ?? (source ? { ...source, proxy: source.proxy ?? fallback.proxy } : fallback); const control = controlOverride ?? getSupervisorControlAdapter();
   useEffect(() => {
     if (draft && source && sameAISettings(draft, source)) setDraft(undefined);
   }, [draft, source]);
@@ -444,20 +444,39 @@ export function AISettingsPanel({ settings: source, onRefresh, control: controlO
     const result = await control.testAIConnection(target);
     const errorLabels: Record<string, string> = {
       authentication_failed: "API Key 无效或无权访问",
-      rate_limited: "模型当前限流，请稍后重试",
+      model_rate_limited: "当前模型限流，请稍后重试",
+      account_rate_limited: "账号或配额受限，未切换模型",
       timeout: "模型响应超时",
       network_unavailable: "网络暂时不可用",
       model_not_found: "模型不存在或当前账号不可用",
       invalid_response: "服务返回格式不兼容",
       provider_unavailable: "服务商当前不可用",
       unavailable: "连接暂时不可用",
+      model_unavailable: "当前模型没有可用通道",
+      proxy_unreachable: "代理无法连接",
+      tls_failed: "TLS 安全连接失败",
+      invalid_output: "模型返回内容无效",
     };
     setNotice(result.ok ? `连接正常 · ${result.provider} / ${result.model} · ${result.latency_ms}ms` : `连接失败 · ${errorLabels[result.error_kind ?? "provider_unavailable"] ?? "未知错误"}`);
     await refreshCanonical();
     setBusyTarget(undefined);
   };
+  const testProxy = async (): Promise<void> => {
+    setBusyTarget("proxy"); setNotice("正在保存当前配置…");
+    if (!await persistCurrentSettings()) { setBusyTarget(undefined); return; }
+    setNotice("正在测试网络连接…");
+    const result = await control.testAIProxy();
+    const errorLabels: Record<string, string> = {
+      timeout: "网络连接超时", proxy_unreachable: "代理无法连接", network_unavailable: "网络暂时不可用",
+      tls_failed: "TLS 安全连接失败", provider_unavailable: "服务商当前不可用", unavailable: "连接暂时不可用",
+    };
+    setNotice(result.ok ? `网络可达 · ${result.mode} · ${result.latency_ms}ms` : `网络测试失败 · ${errorLabels[result.error_kind ?? "unavailable"] ?? "连接暂时不可用"}`);
+    await refreshCanonical();
+    setBusyTarget(undefined);
+  };
   return <section className="surface-section data-card settings-card ai-settings-card"><div className="section-header"><div><h2>AI 智能判断</h2><p>优先使用本地规则；视觉 AI 默认关闭，只作为进一步兜底。</p></div><label className="switch-label"><input type="checkbox" checked={settings.enabled} disabled={busyTarget !== undefined} onChange={event => setDraft({ ...settings, enabled: event.target.checked })} />{settings.enabled ? "开启" : "关闭"}</label></div>
     <label className="confidence-field"><span>最低置信度 {Math.round(settings.min_confidence * 100)}%</span><input type="range" min={0.5} max={1} step={0.05} value={settings.min_confidence} disabled={busyTarget !== undefined} onChange={event => setDraft({ ...settings, min_confidence: Number(event.target.value) })} /></label>
+    <div className="ai-network-card"><div className="ai-endpoint-heading"><div><strong>网络连接</strong><span>文字判断、视觉判断和每日复盘共用此代理策略。</span></div><button className="test-button" type="button" disabled={busyTarget !== undefined} onClick={() => void testProxy()}>测试网络</button></div><div className="ai-proxy-grid"><label><span>代理模式</span><select value={settings.proxy.mode} disabled={busyTarget !== undefined} onChange={event => setDraft({ ...settings, proxy: { mode: event.target.value as NativeAISettings["proxy"]["mode"], url: event.target.value === "manual" ? settings.proxy.url : "" } })}><option value="environment">环境变量</option><option value="direct">直连</option><option value="manual">手动代理</option></select></label>{settings.proxy.mode === "manual" ? <label className="wide"><span>代理地址</span><input value={settings.proxy.url} placeholder="http://127.0.0.1:7890" disabled={busyTarget !== undefined} onChange={event => setDraft({ ...settings, proxy: { ...settings.proxy, url: event.target.value } })} /><small>仅支持 http/https 主机地址，不填写账号密码、路径或查询参数。</small></label> : <p className="ai-network-help">{settings.proxy.mode === "environment" ? "读取 Supervisor 进程的 HTTP_PROXY/HTTPS_PROXY，不读取 Windows 系统代理。" : "不使用代理，直接连接服务商。"}</p>}</div></div>
     <AIEndpointEditor title="文字判断" target="text" endpoint={settings.text} keyValue={textKey} onKeyValue={setTextKey} onChange={value => endpoint("text", value)} onPutSecret={() => void putSecret("text")} onDeleteSecret={() => void deleteSecret("text")} onTest={() => void test("text")} busy={busyTarget !== undefined} />
     <AIEndpointEditor title="视觉判断" target="vision" endpoint={settings.vision} keyValue={visionKey} onKeyValue={setVisionKey} onChange={value => endpoint("vision", value)} onPutSecret={() => void putSecret("vision")} onDeleteSecret={() => void deleteSecret("vision")} onTest={() => void test("vision")} busy={busyTarget !== undefined} />
     <div className="setting-actions"><button className="primary-button" type="button" disabled={busyTarget !== undefined} onClick={() => void save()}>保存并应用 AI 设置</button>{notice && <span role="status">{notice}</span>}</div>
