@@ -130,3 +130,34 @@ test("proxy test saves the selected draft before testing and supports manual mod
   assert.ok(networkCard);
   assert.match(within(networkCard).getByRole("status").textContent ?? "", /网络可达.*17ms/);
 });
+
+test("fallback model editor keeps punctuation while typing and parses supported separators on save", async () => {
+  let saved: NativeAISettings | undefined;
+  const control = controlAdapter({ saveAISettings: async settings => { saved = settings; return { ok: true }; } });
+  render(<AISettingsPanel settings={initialSettings} control={control} />);
+  const user = userEvent.setup();
+  const input = screen.getAllByRole("textbox", { name: "备用模型（按顺序）" })[0] as HTMLTextAreaElement;
+
+  await user.type(input, "model-one, ");
+  assert.equal(input.value, "model-one, ");
+  await user.type(input, "model-two，model-one; model-three\n");
+  assert.equal(input.value, "model-one, model-two，model-one; model-three\n");
+  await user.click(screen.getByRole("button", { name: "保存并应用 AI 设置" }));
+
+  await waitFor(() => assert.ok(saved));
+  assert.deepEqual(saved?.text.fallback_models, ["model-one", "model-two", "model-three"]);
+});
+
+test("fallback model editor rejects more than three models instead of truncating", async () => {
+  let saveCalls = 0;
+  const control = controlAdapter({ saveAISettings: async () => { saveCalls += 1; return { ok: true }; } });
+  render(<AISettingsPanel settings={initialSettings} control={control} />);
+  const user = userEvent.setup();
+  const input = screen.getAllByRole("textbox", { name: "备用模型（按顺序）" })[0] as HTMLTextAreaElement;
+  await user.type(input, "one,two,three,four");
+  await user.click(screen.getByRole("button", { name: "保存并应用 AI 设置" }));
+
+  await waitFor(() => assert.match(screen.getByRole("alert").textContent ?? "", /最多只能设置 3 个/));
+  assert.equal(saveCalls, 0);
+  assert.equal(input.value, "one,two,three,four");
+});

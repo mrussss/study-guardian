@@ -316,12 +316,36 @@ function HistoryPage({ history }: { history?: SupervisorDashboardSnapshot["histo
   return <DataPage title="历史" description="回看最近 7 天的有效专注，不追踪原始屏幕内容。"><section className="surface-section data-card"><div className="section-header"><div><h2>专注记录</h2><p>仅显示 Supervisor 提供的分钟级汇总</p></div><History className="section-icon" size={20} /></div>{history && history.length > 0 ? <div className="data-list">{history.map(day => <div className="data-row" key={day.date}><div><strong>{day.date}</strong><span>目标 {day.target_minutes} 分钟 · {day.target_completed ? "已达标" : "进行中"}</span></div><em>{day.focus_minutes} min</em></div>)}</div> : <EmptyData text="暂无历史记录" />}</section></DataPage>;
 }
 
-function ReviewPage({ review }: { review?: NativeReviewSummary }): ReactElement {
-  const [notice, setNotice] = useState("");
-  const generate = async (): Promise<void> => { setNotice("正在整理本地证据…"); const result = await getSupervisorControlAdapter().generateReview(); setNotice(result.ok ? "今日总结已生成，正在刷新" : "今日总结暂时无法生成"); };
+export function ReviewPage({ review, onRefresh, control = getSupervisorControlAdapter() }: { review?: NativeReviewSummary; onRefresh?: () => Promise<void>; control?: ReturnType<typeof getSupervisorControlAdapter> }): ReactElement {
+  const [notice, setNotice] = useState<{ text: string; tone: "neutral" | "success" | "warning" }>();
+  const [generating, setGenerating] = useState(false);
+  const generate = async (): Promise<void> => {
+    if (generating) return;
+    setGenerating(true);
+    setNotice({ text: "正在整理本地证据…", tone: "neutral" });
+    try {
+      const result = await control.generateReview();
+      if (!result.ok) {
+        setNotice({ text: "今日总结暂时无法生成", tone: "warning" });
+        return;
+      }
+      await onRefresh?.();
+      const message = result.status === "READY" && result.generation_mode === "FALLBACK" && result.error_kind === "timeout"
+        ? "AI 响应超时，已生成本地总结"
+        : result.status === "READY" && result.generation_mode === "FALLBACK"
+          ? "今日总结已生成本地总结"
+          : "今日总结已生成";
+      setNotice({ text: message, tone: "success" });
+    } catch {
+      setNotice({ text: "今日总结暂时无法生成", tone: "warning" });
+    } finally {
+      setGenerating(false);
+    }
+  };
   const label = review?.generation_mode === "AI" ? "AI 总结" : "本地总结";
-  const reason = review?.generation_mode === "FALLBACK" ? (review.error_code && review.error_code !== "provider_not_configured" ? "AI 暂时不可用，本次已自动使用本地总结。" : "尚未配置 AI，本次使用本地证据生成。") : "通过 Provider、净化和校验链路生成。";
-  return <DataPage title="学习复盘" description="摘要来自 canonical Review，不展示原始聊天或屏幕内容。"><section className="surface-section data-card">{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · {reason}</p></div><span className="review-badge">{label}</span></div><div className="review-detail-grid"><div><span className="eyebrow">主题</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>暂无足够主题证据</p>}</div><div><span className="eyebrow">不能确认</span>{review.unfinished.map(item => <p key={item}>{item}</p>)}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div><div><span className="eyebrow">诊断</span><p>{review.status} · revision {review.revision} · attempt {review.attempt_count} · warnings {review.warnings_count}</p></div></div>{review.status === "STALE" && <button className="primary-button" type="button" onClick={() => void generate()}>更新今日总结</button>}</> : <div className="review-generate-empty"><EmptyData text="今日总结将在结束学习后约 5 分钟自动生成" /><button className="primary-button" type="button" onClick={() => void generate()}>立即生成</button></div>}{notice && <span className="settings-notice" role="status">{notice}</span>}</section></DataPage>;
+  const reason = review?.status === "STALE" ? "生成后又有新的学习记录。" : review?.generation_mode === "FALLBACK" ? (review.error_code && review.error_code !== "provider_not_configured" ? "AI 暂时不可用，本次已自动使用本地总结。" : "尚未配置 AI，本次使用本地证据生成。") : "通过 Provider、净化和校验链路生成。";
+  const noticeView = notice && <span className={`settings-notice is-${notice.tone}`} role="status" aria-live="polite">{notice.text}</span>;
+  return <DataPage title="学习复盘" description="摘要来自 canonical Review，不展示原始聊天或屏幕内容。"><section className="surface-section data-card" aria-busy={generating}>{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · {reason}</p></div><span className="review-badge">{label}</span></div>{review.status === "STALE" && <p className="review-stale-notice">生成后又有新的学习记录，当前内容仍可查看。</p>}<div className="review-detail-grid"><div><span className="eyebrow">主题</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>暂无足够主题证据</p>}</div><div><span className="eyebrow">不能确认</span>{review.unfinished.map(item => <p key={item}>{item}</p>)}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div><div><span className="eyebrow">诊断</span><p>{review.status} · revision {review.revision} · attempt {review.attempt_count} · warnings {review.warnings_count}</p></div></div>{review.status === "STALE" && <button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在更新…" : "更新今日总结"}</button>}</> : <div className="review-generate-empty"><EmptyData text="今日总结将在结束学习后约 5 分钟自动生成" /><button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在生成…" : "立即生成"}</button></div>}{noticeView}</section></DataPage>;
 }
 function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
   const status = snapshot?.status;
@@ -355,17 +379,41 @@ const providerHints: Record<string, { base_url: string; model: string; fallback_
 
 const providerLabels: Record<string, string> = { aihubmix: "AIHubMix 中转", "openai-compatible": "其他 OpenAI 兼容服务" };
 
-function AIEndpointEditor({ title, target, endpoint, keyValue, onKeyValue, onChange, onPutSecret, onDeleteSecret, onTest, busy }: {
+type FallbackTarget = "text" | "vision";
+type FallbackDrafts = Partial<Record<FallbackTarget, string>>;
+type FallbackErrors = Partial<Record<FallbackTarget, string>>;
+
+function parseFallbackModels(raw: string): { models: string[]; error?: string } {
+  const models: string[] = [];
+  const seen = new Set<string>();
+  for (const value of raw.split(/[,，;；\r\n]+/).map(item => item.trim()).filter(Boolean)) {
+    if (/\p{C}/u.test(value) || /\s/.test(value)) {
+      return { models: [], error: "模型 ID 不能包含控制字符或内部空白" };
+    }
+    if (value.length > 128) return { models: [], error: "模型 ID 最多 128 个字符" };
+    if (!seen.has(value)) {
+      seen.add(value);
+      models.push(value);
+    }
+  }
+  if (models.length > 3) return { models: [], error: "最多只能设置 3 个备用模型" };
+  return { models };
+}
+
+function AIEndpointEditor({ title, target, endpoint, keyValue, onKeyValue, onChange, onFallbackChange, fallbackDraft, fallbackError, onFallbackBlur, onPutSecret, onDeleteSecret, onTest, busy }: {
   title: string; target: "text" | "vision"; endpoint: NativeAIEndpointSettings; keyValue: string; onKeyValue: (value: string) => void;
-  onChange: (value: NativeAIEndpointSettings) => void; onPutSecret: () => void; onDeleteSecret: () => void; onTest: () => void; busy?: boolean;
+  onChange: (value: NativeAIEndpointSettings) => void; onFallbackChange: (value: string) => void; fallbackDraft: string; fallbackError?: string; onFallbackBlur: () => void;
+  onPutSecret: () => void; onDeleteSecret: () => void; onTest: () => void; busy?: boolean;
 }): ReactElement {
   const changeProvider = (provider: string): void => {
     const hint = providerHints[provider] ?? { base_url: "", model: "", fallback_models: [] };
     const visionHint = provider === "aihubmix" ? { model: "ox-alpha", fallback_models: [] } : hint;
-    onChange({ ...endpoint, provider, enabled: target === "text" ? provider !== "none" : endpoint.enabled, base_url: hint.base_url, model: target === "vision" ? visionHint.model : hint.model, fallback_models: target === "vision" ? visionHint.fallback_models : hint.fallback_models, timeout_seconds: hint.timeout_seconds ?? endpoint.timeout_seconds });
+    const fallbackModels = target === "vision" ? visionHint.fallback_models : hint.fallback_models;
+    onFallbackChange(fallbackModels.join(", "));
+    onChange({ ...endpoint, provider, enabled: target === "text" ? provider !== "none" : endpoint.enabled, base_url: hint.base_url, model: target === "vision" ? visionHint.model : hint.model, fallback_models: fallbackModels, timeout_seconds: hint.timeout_seconds ?? endpoint.timeout_seconds });
   };
   return <div className="ai-endpoint-card ai-subsection-card"><div className="ai-endpoint-heading"><div><strong>{title}</strong><span>{target === "vision" ? "仅在文字判断仍不确定且明确启用时使用" : "本地规则无法判断时才调用"}</span></div>{target === "vision" && <label className="switch-label"><input type="checkbox" checked={endpoint.enabled} onChange={event => onChange({ ...endpoint, enabled: event.target.checked })} />启用</label>}</div>
-    <div className="ai-field-grid"><label><span>服务商</span><select value={endpoint.provider} disabled={busy} onChange={event => changeProvider(event.target.value)}>{Object.keys(providerHints).map(value => <option value={value} key={value}>{providerLabels[value] ?? value}</option>)}</select></label><label><span>主模型</span><input value={endpoint.model} disabled={busy} onChange={event => onChange({ ...endpoint, model: event.target.value })} /></label><label className="wide"><span>API 地址</span><input value={endpoint.base_url} disabled={busy} onChange={event => onChange({ ...endpoint, base_url: event.target.value })} /></label><label className="wide"><span>备用模型（按顺序，逗号分隔）</span><input value={endpoint.fallback_models.join(", ")} disabled={busy} onChange={event => onChange({ ...endpoint, fallback_models: event.target.value.split(",").map(value => value.trim()).filter(Boolean).slice(0, 3) })} /><small>仅在限流、超时、服务异常或无效返回时切换；备用模型可能产生费用。</small></label><label><span>JSON 模式</span><select value={endpoint.json_mode} disabled={busy} onChange={event => onChange({ ...endpoint, json_mode: event.target.value as NativeAIEndpointSettings["json_mode"] })}><option value="auto">自动</option><option value="json_object">JSON Object</option><option value="off">关闭</option></select></label><label><span>单模型超时（秒）</span><input type="number" min={1} max={120} value={endpoint.timeout_seconds} disabled={busy} onChange={event => onChange({ ...endpoint, timeout_seconds: Number(event.target.value) })} /></label></div>
+    <div className="ai-field-grid"><label><span>服务商</span><select value={endpoint.provider} disabled={busy} onChange={event => changeProvider(event.target.value)}>{Object.keys(providerHints).map(value => <option value={value} key={value}>{providerLabels[value] ?? value}</option>)}</select></label><label><span>主模型</span><input value={endpoint.model} disabled={busy} onChange={event => onChange({ ...endpoint, model: event.target.value })} /></label><label className="wide"><span>API 地址</span><input value={endpoint.base_url} disabled={busy} onChange={event => onChange({ ...endpoint, base_url: event.target.value })} /></label><label className="wide"><span>备用模型（按顺序）</span><textarea aria-label="备用模型（按顺序）" aria-describedby={`${target}-fallback-help${fallbackError ? ` ${target}-fallback-error` : ""}`} rows={2} value={fallbackDraft} disabled={busy} onChange={event => onFallbackChange(event.target.value)} onBlur={onFallbackBlur} /><small id={`${target}-fallback-help`}>最多 3 个，支持中英文逗号、分号或换行分隔。</small>{fallbackError && <span className="field-error" id={`${target}-fallback-error`} role="alert">{fallbackError}</span>}</label><label><span>JSON 模式</span><select value={endpoint.json_mode} disabled={busy} onChange={event => onChange({ ...endpoint, json_mode: event.target.value as NativeAIEndpointSettings["json_mode"] })}><option value="auto">自动</option><option value="json_object">JSON Object</option><option value="off">关闭</option></select></label><label><span>单模型超时（秒）</span><input type="number" min={1} max={120} value={endpoint.timeout_seconds} disabled={busy} onChange={event => onChange({ ...endpoint, timeout_seconds: Number(event.target.value) })} /></label></div>
     <div className="secret-row"><span className={endpoint.api_key_configured ? "secret-state is-set" : "secret-state"}>{endpoint.api_key_configured ? "API Key 已配置" : "API Key 未配置"}</span><input type="password" autoComplete="new-password" value={keyValue} placeholder="输入新 Key（不会回显）" disabled={busy} onChange={event => onKeyValue(event.target.value)} /><button type="button" disabled={busy || !keyValue.trim()} onClick={onPutSecret}>保存 Key</button>{endpoint.api_key_configured && <button type="button" disabled={busy} onClick={onDeleteSecret}>删除 Key</button>}<button className="test-button" type="button" disabled={busy} onClick={onTest}>测试连接</button></div>
   </div>;
 }
@@ -382,6 +430,8 @@ export function AISettingsPanel({ settings: source, onRefresh, control: controlO
   const fallback: NativeAISettings = { enabled: false, min_confidence: .75, proxy: { mode: "environment", url: "" }, text: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" }, vision: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" } };
   const [draft, setDraft] = useState<NativeAISettings>();
   const [textKey, setTextKey] = useState(""); const [visionKey, setVisionKey] = useState(""); const [notice, setNotice] = useState("");
+  const [fallbackDrafts, setFallbackDrafts] = useState<FallbackDrafts>({});
+  const [fallbackErrors, setFallbackErrors] = useState<FallbackErrors>({});
   const [proxyNotice, setProxyNotice] = useState<{ label: string; tone: "neutral" | "success" | "warning" }>();
   const [busyTarget, setBusyTarget] = useState<"text" | "vision" | "proxy" | "settings">();
   const settings = draft ?? (source ? { ...source, proxy: source.proxy ?? fallback.proxy } : fallback); const control = controlOverride ?? getSupervisorControlAdapter();
@@ -393,18 +443,46 @@ export function AISettingsPanel({ settings: source, onRefresh, control: controlO
     if (!onRefresh) return;
     await onRefresh();
     setDraft(undefined);
+    setFallbackDrafts({});
+    setFallbackErrors({});
   };
-  const persistCurrentSettings = async (): Promise<boolean> => {
-    const result = await control.saveAISettings(settings);
+  const fallbackValue = (target: FallbackTarget): string => fallbackDrafts[target] ?? settings[target].fallback_models.join(", ");
+  const settingsForPersistence = (): NativeAISettings | undefined => {
+    const next: NativeAISettings = { ...settings, text: { ...settings.text }, vision: { ...settings.vision } };
+    const errors: FallbackErrors = {};
+    for (const target of ["text", "vision"] as const) {
+      const parsed = parseFallbackModels(fallbackValue(target));
+      if (parsed.error) errors[target] = parsed.error;
+      else next[target].fallback_models = parsed.models;
+    }
+    setFallbackErrors(errors);
+    return Object.keys(errors).length === 0 ? next : undefined;
+  };
+  const commitFallbackDraft = (target: FallbackTarget): void => {
+    const parsed = parseFallbackModels(fallbackValue(target));
+    setFallbackErrors(current => ({ ...current, [target]: parsed.error }));
+    if (parsed.error) return;
+    setDraft({ ...settings, [target]: { ...settings[target], fallback_models: parsed.models } });
+  };
+  const setFallbackDraft = (target: FallbackTarget, value: string): void => {
+    setFallbackDrafts(current => ({ ...current, [target]: value }));
+    setFallbackErrors(current => ({ ...current, [target]: undefined }));
+  };
+  const persistCurrentSettings = async (): Promise<NativeAISettings | undefined> => {
+    const next = settingsForPersistence();
+    if (!next) return undefined;
+    const result = await control.saveAISettings(next);
     if (!result.ok) {
       setNotice("AI 设置未通过验证或暂时无法保存");
-      return false;
+      return undefined;
     }
-    return true;
+    return next;
   };
   const save = async (): Promise<void> => {
     setBusyTarget("settings");
-    if (await persistCurrentSettings()) {
+    const saved = await persistCurrentSettings();
+    if (saved) {
+      setDraft(saved);
       setNotice("AI 设置已保存并立即应用");
       await refreshCanonical();
     }
@@ -413,14 +491,15 @@ export function AISettingsPanel({ settings: source, onRefresh, control: controlO
   const putSecret = async (target: "text" | "vision"): Promise<void> => {
     const key = target === "text" ? textKey : visionKey;
     setBusyTarget(target);
-    if (!await persistCurrentSettings()) { setBusyTarget(undefined); return; }
+    const saved = await persistCurrentSettings();
+    if (!saved) { setBusyTarget(undefined); return; }
     const result = await control.putAISecret(target, key);
     if (!result.ok) {
       setNotice("API Key 保存失败");
       setBusyTarget(undefined);
       return;
     }
-    setDraft({ ...settings, [target]: { ...settings[target], api_key_configured: true } });
+    setDraft({ ...saved, [target]: { ...saved[target], api_key_configured: true } });
     if (target === "text") setTextKey(""); else setVisionKey("");
     setNotice(`${target === "text" ? "文字" : "视觉"} API Key 已安全保存`);
     await refreshCanonical();
@@ -429,10 +508,11 @@ export function AISettingsPanel({ settings: source, onRefresh, control: controlO
   const deleteSecret = async (target: "text" | "vision"): Promise<void> => {
     if (!window.confirm("确认删除本机保存的 API Key？")) return;
     setBusyTarget(target);
-    if (!await persistCurrentSettings()) { setBusyTarget(undefined); return; }
+    const saved = await persistCurrentSettings();
+    if (!saved) { setBusyTarget(undefined); return; }
     const result = await control.deleteAISecret(target);
     if (result.ok) {
-      setDraft({ ...settings, [target]: { ...settings[target], api_key_configured: false } });
+      setDraft({ ...saved, [target]: { ...saved[target], api_key_configured: false } });
       setNotice("API Key 已删除");
       await refreshCanonical();
     } else setNotice("API Key 删除失败");
@@ -485,8 +565,8 @@ export function AISettingsPanel({ settings: source, onRefresh, control: controlO
   return <section className="surface-section data-card settings-card ai-settings-card"><div className="section-header"><div><h2>AI 智能判断</h2><p>优先使用本地规则；视觉 AI 默认关闭，只作为进一步兜底。</p></div><label className="switch-label"><input type="checkbox" checked={settings.enabled} disabled={busyTarget !== undefined} onChange={event => setDraft({ ...settings, enabled: event.target.checked })} />{settings.enabled ? "开启" : "关闭"}</label></div>
     <label className="confidence-field"><span>最低置信度 {Math.round(settings.min_confidence * 100)}%</span><input type="range" min={0.5} max={1} step={0.05} value={settings.min_confidence} disabled={busyTarget !== undefined} onChange={event => setDraft({ ...settings, min_confidence: Number(event.target.value) })} /></label>
     <div className="ai-network-card ai-subsection-card"><div className="ai-endpoint-heading"><div><strong>网络连接</strong><span>文字判断、视觉判断和每日复盘共用此代理策略。</span></div><div className="ai-card-heading-actions">{proxyNotice && <span className={`ai-network-status is-${proxyNotice.tone}`} role="status" aria-live="polite">{proxyNotice.label}</span>}<button className="ai-card-action" type="button" disabled={busyTarget !== undefined} onClick={() => void testProxy()}>测试网络</button></div></div><div className="ai-proxy-grid"><label><span>代理模式</span><select value={settings.proxy.mode} disabled={busyTarget !== undefined} onChange={event => setDraft({ ...settings, proxy: { mode: event.target.value as NativeAISettings["proxy"]["mode"], url: event.target.value === "manual" ? settings.proxy.url : "" } })}><option value="environment">环境变量</option><option value="direct">直连</option><option value="manual">手动代理</option></select></label>{settings.proxy.mode === "manual" ? <><label className="wide"><span>代理地址</span><input value={settings.proxy.url} placeholder="http://127.0.0.1:7890" disabled={busyTarget !== undefined} onChange={event => setDraft({ ...settings, proxy: { ...settings.proxy, url: event.target.value } })} /></label><p className="ai-network-help">仅支持 http/https 主机地址，不填写账号密码、路径或查询参数。</p></> : <p className="ai-network-help">{settings.proxy.mode === "environment" ? "读取 Supervisor 进程的 HTTP_PROXY/HTTPS_PROXY，不读取 Windows 系统代理。" : "不使用代理，直接连接服务商。"}</p>}</div></div>
-    <AIEndpointEditor title="文字判断" target="text" endpoint={settings.text} keyValue={textKey} onKeyValue={setTextKey} onChange={value => endpoint("text", value)} onPutSecret={() => void putSecret("text")} onDeleteSecret={() => void deleteSecret("text")} onTest={() => void test("text")} busy={busyTarget !== undefined} />
-    <AIEndpointEditor title="视觉判断" target="vision" endpoint={settings.vision} keyValue={visionKey} onKeyValue={setVisionKey} onChange={value => endpoint("vision", value)} onPutSecret={() => void putSecret("vision")} onDeleteSecret={() => void deleteSecret("vision")} onTest={() => void test("vision")} busy={busyTarget !== undefined} />
+    <AIEndpointEditor title="文字判断" target="text" endpoint={settings.text} keyValue={textKey} onKeyValue={setTextKey} onFallbackChange={value => setFallbackDraft("text", value)} fallbackDraft={fallbackValue("text")} fallbackError={fallbackErrors.text} onFallbackBlur={() => commitFallbackDraft("text")} onChange={value => endpoint("text", value)} onPutSecret={() => void putSecret("text")} onDeleteSecret={() => void deleteSecret("text")} onTest={() => void test("text")} busy={busyTarget !== undefined} />
+    <AIEndpointEditor title="视觉判断" target="vision" endpoint={settings.vision} keyValue={visionKey} onKeyValue={setVisionKey} onFallbackChange={value => setFallbackDraft("vision", value)} fallbackDraft={fallbackValue("vision")} fallbackError={fallbackErrors.vision} onFallbackBlur={() => commitFallbackDraft("vision")} onChange={value => endpoint("vision", value)} onPutSecret={() => void putSecret("vision")} onDeleteSecret={() => void deleteSecret("vision")} onTest={() => void test("vision")} busy={busyTarget !== undefined} />
     <div className="setting-actions"><button className="primary-button" type="button" disabled={busyTarget !== undefined} onClick={() => void save()}>保存并应用 AI 设置</button>{notice && <span role="status">{notice}</span>}</div>
   </section>;
 }
@@ -551,7 +631,7 @@ function LiveSection({ active, snapshot, live, onRefresh }: { active: string; sn
     case "missions": return <MissionsPage missions={snapshot?.missions} taskPresets={snapshot?.task_presets} onRefresh={onRefresh} />;
     case "achievements": return <AchievementsPage achievements={snapshot?.achievements} />;
     case "rewards": return <RewardsPage rewards={snapshot?.rewards} />;
-    case "review": return <ReviewPage review={snapshot?.review} />;
+    case "review": return <ReviewPage review={snapshot?.review} onRefresh={onRefresh} />;
     case "history": return <HistoryPage history={snapshot?.history} />;
     case "system": return <SystemPage snapshot={snapshot} />;
     case "settings": return <SettingsPage snapshot={snapshot} onRefresh={onRefresh} />;
