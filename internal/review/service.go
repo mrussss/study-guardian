@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"study-guardian/internal/ai"
 	"study-guardian/internal/evidence"
 	"study-guardian/internal/storage"
 )
@@ -275,6 +276,18 @@ func hashBundle(bundle evidence.DailyEvidenceBundle) (string, error) {
 
 func providerErrorCode(err error) string {
 	var providerErr ProviderError
+	if errors.As(err, &providerErr) && providerErr.FailureKind == "" {
+		return string(providerErr.Kind)
+	}
+	var classified interface {
+		AIClassification() (ai.FailureKind, ai.FailureScope)
+	}
+	if errors.As(err, &classified) {
+		kind, _ := classified.AIClassification()
+		if kind != "" {
+			return string(kind)
+		}
+	}
 	if errors.As(err, &providerErr) {
 		return string(providerErr.Kind)
 	}

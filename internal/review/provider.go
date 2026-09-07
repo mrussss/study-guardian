@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -63,22 +62,7 @@ func (p *ModelFallbackProvider) Generate(ctx context.Context, input ReviewInput)
 }
 
 func shouldFallbackReviewModel(ctx context.Context, err error) bool {
-	if err == nil || ctx.Err() != nil {
-		return false
-	}
-	var providerErr ProviderError
-	if !errors.As(err, &providerErr) {
-		return false
-	}
-	switch providerErr.Kind {
-	case ProviderErrorTimeout, ProviderErrorUnavailable, ProviderErrorNetwork, ProviderErrorInvalidJSON, ProviderErrorSchemaInvalid, ProviderErrorUnsupported:
-		return true
-	case ProviderErrorHTTP:
-		var httpErr ai.HTTPError
-		return errors.As(err, &httpErr) && (httpErr.Status == 404 || httpErr.Status == 408 || httpErr.Status == 429 || httpErr.Status >= 500)
-	default:
-		return false
-	}
+	return ai.ShouldFallbackModel(ctx, err)
 }
 
 type ProviderMetadata struct {
@@ -97,6 +81,7 @@ type ProviderOptions struct {
 	Timeout          time.Duration
 	Temperature      *float64
 	HTTPClient       *http.Client
+	Proxy            config.AIProxyConfig
 }
 
 // ProviderErrorKind is intentionally a bounded, secret-free operational
@@ -116,8 +101,10 @@ const (
 )
 
 type ProviderError struct {
-	Kind  ProviderErrorKind
-	Cause error
+	Kind         ProviderErrorKind
+	FailureKind  ai.FailureKind
+	FailureScope ai.FailureScope
+	Cause        error
 }
 
 func (e ProviderError) Error() string {
@@ -125,6 +112,12 @@ func (e ProviderError) Error() string {
 }
 
 func (e ProviderError) Unwrap() error { return e.Cause }
+func (e ProviderError) AIClassification() (ai.FailureKind, ai.FailureScope) {
+	if e.FailureKind != "" && e.FailureScope != "" {
+		return e.FailureKind, e.FailureScope
+	}
+	return ai.FailureProviderUnavailable, ai.FailureScopeProvider
+}
 
 type HTTPReviewProvider struct {
 	name     string
@@ -150,7 +143,7 @@ func NewProvider(o ProviderOptions) (*HTTPReviewProvider, error) {
 	return &HTTPReviewProvider{
 		name: strings.TrimSpace(o.Name), model: strings.TrimSpace(o.Model),
 		apiKey: o.APIKey, endpoint: strings.TrimRight(o.Endpoint, "/"),
-		client: ai.NewClient(ai.Options{Endpoint: o.Endpoint, APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Timeout: o.Timeout, Temperature: o.Temperature, HTTPClient: o.HTTPClient}),
+		client: ai.NewClient(ai.Options{Endpoint: o.Endpoint, APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Timeout: o.Timeout, Temperature: o.Temperature, HTTPClient: o.HTTPClient, Proxy: o.Proxy}),
 	}, nil
 }
 
@@ -165,13 +158,13 @@ func (p *HTTPReviewProvider) Generate(ctx context.Context, input ReviewInput) (D
 	}
 	var document Document
 	if err := json.Unmarshal(raw, &document); err != nil {
-		return Document{}, metadata, ProviderError{Kind: ProviderErrorSchemaInvalid, Cause: err}
+		return Document{}, metadata, ProviderError{Kind: ProviderErrorSchemaInvalid, FailureKind: ai.FailureInvalidOutput, FailureScope: ai.FailureScopeModel, Cause: err}
 	}
 	if document.SchemaVersion == 0 {
-		return Document{}, metadata, ProviderError{Kind: ProviderErrorSchemaInvalid, Cause: errors.New("review document schema_version is required")}
+		return Document{}, metadata, ProviderError{Kind: ProviderErrorSchemaInvalid, FailureKind: ai.FailureInvalidOutput, FailureScope: ai.FailureScopeModel, Cause: errors.New("review document schema_version is required")}
 	}
 	if document.SchemaVersion != 1 {
-		return Document{}, metadata, ProviderError{Kind: ProviderErrorUnsupported, Cause: fmt.Errorf("review document schema version %d", document.SchemaVersion)}
+		return Document{}, metadata, ProviderError{Kind: ProviderErrorUnsupported, FailureKind: ai.FailureInvalidOutput, FailureScope: ai.FailureScopeModel, Cause: fmt.Errorf("review document schema version %d", document.SchemaVersion)}
 	}
 	return document, metadata, nil
 }
@@ -185,32 +178,25 @@ func classifyProviderError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return ProviderError{Kind: ProviderErrorTimeout, Cause: err}
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return ProviderError{Kind: ProviderErrorTimeout, Cause: err}
-	}
-	var httpErr ai.HTTPError
-	if errors.As(err, &httpErr) {
-		switch {
-		case httpErr.Status == 401 || httpErr.Status == 403:
-			return ProviderError{Kind: ProviderErrorHTTP, Cause: err}
-		case httpErr.Status == 404 || httpErr.Status == 408 || httpErr.Status >= 500:
-			return ProviderError{Kind: ProviderErrorUnavailable, Cause: err}
-		default:
-			return ProviderError{Kind: ProviderErrorHTTP, Cause: err}
-		}
+	failure := ai.ClassifyError(err)
+	switch failure.Kind {
+	case ai.FailureInvalidOutput:
+		return ProviderError{Kind: ProviderErrorInvalidJSON, FailureKind: failure.Kind, FailureScope: failure.Scope, Cause: err}
+	case ai.FailureTimeout, ai.FailureProviderTimeout, ai.FailureModelTimeout:
+		return ProviderError{Kind: ProviderErrorTimeout, FailureKind: failure.Kind, FailureScope: failure.Scope, Cause: err}
+	case ai.FailureProviderUnavailable:
+		return ProviderError{Kind: ProviderErrorUnavailable, FailureKind: failure.Kind, FailureScope: failure.Scope, Cause: err}
+	case ai.FailureAuthentication, ai.FailureModelNotFound, ai.FailureModelUnavailable, ai.FailureModelRateLimited, ai.FailureAccountRateLimited:
+		return ProviderError{Kind: ProviderErrorHTTP, FailureKind: failure.Kind, FailureScope: failure.Scope, Cause: err}
 	}
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, "decode ai json response") {
-		return ProviderError{Kind: ProviderErrorInvalidJSON, Cause: err}
+		return ProviderError{Kind: ProviderErrorInvalidJSON, FailureKind: ai.FailureInvalidOutput, FailureScope: ai.FailureScopeModel, Cause: err}
 	}
 	if errors.Is(err, context.Canceled) {
-		return ProviderError{Kind: ProviderErrorNetwork, Cause: err}
+		return ProviderError{Kind: ProviderErrorNetwork, FailureKind: ai.FailureNetworkUnreachable, FailureScope: ai.FailureScopeTransport, Cause: err}
 	}
-	return ProviderError{Kind: ProviderErrorNetwork, Cause: err}
+	return ProviderError{Kind: ProviderErrorNetwork, FailureKind: failure.Kind, FailureScope: failure.Scope, Cause: err}
 }
 
 type ProviderStatus struct {
@@ -227,6 +213,10 @@ func NewConfiguredProvider(cfg *config.Config) (Provider, ProviderStatus) {
 	status := ProviderStatus{}
 	if cfg == nil {
 		status.Warning = "review config is unavailable"
+		return nil, status
+	}
+	if err := config.ValidateAIProxyConfig(cfg.AI.Proxy); err != nil {
+		status.Warning = "AI proxy configuration is invalid"
 		return nil, status
 	}
 	if !cfg.Review.Enabled {
@@ -283,7 +273,7 @@ func NewConfiguredProvider(cfg *config.Config) (Provider, ProviderStatus) {
 	models := append([]string{model}, fallbackModels...)
 	chain := make([]Provider, 0, len(models))
 	for _, candidate := range models {
-		provider, err := NewProvider(ProviderOptions{Name: providerName, Endpoint: endpoint, APIKey: apiKey, Model: strings.TrimSpace(candidate), JSONMode: jsonMode, SupportsJSONMode: profile.SupportsJSONMode, Timeout: time.Duration(timeoutSeconds) * time.Second, Temperature: temperature})
+		provider, err := NewProvider(ProviderOptions{Name: providerName, Endpoint: endpoint, APIKey: apiKey, Model: strings.TrimSpace(candidate), JSONMode: jsonMode, SupportsJSONMode: profile.SupportsJSONMode, Timeout: time.Duration(timeoutSeconds) * time.Second, Temperature: temperature, Proxy: cfg.AI.Proxy})
 		if err != nil {
 			status.Warning = "review provider configuration is invalid"
 			return nil, status

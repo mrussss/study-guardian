@@ -72,6 +72,11 @@ func New(cfg *config.Config) *Registry {
 	text := cfg.AI.Text
 	st := Status{Enabled: cfg.AI.Enabled, TextProvider: text.Provider, TextModel: text.Model, VisionEnabled: cfg.AI.Vision.Enabled, Warning: cfg.AI.MigrationWarning}
 	r := &Registry{cfg: cfg, status: st}
+	if err := config.ValidateAIProxyConfig(cfg.AI.Proxy); err != nil {
+		st.Warning = "AI proxy configuration is invalid; rules only"
+		r.status = st
+		return r
+	}
 	if !cfg.AI.Enabled {
 		return r
 	}
@@ -104,7 +109,7 @@ func New(cfg *config.Config) *Registry {
 				} else {
 					st.TextConfigured = key != "" || text.Provider == "ollama" || localEndpoint(endpoint)
 					if st.TextConfigured {
-						r.provider = buildProviderChain(text, endpoint, key, p)
+						r.provider = buildProviderChain(text, endpoint, key, p, cfg.AI.Proxy)
 					} else {
 						st.Warning = "API key is not configured; rules only"
 					}
@@ -138,7 +143,7 @@ func New(cfg *config.Config) *Registry {
 				}
 				visionKey := resolveKey(vision, vp.DefaultAPIKeyEnv)
 				if visionKey != "" || vision.Provider == "ollama" || localEndpoint(visionEndpoint) {
-					r.vision = buildProviderChain(vision, visionEndpoint, visionKey, vp)
+					r.vision = buildProviderChain(vision, visionEndpoint, visionKey, vp, cfg.AI.Proxy)
 				} else if st.Warning == "" {
 					st.Warning = "AI vision API key is not configured; vision fallback disabled"
 				}
@@ -151,7 +156,7 @@ func New(cfg *config.Config) *Registry {
 	return r
 }
 
-func buildProviderChain(endpointConfig config.AIEndpointConfig, endpoint, key string, profile Profile) classifier.TaskRelationProvider {
+func buildProviderChain(endpointConfig config.AIEndpointConfig, endpoint, key string, profile Profile, proxy config.AIProxyConfig) classifier.TaskRelationProvider {
 	models := append([]string{endpointConfig.Model}, endpointConfig.FallbackModels...)
 	items := make([]classifier.TaskRelationProvider, 0, len(models))
 	for _, model := range models {
@@ -163,7 +168,7 @@ func buildProviderChain(endpointConfig config.AIEndpointConfig, endpoint, key st
 			Endpoint: endpoint, APIKey: key, Model: model, JSONMode: endpointConfig.JSONMode,
 			SupportsJSONMode: profile.SupportsJSONMode,
 			Timeout:          time.Duration(endpointConfig.TimeoutSeconds) * time.Second,
-			Temperature:      endpointConfig.Temperature,
+			Temperature:      endpointConfig.Temperature, Proxy: proxy,
 		}))
 	}
 	return classifier.NewModelFallbackProvider(items...)

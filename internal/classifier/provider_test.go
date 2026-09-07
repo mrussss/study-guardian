@@ -136,7 +136,7 @@ func TestModelFallbackProviderUsesNextModelForRetryableFailure(t *testing.T) {
 		models = append(models, body.Model)
 		if body.Model == "free-model" {
 			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte(`{"error":{"message":"quota reached"}}`))
+			_, _ = w.Write([]byte(`{"error":{"code":"model_rate_limited","message":"quota reached"}}`))
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": `{"relation":"FOCUSED","confidence":0.9,"activity":"go","task_related":true,"reason_short":"task"}`}}}})
@@ -173,5 +173,43 @@ func TestModelFallbackProviderStopsOnAuthenticationFailure(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("calls=%d, want 1", calls)
+	}
+}
+
+func TestModelFallbackProviderOnlyAdvancesForExplicitModelFailure(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		body       string
+		wantCalls  int
+		wantResult bool
+	}{
+		{name: "no available channel", body: `{"error":{"code":"no_available_channel"}}`, wantCalls: 2, wantResult: true},
+		{name: "bare account rate limit", body: `{"error":{"message":"try later"}}`, wantCalls: 1, wantResult: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				var request struct {
+					Model string `json:"model"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&request)
+				if request.Model == "free-model" {
+					w.WriteHeader(http.StatusTooManyRequests)
+					_, _ = w.Write([]byte(testCase.body))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": `{"relation":"FOCUSED","confidence":0.9,"activity":"go","task_related":true,"reason_short":"task"}`}}}})
+			}))
+			defer server.Close()
+			provider := NewModelFallbackProvider(
+				NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "free-model", Timeout: time.Second}),
+				NewOpenAICompatibleProviderWithOptions(ProviderOptions{Endpoint: server.URL, Model: "paid-model", Timeout: time.Second}),
+			)
+			_, err := provider.Classify(context.Background(), ClassificationRequest{Task: "Go"})
+			if (err == nil) != testCase.wantResult || calls != testCase.wantCalls {
+				t.Fatalf("err=%v calls=%d", err, calls)
+			}
+		})
 	}
 }

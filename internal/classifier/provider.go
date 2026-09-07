@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"study-guardian/internal/ai"
+	"study-guardian/internal/config"
 	"study-guardian/internal/state"
 )
 
@@ -38,9 +38,9 @@ type TaskRelationProvider interface {
 }
 
 // ModelFallbackProvider tries an ordered list of independently cooled-down
-// model clients. It only advances for transient/provider-shape failures; bad
-// credentials and bad requests stop immediately so a paid fallback cannot
-// hide a configuration error.
+// model clients. It advances only for failures explicitly scoped to the
+// current model; transport, account and provider failures stop immediately so
+// a paid fallback cannot hide the actual root cause.
 type ModelFallbackProvider struct {
 	providers     []TaskRelationProvider
 	mu            sync.RWMutex
@@ -124,27 +124,7 @@ func providerModelName(provider TaskRelationProvider) string {
 }
 
 func shouldFallbackModel(ctx context.Context, err error) bool {
-	if err == nil || ctx.Err() != nil {
-		return false
-	}
-	var httpErr ai.HTTPError
-	if errors.As(err, &httpErr) {
-		return httpErr.Status == 404 || httpErr.Status == 408 || httpErr.Status == 429 || httpErr.Status >= 500
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
-	}
-	message := strings.ToLower(err.Error())
-	for _, fragment := range []string{"provider cooldown", "failed to decode ai response", "empty response", "structured json classification", "missing required field", "invalid classification", "classification confidence", "classification activity", "classification reason_short", "provider api error"} {
-		if strings.Contains(message, fragment) {
-			return true
-		}
-	}
-	return false
+	return ai.ShouldFallbackModel(ctx, err)
 }
 
 func boundedProviderError(err error) string {
@@ -215,6 +195,7 @@ type ProviderOptions struct {
 	SupportsJSONMode bool
 	Timeout          time.Duration
 	Temperature      *float64
+	Proxy            config.AIProxyConfig
 }
 type OpenAICompatibleProvider struct {
 	Endpoint            string
@@ -250,7 +231,7 @@ func NewOpenAICompatibleProviderWithOptions(o ProviderOptions) *OpenAICompatible
 	return &OpenAICompatibleProvider{
 		Endpoint: strings.TrimRight(o.Endpoint, "/"), APIKey: o.APIKey, Model: o.Model,
 		JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Temperature: o.Temperature,
-		client: ai.NewClient(ai.Options{Endpoint: o.Endpoint, APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Timeout: o.Timeout, Temperature: o.Temperature}),
+		client: ai.NewClient(ai.Options{Endpoint: o.Endpoint, APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Timeout: o.Timeout, Temperature: o.Temperature, Proxy: o.Proxy}),
 	}
 }
 func (p *OpenAICompatibleProvider) Name() string { return "openai-compatible (" + p.Model + ")" }
@@ -294,8 +275,14 @@ func (p *OpenAICompatibleProvider) Classify(ctx context.Context, req Classificat
 		p.recordFailure(err)
 		return nil, err
 	}
+	result, err := parseClassification(raw)
+	if err != nil {
+		failure := ai.NewFailure(ai.FailureInvalidOutput, ai.FailureScopeModel, err)
+		p.recordFailure(failure)
+		return nil, failure
+	}
 	p.recordSuccess()
-	return parseClassification(raw)
+	return result, nil
 }
 
 type providerHTTPError = ai.HTTPError
