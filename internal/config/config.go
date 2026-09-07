@@ -221,7 +221,7 @@ func DefaultConfig() *Config {
 		Motivation: MotivationConfig{Enabled: true, DefaultDailyTargetMinutes: 120, CheckinThresholdMinutes: 30, IdleStaticCreditGraceSeconds: 300, APPerFocusHourMilli: 1000},
 		Review: ReviewConfig{
 			Enabled: true, Timezone: "local",
-			Provider:  ReviewProviderConfig{InheritTextProfile: true, TimeoutSeconds: 30, JSONMode: "auto"},
+			Provider:  ReviewProviderConfig{InheritTextProfile: true, TimeoutSeconds: 60, JSONMode: "auto"},
 			Trigger:   ReviewTriggerConfig{OffDebounceMinutes: 5, BackfillPreviousDay: true},
 			Retention: ReviewRetentionConfig{RawChatDays: 30, SemanticDays: 180},
 			Limits:    ReviewLimitsConfig{MaxTurnChars: 12000, MaxConversationChars: 40000, MaxFinalInputChars: 60000},
