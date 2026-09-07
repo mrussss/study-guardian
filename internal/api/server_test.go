@@ -39,6 +39,13 @@ func setupTestServer() (*config.Config, *state.Manager, *http.ServeMux) {
 	return cfg, stateMgr, mux
 }
 
+func TestServerWriteTimeoutCoversBoundedAIOperations(t *testing.T) {
+	server := NewServer(config.DefaultConfig(), state.NewManager(nil))
+	if server.httpServer.WriteTimeout <= aiOperationTimeout {
+		t.Fatalf("write timeout %s must exceed AI operation timeout %s", server.httpServer.WriteTimeout, aiOperationTimeout)
+	}
+}
+
 func TestCollectorTokenIsScopedAndContextIsAvailable(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.IPC.AuthToken = "main-token"

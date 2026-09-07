@@ -93,7 +93,9 @@ func (s *Server) handleAITest(w http.ResponseWriter, r *http.Request) {
 		writeTaskPresetError(w, http.StatusBadRequest, "invalid request json")
 		return
 	}
-	result := s.aiSettings.Test(r.Context(), input.Target)
+	ctx, cancel := context.WithTimeout(r.Context(), aiOperationTimeout)
+	defer cancel()
+	result := s.aiSettings.Test(ctx, input.Target)
 	status := http.StatusOK
 	if !result.OK {
 		status = http.StatusBadGateway

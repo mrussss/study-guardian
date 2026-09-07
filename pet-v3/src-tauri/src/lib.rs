@@ -1355,7 +1355,7 @@ fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value,
     if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
     let address = loopback_address(&host, port)?;
     let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).map_err(|error| map_io_error(&error))?;
-    stream.set_read_timeout(Some(Duration::from_secs(125))).map_err(|error| map_io_error(&error))?;
+    stream.set_read_timeout(Some(Duration::from_secs(130))).map_err(|error| map_io_error(&error))?;
     stream.set_write_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
     let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body)).map_err(|error| map_io_error(&error))?;

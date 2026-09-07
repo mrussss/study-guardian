@@ -18,6 +18,11 @@ import (
 	"study-guardian/internal/storage"
 )
 
+const (
+	aiOperationTimeout     = 120 * time.Second
+	supervisorWriteTimeout = aiOperationTimeout + 5*time.Second
+)
+
 type StateManager interface {
 	GetStatus() state.SystemStatus
 	SetModeStudy(task string) error
@@ -99,10 +104,12 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 
 	addr := fmt.Sprintf("%s:%d", cfg.IPC.SupervisorHost, cfg.IPC.SupervisorPort)
 	s.httpServer = &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		Addr:        addr,
+		Handler:     mux,
+		ReadTimeout: 5 * time.Second,
+		// AI tests and review generation are bounded separately but can take
+		// longer than the ordinary local API handlers.
+		WriteTimeout: supervisorWriteTimeout,
 	}
 
 	return s
