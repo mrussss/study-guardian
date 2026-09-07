@@ -240,7 +240,6 @@ func NewConfiguredProvider(cfg *config.Config) (Provider, ProviderStatus) {
 		endpoint = strings.TrimSpace(text.BaseURL)
 		apiKey = resolveEndpointKey(text.APIKeyEnv, text.APIKeyFile, "")
 		jsonMode = text.JSONMode
-		timeoutSeconds = text.TimeoutSeconds
 		temperature = text.Temperature
 		if apiKey == "" {
 			apiKey = strings.TrimSpace(cfg.AI.APIKey)

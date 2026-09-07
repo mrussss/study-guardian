@@ -118,6 +118,30 @@ func TestNewConfiguredProviderInheritsTextProfileAndChecksModel(t *testing.T) {
 	}
 }
 
+func TestNewConfiguredProviderKeepsReviewTimeoutWhenInheritingTextProfile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(1200 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"schema_version\":1,\"date\":\"2026-09-07\",\"headline\":\"复盘\",\"topics\":[],\"accomplishments\":[],\"unfinished\":[],\"difficulties\":[],\"behavior\":{\"distraction_count\":0,\"largest_distraction_seconds\":0,\"average_recovery_seconds\":0},\"tomorrow_priority\":\"继续\"}"}}]}`))
+	}))
+	defer server.Close()
+	cfg := config.DefaultConfig()
+	cfg.AI.Enabled = true
+	cfg.AI.Text.Provider = "openai-compatible"
+	cfg.AI.Text.Model = "review-model"
+	cfg.AI.Text.BaseURL = server.URL
+	cfg.AI.Text.TimeoutSeconds = 1
+	cfg.Review.Provider.TimeoutSeconds = 3
+
+	provider, status := NewConfiguredProvider(cfg)
+	if provider == nil || !status.Configured {
+		t.Fatalf("provider=%T status=%+v", provider, status)
+	}
+	if _, _, err := provider.Generate(context.Background(), ReviewInput{Date: "2026-09-07"}); err != nil {
+		t.Fatalf("review provider should use its own timeout: %v", err)
+	}
+}
+
 func TestReviewModelFallbackUsesNextModelAfterInvalidSchema(t *testing.T) {
 	var models []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
