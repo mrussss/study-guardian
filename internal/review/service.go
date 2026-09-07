@@ -212,6 +212,7 @@ func (s *Service) persistFallbackLocked(ctx context.Context, bundle evidence.Dai
 }
 
 func (s *Service) persistLocked(ctx context.Context, bundle evidence.DailyEvidenceBundle, doc Document, inputHash, generationMode, providerName, model, promptVersion, errorCode string) (storage.DailyReviewRecord, error) {
+	doc = NormalizeDocument(doc)
 	reviewJSON, err := json.Marshal(doc)
 	if err != nil {
 		return storage.DailyReviewRecord{}, err

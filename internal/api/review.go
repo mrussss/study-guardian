@@ -47,6 +47,7 @@ func (s *Server) handleReviewDaily(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, fmt.Errorf("review document unavailable"), http.StatusInternalServerError)
 		return
 	}
+	document = review.NormalizeDocument(document)
 	jsonOK(w, struct {
 		review.Document
 		Status         string `json:"status"`

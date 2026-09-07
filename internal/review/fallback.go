@@ -69,6 +69,38 @@ func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
 	if len(doc.Unfinished) == 0 {
 		doc.Unfinished = append(doc.Unfinished, "没有记录到可验证的完成项；下次可用一个具体产出确认进展。")
 	}
+	return NormalizeDocument(doc)
+}
+
+// NormalizeDocument keeps the canonical Review JSON shape stable for empty
+// sections and for records produced by older code. JSON arrays must never be
+// emitted as null across the storage/API/native boundary.
+func NormalizeDocument(doc Document) Document {
+	if doc.Topics == nil {
+		doc.Topics = []Topic{}
+	}
+	if doc.Accomplishments == nil {
+		doc.Accomplishments = []Accomplishment{}
+	}
+	if doc.Unfinished == nil {
+		doc.Unfinished = []string{}
+	}
+	if doc.Difficulties == nil {
+		doc.Difficulties = []string{}
+	}
+	if doc.Warnings == nil {
+		doc.Warnings = []string{}
+	}
+	for index := range doc.Topics {
+		if doc.Topics[index].EvidenceRefs == nil {
+			doc.Topics[index].EvidenceRefs = []string{}
+		}
+	}
+	for index := range doc.Accomplishments {
+		if doc.Accomplishments[index].EvidenceRefs == nil {
+			doc.Accomplishments[index].EvidenceRefs = []string{}
+		}
+	}
 	return doc
 }
 

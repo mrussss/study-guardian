@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { mockSemantic } from "../mock/semantic";
-import { NativeSupervisorControlAdapter, normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, SupervisorDashboardPollLoop, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter, type SupervisorDashboardPollScheduler, type SupervisorDashboardSnapshot } from "./supervisor";
+import { NativeSupervisorControlAdapter, normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, normalizeReviewGenerationResult, SupervisorDashboardPollLoop, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter, type SupervisorDashboardPollScheduler, type SupervisorDashboardSnapshot } from "./supervisor";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -48,6 +48,13 @@ test("control results expose only bounded success or error kinds", () => {
   assert.deepEqual(normalizeControlResult({ ok: false, error_kind: "raw-supervisor-error" }), { ok: false, error_kind: "invalid_response" });
   assert.deepEqual(normalizeControlResult({ ok: false, token: "never returned" }), { ok: false, error_kind: "invalid_response" });
   assert.deepEqual(normalizeControlResult(null), { ok: false, error_kind: "invalid_response" });
+});
+
+test("review generation results keep only bounded status and generation fields", () => {
+  assert.deepEqual(normalizeReviewGenerationResult({ ok: true, status: "READY", generation_mode: "FALLBACK", error_kind: "timeout", markdown: "must be ignored" }), { ok: true, status: "READY", generation_mode: "FALLBACK", error_kind: "timeout" });
+  assert.deepEqual(normalizeReviewGenerationResult({ ok: false, error_kind: "provider_not_configured", response: "must be ignored" }), { ok: false, error_kind: "provider_not_configured" });
+  assert.deepEqual(normalizeReviewGenerationResult({ ok: true, status: "READY", generation_mode: "FALLBACK", error_kind: "raw-provider-error" }), { ok: false, error_kind: "invalid_response" });
+  assert.deepEqual(normalizeReviewGenerationResult({ ok: true, status: "READY" }), { ok: false, error_kind: "invalid_response" });
 });
 
 test("daily target control rejects values outside the typed range before native invoke", async () => {
@@ -124,6 +131,25 @@ test("dashboard snapshot accepts canonical data and drops invalid optional secti
   assert.equal("evidence_refs" in (snapshot.review?.topics[0] ?? {}), false);
   assert.equal(normalizeNativeDashboardSnapshot({ connected: true, status: { ...status, confidence: 2 } }).connected, false);
   assert.deepEqual(normalizeNativeDashboardSnapshot({ connected: true, status, missions: [{ ...snapshot.missions?.[0], status: "INVALID" }] }).missions, undefined);
+});
+
+test("legacy review null or missing lists normalize to empty arrays", () => {
+  const status = { user_mode: "STUDY", interaction_state: "ACTIVE", task_relation: "FOCUSED", privacy_state: "NORMAL", confidence: 0.9, task: "Go", study_seconds: 60, break_seconds: 0, active_seconds: 60, activitywatch_ok: true, screen_sensor_ok: true } as const;
+  const snapshot = normalizeNativeDashboardSnapshot({
+    connected: true,
+    status,
+    review: {
+      schema_version: 1, date: "2026-09-04", headline: "本地总结", topics: null, accomplishments: null,
+      unfinished: null, difficulties: null, behavior: { distraction_count: 0, largest_distraction_seconds: 0, average_recovery_seconds: 0 },
+      tomorrow_priority: "继续学习", warnings: null, status: "READY", generation_mode: "FALLBACK", provider: "", model: "", revision: 1, attempt_count: 1,
+    },
+  });
+  assert.deepEqual(snapshot.review?.topics, []);
+  assert.deepEqual(snapshot.review?.accomplishments, []);
+  assert.deepEqual(snapshot.review?.unfinished, []);
+  assert.deepEqual(snapshot.review?.difficulties, []);
+  assert.deepEqual(snapshot.review?.warnings, []);
+  assert.equal(normalizeNativeDashboardSnapshot({ connected: true, status, review: { schema_version: 1, date: "2026-09-04", headline: "bad", topics: {}, behavior: {} } }).review, undefined);
 });
 
 test("legacy dashboard AI settings without proxy normalize to environment mode", () => {

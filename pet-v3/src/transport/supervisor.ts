@@ -363,16 +363,30 @@ function boundedStringList(value: unknown, maxItems: number, maxLength: number):
   return Array.isArray(value) && value.length <= maxItems && value.every(item => boundedText(item, maxLength));
 }
 
+function optionalBoundedStringList(value: unknown, maxItems: number, maxLength: number): string[] | undefined {
+  if (value === undefined || value === null) return [];
+  return boundedStringList(value, maxItems, maxLength) ? value : undefined;
+}
+
+function optionalArray(value: unknown): unknown[] | undefined {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : undefined;
+}
+
 function normalizedReview(value: unknown): NativeReviewSummary | undefined {
   if (!record(value) || value.schema_version !== 1 || !boundedText(value.date, 32) || !boundedText(value.headline, 512) ||
-    !boundedText(value.tomorrow_priority, 512) || !boundedStringList(value.unfinished, 32, 512) ||
-    !boundedStringList(value.difficulties, 32, 512) || !boundedStringList(value.warnings, 16, 512) ||
-    !Array.isArray(value.topics) || value.topics.length > 16 || !Array.isArray(value.accomplishments) || value.accomplishments.length > 32 ||
+    !boundedText(value.tomorrow_priority, 512) ||
     !record(value.behavior) || !nonNegativeInteger(value.behavior.distraction_count) ||
     !nonNegativeInteger(value.behavior.largest_distraction_seconds) || !nonNegativeInteger(value.behavior.average_recovery_seconds)) return undefined;
-  const topics = value.topics.map(topic => record(topic) && boundedText(topic.name, 128) && boundedText(topic.summary, 512) && boundedRatio(topic.confidence)
+  const unfinished = optionalBoundedStringList(value.unfinished, 32, 512);
+  const difficulties = optionalBoundedStringList(value.difficulties, 32, 512);
+  const warnings = optionalBoundedStringList(value.warnings, 16, 512);
+  const rawTopics = optionalArray(value.topics);
+  const rawAccomplishments = optionalArray(value.accomplishments);
+  if (!unfinished || !difficulties || !warnings || !rawTopics || rawTopics.length > 16 || !rawAccomplishments || rawAccomplishments.length > 32) return undefined;
+  const topics = rawTopics.map(topic => record(topic) && boundedText(topic.name, 128) && boundedText(topic.summary, 512) && boundedRatio(topic.confidence)
     ? { name: topic.name, summary: topic.summary, confidence: topic.confidence } : undefined);
-  const accomplishments = value.accomplishments.map(item => record(item) && boundedText(item.text, 512) && boundedRatio(item.confidence)
+  const accomplishments = rawAccomplishments.map(item => record(item) && boundedText(item.text, 512) && boundedRatio(item.confidence)
     ? { text: item.text, confidence: item.confidence } : undefined);
   if (topics.some(topic => !topic) || accomplishments.some(item => !item)) return undefined;
   return {
@@ -381,15 +395,15 @@ function normalizedReview(value: unknown): NativeReviewSummary | undefined {
     headline: value.headline,
     topics: topics as Array<{ name: string; summary: string; confidence: number }>,
     accomplishments: accomplishments as Array<{ text: string; confidence: number }>,
-    unfinished: value.unfinished,
-    difficulties: value.difficulties,
+    unfinished,
+    difficulties,
     behavior: {
       distraction_count: value.behavior.distraction_count,
       largest_distraction_seconds: value.behavior.largest_distraction_seconds,
       average_recovery_seconds: value.behavior.average_recovery_seconds,
     },
     tomorrow_priority: value.tomorrow_priority,
-    warnings: value.warnings,
+    warnings,
     status: ["PENDING", "READY", "STALE", "FAILED"].includes(value.status as string) ? value.status as NativeReviewSummary["status"] : "FAILED",
     generation_mode: ["AI", "FALLBACK", ""].includes(value.generation_mode as string) ? value.generation_mode as NativeReviewSummary["generation_mode"] : "",
     provider: boundedText(value.provider, 64) ? value.provider : "",
@@ -397,7 +411,7 @@ function normalizedReview(value: unknown): NativeReviewSummary | undefined {
     revision: nonNegativeInteger(value.revision) ? value.revision : 0,
     attempt_count: nonNegativeInteger(value.attempt_count) ? value.attempt_count : 0,
     ...(boundedText(value.error_code, 64) ? { error_code: value.error_code } : {}),
-    warnings_count: nonNegativeInteger(value.warnings_count) ? value.warnings_count : value.warnings.length,
+    warnings_count: nonNegativeInteger(value.warnings_count) ? value.warnings_count : warnings.length,
   };
 }
 
@@ -442,6 +456,17 @@ export interface ControlResult {
   task?: string;
 }
 
+export type ReviewGenerationStatus = "READY" | "STALE" | "FAILED";
+export type ReviewGenerationMode = "AI" | "FALLBACK" | "";
+export type ReviewGenerationErrorKind = ControlErrorKind | "provider_not_configured" | "compaction_failed" | "input_hash_failed" | "sanitizer_failed" | "validation_failed" | "network" | "http" | "invalid_json" | "schema_invalid" | "unsupported_version" | "not_configured";
+
+export interface ReviewGenerationResult {
+  ok: boolean;
+  status?: ReviewGenerationStatus;
+  generation_mode?: ReviewGenerationMode;
+  error_kind?: ReviewGenerationErrorKind;
+}
+
 const CONTROL_ERROR_KINDS: ControlErrorKind[] = ["timeout", "unauthorized", "unavailable", "invalid_response", "rejected"];
 
 export function normalizeControlResult(raw: unknown): ControlResult {
@@ -455,6 +480,17 @@ export function normalizeControlResult(raw: unknown): ControlResult {
       ? kind as ControlErrorKind
       : "invalid_response",
   };
+}
+
+const REVIEW_GENERATION_ERROR_KINDS: ReviewGenerationErrorKind[] = ["timeout", "unauthorized", "unavailable", "invalid_response", "rejected", "provider_not_configured", "compaction_failed", "input_hash_failed", "sanitizer_failed", "validation_failed", "network", "http", "invalid_json", "schema_invalid", "unsupported_version", "not_configured"];
+
+export function normalizeReviewGenerationResult(raw: unknown): ReviewGenerationResult {
+  if (!record(raw) || typeof raw.ok !== "boolean") return { ok: false, error_kind: "invalid_response" };
+  const errorKind = raw.error_kind === undefined || raw.error_kind === null ? undefined : REVIEW_GENERATION_ERROR_KINDS.includes(raw.error_kind as ReviewGenerationErrorKind) ? raw.error_kind as ReviewGenerationErrorKind : undefined;
+  if (raw.error_kind !== undefined && raw.error_kind !== null && !errorKind) return { ok: false, error_kind: "invalid_response" };
+  if (!raw.ok) return { ok: false, ...(errorKind ? { error_kind: errorKind } : { error_kind: "invalid_response" }) };
+  if (!["READY", "STALE", "FAILED"].includes(raw.status as string) || !["AI", "FALLBACK", ""].includes(raw.generation_mode as string)) return { ok: false, error_kind: "invalid_response" };
+  return { ok: true, status: raw.status as ReviewGenerationStatus, generation_mode: raw.generation_mode as ReviewGenerationMode, ...(errorKind ? { error_kind: errorKind } : {}) };
 }
 
 function classifyControlError(error: unknown): ControlErrorKind {
@@ -480,7 +516,7 @@ export interface SupervisorControlAdapter {
   deleteAISecret(target: "text" | "vision"): Promise<ControlResult>;
   testAIConnection(target: "text" | "vision"): Promise<NativeAIConnectionResult>;
   testAIProxy(): Promise<NativeAIProxyTestResult>;
-  generateReview(): Promise<ControlResult>;
+  generateReview(): Promise<ReviewGenerationResult>;
   setDailyTarget(minutes: number): Promise<ControlResult>;
   createMission(title: string, description: string, dueDate?: string, linkedTaskName?: string, linkedTaskPresetId?: string): Promise<ControlResult>;
   completeMission(id: string): Promise<ControlResult>;
@@ -587,8 +623,12 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
     } catch { return { ok: false, mode: "environment", latency_ms: 0, error_kind: "unavailable" }; }
   }
 
-  generateReview(): Promise<ControlResult> {
-    return this.invokeControl("supervisor_generate_review", {});
+  async generateReview(): Promise<ReviewGenerationResult> {
+    try {
+      return normalizeReviewGenerationResult(await invoke<unknown>("supervisor_generate_review"));
+    } catch (error) {
+      return { ok: false, error_kind: classifyControlError(error) };
+    }
   }
 
   setDailyTarget(minutes: number): Promise<ControlResult> {

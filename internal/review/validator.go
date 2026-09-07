@@ -32,7 +32,7 @@ func ValidateDocument(input ReviewInput, document Document) (Document, Validatio
 		return Document{}, report, fmt.Errorf("%w: schema_version=%d", ErrInvalidReviewDocument, document.SchemaVersion)
 	}
 	index := buildEvidenceIndex(input)
-	validated := cloneDocument(document)
+	validated := NormalizeDocument(cloneDocument(document))
 	if validated.Date != input.Date {
 		validated.Date = input.Date
 		report.Warnings = append(report.Warnings, "document date did not match ReviewInput and was normalized")
@@ -40,7 +40,7 @@ func ValidateDocument(input ReviewInput, document Document) (Document, Validatio
 	validated.Topics = validateTopics(validated.Topics, index, &report)
 	validated.Accomplishments = validateAccomplishments(validated.Accomplishments, index, &report)
 	validated.Behavior = behaviorFromEvidence(input, validated.Behavior, &report)
-	return validated, report, nil
+	return NormalizeDocument(validated), report, nil
 }
 
 func buildEvidenceIndex(input ReviewInput) evidenceIndex {

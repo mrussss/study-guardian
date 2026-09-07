@@ -1,5 +1,5 @@
 import type {
-  AutostartState, ControlResult, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeMission, NativeTaskPreset,
+  AutostartState, ControlResult, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeMission, NativeTaskPreset, ReviewGenerationResult,
   SupervisorControlAdapter, SupervisorDashboardAdapter, SupervisorDashboardSnapshot, SystemIntegrationAdapter,
 } from "../transport/supervisor";
 
@@ -174,7 +174,16 @@ export class MockSupervisorRuntime implements SupervisorDashboardAdapter, Superv
     if (failure) return { ok: false, mode, latency_ms: 0, error_kind: failure.error_kind === "timeout" ? "timeout" : "proxy_unreachable" };
     return { ok: true, mode, latency_ms: this.scenario === "slow" ? 900 : 42 };
   }
-  generateReview(): Promise<ControlResult> { return this.mutate(() => { if (this.snapshot.review) { this.snapshot.review.status = "READY"; this.snapshot.review.revision += 1; } return { ok: true }; }); }
+  async generateReview(): Promise<ReviewGenerationResult> {
+    const failure = await this.beforeMutation();
+    if (failure) return failure;
+    if (this.snapshot.review) {
+      this.snapshot.review.status = "READY";
+      this.snapshot.review.revision += 1;
+      return { ok: true, status: "READY", generation_mode: this.snapshot.review.generation_mode };
+    }
+    return { ok: true, status: "READY", generation_mode: "FALLBACK" };
+  }
   setDailyTarget(minutes: number): Promise<ControlResult> { return this.mutate(() => {
     if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440 || !this.snapshot.motivation) return { ok: false, error_kind: "rejected" };
     this.snapshot.motivation.daily_target_minutes = minutes;

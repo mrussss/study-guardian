@@ -153,6 +153,45 @@ func TestReviewGenerateAndEvidenceAPI(t *testing.T) {
 	}
 }
 
+func TestReviewDailyNormalizesLegacyNullLists(t *testing.T) {
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	if err := store.SaveDailyReview(context.Background(), storage.DailyReviewRecord{
+		Date: "2026-09-03", Status: review.StatusReady, GenerationMode: "FALLBACK", Revision: 1, SchemaVersion: 1,
+		ReviewJSON: `{"schema_version":1,"date":"2026-09-03","headline":"旧记录","topics":null,"accomplishments":null,"unfinished":null,"difficulties":null,"behavior":{"distraction_count":0,"largest_distraction_seconds":0,"average_recovery_seconds":0},"tomorrow_priority":"继续学习","warnings":null}`,
+		UpdatedAt:  now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.IPC.AuthToken = "main-token"
+	server := NewServer(cfg, state.NewManager(state.NewFakeClock(now)))
+	server.SetStorage(store)
+	server.SetReview(review.NewService(store, time.UTC, t.TempDir()))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/review/daily", server.withAuth(server.handleReviewDaily))
+	request := httptest.NewRequest(http.MethodGet, "/v1/review/daily?date=2026-09-03", nil)
+	request.Header.Set("Authorization", "Bearer main-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("daily status=%d body=%s", response.Code, response.Body.String())
+	}
+	var value map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"topics", "accomplishments", "unfinished", "difficulties", "warnings"} {
+		if _, ok := value[field].([]any); !ok {
+			t.Fatalf("%s was not normalized to an array: %s", field, response.Body.String())
+		}
+	}
+}
+
 func TestHealthzEndpoint(t *testing.T) {
 	_, _, mux := setupTestServer()
 

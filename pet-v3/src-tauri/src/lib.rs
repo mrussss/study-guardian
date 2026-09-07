@@ -154,6 +154,17 @@ struct SupervisorControlResult {
 }
 
 #[derive(Serialize)]
+struct SupervisorReviewResult {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_kind: Option<&'static str>,
+}
+
+#[derive(Serialize)]
 struct SupervisorDashboardSnapshot {
     connected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1017,12 +1028,27 @@ fn bounded_text_list(value: &Value, max_items: usize, max_bytes: usize) -> Resul
         .map(Value::Array)
 }
 
+fn optional_array<'a>(object: &'a serde_json::Map<String, Value>, field: &str) -> Result<&'a [Value], NativeErrorKind> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(&[]),
+        Some(Value::Array(items)) => Ok(items),
+        Some(_) => Err(NativeErrorKind::InvalidResponse),
+    }
+}
+
+fn optional_bounded_text_list(object: &serde_json::Map<String, Value>, field: &str, max_items: usize, max_bytes: usize) -> Result<Value, NativeErrorKind> {
+    match object.get(field) {
+        None | Some(Value::Null) => Ok(Value::Array(Vec::new())),
+        Some(value) => bounded_text_list(value, max_items, max_bytes),
+    }
+}
+
 fn sanitize_review(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     if object.get("schema_version").and_then(Value::as_u64) != Some(1) {
         return Err(NativeErrorKind::InvalidResponse);
     }
-    let topics = object.get("topics").and_then(Value::as_array).ok_or(NativeErrorKind::InvalidResponse)?;
+    let topics = optional_array(object, "topics")?;
     if topics.len() > 16 {
         return Err(NativeErrorKind::InvalidResponse);
     }
@@ -1035,7 +1061,7 @@ fn sanitize_review(value: &Value) -> Result<Value, NativeErrorKind> {
             "confidence": bounded_progress_field(item, "confidence")?,
         }));
     }
-    let accomplishments = object.get("accomplishments").and_then(Value::as_array).ok_or(NativeErrorKind::InvalidResponse)?;
+    let accomplishments = optional_array(object, "accomplishments")?;
     if accomplishments.len() > 32 {
         return Err(NativeErrorKind::InvalidResponse);
     }
@@ -1053,15 +1079,17 @@ fn sanitize_review(value: &Value) -> Result<Value, NativeErrorKind> {
         "largest_distraction_seconds": non_negative_i64_field(behavior, "largest_distraction_seconds")?,
         "average_recovery_seconds": non_negative_i64_field(behavior, "average_recovery_seconds")?,
     });
-    let warnings = object.get("warnings").map(|value| bounded_text_list(value, 16, 512)).transpose()?.unwrap_or_else(|| Value::Array(Vec::new()));
+    let unfinished = optional_bounded_text_list(object, "unfinished", 32, 512)?;
+    let difficulties = optional_bounded_text_list(object, "difficulties", 32, 512)?;
+    let warnings = optional_bounded_text_list(object, "warnings", 16, 512)?;
     Ok(json!({
         "schema_version": 1,
         "date": text_field(object, "date", 32)?,
         "headline": text_field(object, "headline", 512)?,
         "topics": safe_topics,
         "accomplishments": safe_accomplishments,
-        "unfinished": bounded_text_list(object.get("unfinished").ok_or(NativeErrorKind::InvalidResponse)?, 32, 512)?,
-        "difficulties": bounded_text_list(object.get("difficulties").ok_or(NativeErrorKind::InvalidResponse)?, 32, 512)?,
+        "unfinished": unfinished,
+        "difficulties": difficulties,
         "behavior": safe_behavior,
         "tomorrow_priority": text_field(object, "tomorrow_priority", 512)?,
         "warnings": warnings,
@@ -1447,13 +1475,43 @@ async fn supervisor_test_ai_proxy() -> Value {
 }
 
 #[tauri::command]
-async fn supervisor_generate_review() -> SupervisorControlResult {
+async fn supervisor_generate_review() -> SupervisorReviewResult {
     tauri::async_runtime::spawn_blocking(move || {
-        match ai_supervisor_request("POST", "/v1/review/generate", b"{}") {
-            Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
-            Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        match ai_supervisor_request("POST", "/v1/review/generate", b"{}").and_then(|value| sanitize_review_generation_result(&value)) {
+            Ok(result) => result,
+            Err(kind) => SupervisorReviewResult { ok: false, status: None, generation_mode: None, error_kind: Some(kind.as_str()) },
         }
-    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+    }).await.unwrap_or(SupervisorReviewResult { ok: false, status: None, generation_mode: None, error_kind: Some("unavailable") })
+}
+
+fn sanitize_review_generation_result(value: &Value) -> Result<SupervisorReviewResult, NativeErrorKind> {
+    let row = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let status = enum_field(row, "status", &["READY", "STALE", "FAILED"])?;
+    let generation_mode = enum_field(row, "generation_mode", &["AI", "FALLBACK", ""])?;
+    let error_code = optional_text_field(row, "error_code", 64)?;
+    Ok(SupervisorReviewResult { ok: true, status: Some(status), generation_mode: Some(generation_mode), error_kind: error_code.as_deref().and_then(review_error_kind) })
+}
+
+fn review_error_kind(value: &str) -> Option<&'static str> {
+    match value {
+        "authentication" | "authentication_failed" => Some("authentication_failed"),
+        "model_not_found" => Some("model_not_found"),
+        "model_unavailable" => Some("model_unavailable"),
+        "model_rate_limited" => Some("model_rate_limited"),
+        "account_rate_limited" => Some("account_rate_limited"),
+        "provider_unavailable" | "http" | "provider_failed" => Some("provider_unavailable"),
+        "proxy_unreachable" => Some("proxy_unreachable"),
+        "network" | "network_unreachable" => Some("network_unavailable"),
+        "tls_failed" => Some("tls_failed"),
+        "timeout" | "provider_timeout" | "model_timeout" => Some("timeout"),
+        "invalid_output" | "invalid_json" | "schema_invalid" | "unsupported_version" => Some("invalid_output"),
+        "provider_not_configured" | "not_configured" => Some("provider_not_configured"),
+        "compaction_failed" => Some("compaction_failed"),
+        "input_hash_failed" => Some("input_hash_failed"),
+        "sanitizer_failed" => Some("sanitizer_failed"),
+        "validation_failed" => Some("validation_failed"),
+        _ => None,
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1827,7 +1885,7 @@ mod tests {
     use super::{
         bounded_control_center_route, bounded_panel_position, bounded_quick_panel_debug_event, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
-        sanitize_ai_settings, sanitize_missions, sanitize_motivation, sanitize_review, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event, task_preset_path_allowed,
+        sanitize_ai_settings, sanitize_missions, sanitize_motivation, sanitize_review, sanitize_review_generation_result, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event, task_preset_path_allowed,
         launch_without_pet, requested_launch_route, LaunchRoute, NativeErrorKind,
         SupervisorSnapshot,
     };
@@ -2126,6 +2184,31 @@ mod tests {
         assert!(review.get("raw_chat").is_none());
         assert!(review["topics"][0].get("evidence_refs").is_none());
         assert!(review["accomplishments"][0].get("evidence_refs").is_none());
+
+        let mut legacy_review = review.clone();
+        legacy_review["topics"] = Value::Null;
+        legacy_review["accomplishments"] = Value::Null;
+        legacy_review["unfinished"] = Value::Null;
+        legacy_review["difficulties"] = Value::Null;
+        legacy_review["warnings"] = Value::Null;
+        let normalized = sanitize_review(&legacy_review).expect("legacy null review lists should normalize");
+        for field in ["topics", "accomplishments", "unfinished", "difficulties", "warnings"] {
+            assert_eq!(normalized[field], json!([]), "{field} should be an empty array");
+        }
+        legacy_review["topics"] = json!({"not": "an array"});
+        assert!(sanitize_review(&legacy_review).is_err());
+
+        let generation = sanitize_review_generation_result(&json!({
+            "status": "READY",
+            "generation_mode": "FALLBACK",
+            "error_code": "timeout",
+            "markdown": "must never cross the native command boundary",
+        })).expect("valid generation result");
+        assert!(generation.ok);
+        assert_eq!(generation.status.as_deref(), Some("READY"));
+        assert_eq!(generation.generation_mode.as_deref(), Some("FALLBACK"));
+        assert_eq!(generation.error_kind, Some("timeout"));
+        assert!(sanitize_review_generation_result(&json!({"status": "READY", "generation_mode": "FALLBACK", "error_code": {}})).is_err());
     }
 
     #[test]
