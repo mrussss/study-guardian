@@ -188,4 +188,4 @@
 - [x] 133. 文本、视觉与 Daily Review 共享有序模型链；仅明确模型级失败或无效输出触发 fallback，传输/账号失败停止链
 - [x] 134. 保留单模型配置兼容；备用模型默认空、最多三个，并在 UI 标明潜在计费
 - [x] 136. AI 全局代理 transport、网络诊断 API/UI、错误 scope 分类与旧配置兼容
-- [x] 135. 使用用户 AIHubMix Key 完成真实文字/视觉/Review E2E，并记录实际模型、延迟、限流与费用行为（2026-09-07 已通过代理、Text、真实 JPEG Vision 与 Daily Review；费用由服务商接口外部计费系统决定，当前未返回可核验金额）
+- [~] 135. 后端 AIHubMix Text/Vision/Review API E2E 已通过；Control Center Review 展示、fallback null 兼容和主动刷新仍待完整 UI E2E 验证
