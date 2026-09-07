@@ -14,7 +14,7 @@ Object.defineProperty(globalThis, "MutationObserver", { value: dom.window.Mutati
 Object.defineProperty(globalThis, "getComputedStyle", { value: dom.window.getComputedStyle.bind(dom.window), configurable: true });
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const { cleanup, render, screen, waitFor } = await import("@testing-library/react");
+const { cleanup, render, screen, waitFor, within } = await import("@testing-library/react");
 const userEvent = (await import("@testing-library/user-event")).default;
 
 afterEach(() => cleanup());
@@ -126,5 +126,7 @@ test("proxy test saves the selected draft before testing and supports manual mod
   await user.type(screen.getByPlaceholderText("http://127.0.0.1:7890"), "http://127.0.0.1:7890");
   await user.click(screen.getByRole("button", { name: "测试网络" }));
   await waitFor(() => assert.deepEqual(calls, ["save:manual:http://127.0.0.1:7890", "proxy-test"]));
-  assert.match(screen.getByRole("status").textContent ?? "", /网络可达.*17ms/);
+  const networkCard = screen.getByText("网络连接").closest(".ai-network-card") as HTMLElement;
+  assert.ok(networkCard);
+  assert.match(within(networkCard).getByRole("status").textContent ?? "", /网络可达.*17ms/);
 });

@@ -204,17 +204,23 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .switch-label input { accent-color: var(--sg-accent); }
 .confidence-field { display: grid; gap: 7px; margin: 16px 0; color: var(--sg-text-secondary); font-size: 13px; }
 .confidence-field input { accent-color: var(--sg-accent); }
-.ai-network-card { display: grid; gap: 14px; margin-top: 14px; padding: 16px; background: color-mix(in srgb, var(--sg-accent) 5%, var(--sg-surface-muted)); border: 1px solid var(--sg-border); border-radius: var(--sg-radius-card); }
-.ai-proxy-grid { display: grid; grid-template-columns: minmax(180px, .4fr) 1fr; gap: 10px; align-items: end; }
+.ai-subsection-card { display: grid; gap: 14px; margin-top: 14px; padding: 16px; background: var(--sg-surface-muted); border: 1px solid var(--sg-border); border-radius: var(--sg-radius-card); }
+.ai-proxy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: end; }
 .ai-proxy-grid label { display: grid; gap: 5px; color: var(--sg-text-tertiary); font-size: 12px; }
-.ai-proxy-grid label.wide { min-width: 0; }
+.ai-proxy-grid label.wide, .ai-proxy-grid .ai-network-help { grid-column: 1 / -1; min-width: 0; }
 .ai-proxy-grid input, .ai-proxy-grid select { min-width: 0; height: 36px; padding: 0 9px; color: var(--sg-text); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 8px; }
 .ai-proxy-grid small, .ai-network-help { margin: 0; color: var(--sg-text-tertiary); font-size: 11px; line-height: 1.5; }
-.ai-endpoint-card { display: grid; gap: 14px; margin-top: 14px; padding: 16px; background: var(--sg-surface-muted); border: 1px solid var(--sg-border); border-radius: var(--sg-radius-card); }
 .ai-endpoint-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.ai-endpoint-heading > div { display: grid; gap: 3px; }
+.ai-endpoint-heading > div:first-child { display: grid; gap: 3px; min-width: 0; }
 .ai-endpoint-heading strong { font-size: 14px; }
-.ai-endpoint-heading span { color: var(--sg-text-tertiary); font-size: 12px; }
+.ai-endpoint-heading > div:first-child > span { color: var(--sg-text-tertiary); font-size: 12px; }
+.ai-card-heading-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 10px; }
+.ai-network-status { color: var(--sg-text-secondary); font-size: 12px; line-height: 1.35; text-align: right; }
+.ai-network-status.is-success { color: var(--sg-success); font-weight: 600; }
+.ai-network-status.is-warning { color: var(--sg-danger); font-weight: 600; }
+.ai-card-action { display: inline-flex; height: 36px; flex: 0 0 auto; align-items: center; justify-content: center; padding: 0 12px; color: var(--sg-text-secondary); background: var(--sg-surface-raised); border: 1px solid var(--sg-border-strong); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ai-card-action:hover:not(:disabled) { color: var(--sg-accent); border-color: var(--sg-accent); }
+.ai-card-action:disabled { cursor: default; opacity: .6; }
 .ai-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ai-field-grid label { display: grid; gap: 5px; color: var(--sg-text-tertiary); font-size: 12px; }
 .ai-field-grid label.wide { grid-column: 1 / -1; }
@@ -225,4 +231,4 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .secret-row button.test-button { color: var(--sg-accent); }
 .secret-state { color: var(--sg-text-tertiary); font-size: 12px; }
 .secret-state.is-set { color: var(--sg-success); }
-@media (max-width: 760px) { .ai-field-grid, .ai-proxy-grid { grid-template-columns: 1fr; } .ai-field-grid label.wide { grid-column: auto; } .secret-row { grid-template-columns: 1fr 1fr; } .secret-row input { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .ai-field-grid, .ai-proxy-grid { grid-template-columns: 1fr; } .ai-field-grid label.wide, .ai-proxy-grid label.wide, .ai-proxy-grid .ai-network-help { grid-column: auto; } .ai-card-heading-actions { align-items: flex-end; flex-direction: column; gap: 7px; } .ai-network-status { text-align: right; } .secret-row { grid-template-columns: 1fr 1fr; } .secret-row input { grid-column: 1 / -1; } }
