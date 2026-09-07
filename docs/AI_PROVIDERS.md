@@ -33,11 +33,11 @@ ai:
   text:
     enabled: true
     provider: aihubmix
-    model: coding-glm-5.3-flash-free
+    model: coding-glm-5.3-free
     fallback_models:
-      - coding-glm-5.3-flash
+      - coding-glm-5.3
     base_url: https://aihubmix.com/v1
-    timeout_seconds: 6
+    timeout_seconds: 20
     json_mode: auto
   vision:
     enabled: false
@@ -46,11 +46,11 @@ ai:
     fallback_models:
       - glm-5.3-flash
     base_url: https://aihubmix.com/v1
-    timeout_seconds: 8
+    timeout_seconds: 20
     json_mode: auto
 ```
 
-Control Center 选择“AIHubMix 中转”时会填入上述当前推荐链路，但仍由用户保存并配置 Key 后才生效。备用模型可能计费；列表为空时永远不会自动切换到第二个模型。视觉仍默认关闭。
+Control Center 选择“AIHubMix 中转”时会填入上述当前推荐链路，但仍由用户保存并配置 Key 后才生效。模型 ID 以带当前 Key 请求 `GET /v1/models` 返回的规范名称为准；旧别名即使暂时可用也不写入默认配置。中转链路通常超过 6 秒，因此 AIHubMix 默认单模型超时为 20 秒。备用模型可能计费；列表为空时永远不会自动切换到第二个模型。视觉仍默认关闭。
 
 文本和视觉 provider 是两个独立实例。视觉分类只有在配置了 `vision.enabled`、视觉 provider 和模型，并且调用方提供经过隐私门禁处理的图片时才启用；不能仅凭 provider 名称推断支持视觉。`temperature` 是可选指针：默认请求完全省略该字段，只有用户明确配置时才发送。
 
@@ -62,12 +62,12 @@ Windows 上可运行 `scripts/configure-ai.ps1`。脚本先生成带时间戳的
 
 Daily Review 在 `inherit_text_profile: true` 时继承完整文字模型链，并保存真正成功的模型名。所有模型都失败后仍使用 deterministic fallback，不影响复盘可用性。
 
-视觉请求只在文本分类结果仍为 `UNKNOWN` 或低于最小置信度、且调用方提供经过隐私门禁和缩放的 `analysis_image_base64` 时发送；敏感应用/域名不会进入视觉请求。实际流程是 `Rules -> Text AI -> Vision AI fallback`，而不是“只要有截图就直接走 Vision”。文本和视觉请求分别使用配置的 timeout（默认 6 秒 / 8 秒），不再由 Classifier 统一压成 3 秒。
+视觉请求只在文本分类结果仍为 `UNKNOWN` 或低于最小置信度、且调用方提供经过隐私门禁和缩放的 `analysis_image_base64` 时发送；敏感应用/域名不会进入视觉请求。实际流程是 `Rules -> Text AI -> Vision AI fallback`，而不是“只要有截图就直接走 Vision”。各端点使用自己的 timeout；Control Center 的 AIHubMix 推荐配置为每个模型 20 秒，不再由 Classifier 统一压成 3 秒。
 
 开发测试若使用 `fake`，必须同时设置 `ai.developer_mode: true`；生产配置中 fake 会被强制关闭。
 
 ## Control Center 设置与 Secret
 
-现代 Control Center 通过 `/v1/settings/ai` 保存文本和视觉端点，并在保存后立即重建运行时 provider。`GET /v1/settings/ai` 只返回脱敏配置和 `secret_configured`，不会返回 key、secret 文件名或绝对路径。
+现代 Control Center 通过 `/v1/settings/ai` 保存文本和视觉端点，并在保存后立即重建运行时 provider。`GET /v1/settings/ai` 只返回脱敏配置和 `api_key_configured`，不会返回 key、secret 文件名或绝对路径。
 
-密钥使用 `/v1/settings/ai/secret` 单独写入或删除。Supervisor 在 `config/secrets` 中原子替换密钥文件；React 输入框不回显已经保存的值。`POST /v1/settings/ai/test` 会向选定 provider 发出最小结构化请求，并只返回 provider、实际成功的 model、延迟和有限错误种类。测试会遵守模型链，因此主模型失败时可能调用配置的付费备用模型；没有真实凭据时不得把连接测试标记为 PASS。
+密钥使用 `/v1/settings/ai/secret` 单独写入或删除。Supervisor 在 `config/secrets` 中原子替换密钥文件；React 输入框不回显已经保存的值。`POST /v1/settings/ai/test` 会向选定 provider 发出最小结构化请求，并只返回 provider、实际成功的 model、延迟和有限错误种类。HTTP 429 会明确返回 `rate_limited`，不会再误报成 `invalid_response`。测试会遵守模型链，因此主模型失败时可能调用配置的付费备用模型；没有真实凭据时不得把连接测试标记为 PASS。

@@ -140,7 +140,7 @@ export interface NativeAIConnectionResult {
   provider: string;
   model: string;
   latency_ms: number;
-  error_kind?: "authentication_failed" | "timeout" | "network_unavailable" | "model_not_found" | "invalid_response" | "provider_unavailable" | "unavailable";
+  error_kind?: "authentication_failed" | "rate_limited" | "timeout" | "network_unavailable" | "model_not_found" | "invalid_response" | "provider_unavailable" | "unavailable";
 }
 
 export interface NativeHistoryDay {

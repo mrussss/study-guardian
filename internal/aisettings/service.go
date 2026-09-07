@@ -2,7 +2,6 @@ package aisettings
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -278,7 +277,18 @@ func (s *Service) Status() providers.Status {
 
 func (s *Service) Test(ctx context.Context, target string) TestResult {
 	s.mu.RLock()
-	registry := providers.New(s.cfg)
+	// A connection test validates the selected endpoint even when AI is not yet
+	// enabled for normal runtime decisions. The user's enable switches remain
+	// unchanged in the persisted configuration.
+	testConfig := *s.cfg
+	testConfig.AI = s.cfg.AI
+	testConfig.AI.Enabled = true
+	if target == "text" {
+		testConfig.AI.Text.Enabled = true
+	} else if target == "vision" {
+		testConfig.AI.Vision.Enabled = true
+	}
+	registry := providers.New(&testConfig)
 	settings := sanitized(s.cfg.AI)
 	s.mu.RUnlock()
 	var provider classifier.TaskRelationProvider
@@ -288,7 +298,7 @@ func (s *Service) Test(ctx context.Context, target string) TestResult {
 		provider, endpoint = registry.Provider(), settings.Text
 	} else if target == "vision" {
 		provider, endpoint = registry.VisionProvider(), settings.Vision
-		request.AnalysisImageBase64 = fixedTestPNG()
+		request.AnalysisImageBase64 = fixedTestJPEG()
 	} else {
 		return TestResult{ErrorKind: "invalid_response"}
 	}
@@ -311,9 +321,10 @@ func (s *Service) Test(ctx context.Context, target string) TestResult {
 	return result
 }
 
-func fixedTestPNG() string {
-	raw := []byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 8, 215, 99, 248, 207, 192, 0, 0, 3, 1, 1, 0, 24, 221, 141, 24, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}
-	return base64.StdEncoding.EncodeToString(raw)
+func fixedTestJPEG() string {
+	// A real 1x1 JPEG keeps the connection probe aligned with the production
+	// image data URL emitted by the screen sensor.
+	return "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q=="
 }
 
 func classifyTestError(err error) string {
@@ -329,6 +340,10 @@ func classifyTestError(err error) string {
 		switch {
 		case httpErr.Status == 401 || httpErr.Status == 403:
 			return "authentication_failed"
+		case httpErr.Status == 408:
+			return "timeout"
+		case httpErr.Status == 429:
+			return "rate_limited"
 		case httpErr.Status == 404:
 			return "model_not_found"
 		case httpErr.Status >= 500:

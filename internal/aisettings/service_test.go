@@ -35,7 +35,8 @@ func TestAISettingsSecretIsWriteOnlyAndConnectionTestIsReal(t *testing.T) {
 	secretDir := filepath.Join(t.TempDir(), "secrets")
 	service := New(cfg, store, secretDir, nil, nil)
 	input := service.Settings()
-	input.Enabled = true
+	// Connection testing must work before the user enables AI for runtime use.
+	input.Enabled = false
 	input.Text = EndpointDTO{Enabled: true, Provider: "openai-compatible", Model: "test-model", BaseURL: server.URL, TimeoutSeconds: 2, JSONMode: "auto"}
 	if _, err := service.Save(context.Background(), input); err != nil {
 		t.Fatal(err)
@@ -54,6 +55,9 @@ func TestAISettingsSecretIsWriteOnlyAndConnectionTestIsReal(t *testing.T) {
 	result := service.Test(context.Background(), "text")
 	if !result.OK || requests != 1 || result.Provider != "openai-compatible" {
 		t.Fatalf("test=%+v requests=%d", result, requests)
+	}
+	if service.Settings().Enabled {
+		t.Fatal("connection test must not enable AI runtime settings")
 	}
 	secretPath := filepath.Join(secretDir, "text.key")
 	if data, err := os.ReadFile(secretPath); err != nil || strings.TrimSpace(string(data)) != "secret-value" {
@@ -84,6 +88,24 @@ func TestAIConnectionFailureCategoryIsBounded(t *testing.T) {
 	_, _ = service.PutSecret(context.Background(), "text", "wrong")
 	result := service.Test(context.Background(), "text")
 	if result.OK || result.ErrorKind != "authentication_failed" {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestAIConnectionReportsRateLimitInsteadOfInvalidResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"model rate limited"}}`, http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	store, _ := storage.OpenSQLite(":memory:")
+	defer store.Close()
+	service := New(config.DefaultConfig(), store, filepath.Join(t.TempDir(), "secrets"), nil, nil)
+	input := service.Settings()
+	input.Text = EndpointDTO{Enabled: true, Provider: "openai-compatible", Model: "busy", BaseURL: server.URL, TimeoutSeconds: 2, JSONMode: "auto"}
+	_, _ = service.Save(context.Background(), input)
+	_, _ = service.PutSecret(context.Background(), "text", "configured")
+	result := service.Test(context.Background(), "text")
+	if result.OK || result.ErrorKind != "rate_limited" {
 		t.Fatalf("result=%+v", result)
 	}
 }
