@@ -46,6 +46,40 @@ func TestFakeProviderRequiresDeveloperMode(t *testing.T) {
 	}
 }
 
+func TestLegacyConfigWithoutProxyDefaultsToEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("ai:\n  enabled: false\n  text:\n    provider: none\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AI.Proxy != (AIProxyConfig{Mode: AIProxyEnvironment}) {
+		t.Fatalf("proxy=%#v", cfg.AI.Proxy)
+	}
+}
+
+func TestManualProxyValidationIsStrictAndCredentialFree(t *testing.T) {
+	valid := AIProxyConfig{Mode: AIProxyManual, URL: "https://127.0.0.1:7890"}
+	if err := ValidateAIProxyConfig(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []string{
+		"http://user:secret@127.0.0.1:7890",
+		"http://127.0.0.1:7890/path",
+		"http://127.0.0.1:7890/?key=secret",
+		"http://127.0.0.1:7890/#secret",
+		"socks5://127.0.0.1:7890",
+		"http://",
+	} {
+		if err := ValidateAIProxyConfig(AIProxyConfig{Mode: AIProxyManual, URL: raw}); err == nil {
+			t.Fatalf("proxy URL %q should be rejected", raw)
+		}
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,7 @@ type AIConfig struct {
 	DeveloperMode           bool             `yaml:"developer_mode"`
 	UseVisionOnlyWhenNeeded bool             `yaml:"use_vision_only_when_needed"`
 	MinConfidence           float64          `yaml:"min_confidence"`
+	Proxy                   AIProxyConfig    `yaml:"proxy"`
 	Text                    AIEndpointConfig `yaml:"text"`
 	Vision                  AIEndpointConfig `yaml:"vision"`
 	// Legacy fields are retained for backwards-compatible loading. New code
@@ -87,6 +89,17 @@ type AIConfig struct {
 	APIKey           string `yaml:"api_key"`
 	Endpoint         string `yaml:"endpoint"`
 	MigrationWarning string `yaml:"-"`
+}
+
+const (
+	AIProxyEnvironment = "environment"
+	AIProxyDirect      = "direct"
+	AIProxyManual      = "manual"
+)
+
+type AIProxyConfig struct {
+	Mode string `yaml:"mode" json:"mode"`
+	URL  string `yaml:"url" json:"url"`
 }
 
 type AIEndpointConfig struct {
@@ -202,6 +215,7 @@ func DefaultConfig() *Config {
 			Enabled:                 false,
 			UseVisionOnlyWhenNeeded: true,
 			MinConfidence:           0.75,
+			Proxy:                   AIProxyConfig{Mode: AIProxyEnvironment},
 			Provider:                "none",
 		},
 		Motivation: MotivationConfig{Enabled: true, DefaultDailyTargetMinutes: 120, CheckinThresholdMinutes: 30, IdleStaticCreditGraceSeconds: 300, APPerFocusHourMilli: 1000},
@@ -228,6 +242,9 @@ func LoadConfig(configPath string, tokenPath string) (*Config, error) {
 		}
 	}
 	NormalizeAIConfig(cfg, legacyAI)
+	if err := ValidateAIProxyConfig(cfg.AI.Proxy); err != nil {
+		return nil, fmt.Errorf("invalid AI proxy config: %w", err)
+	}
 	NormalizeMotivationConfig(cfg)
 	if err := ValidateReminderConfig(cfg); err != nil {
 		return nil, fmt.Errorf("invalid reminder config: %w", err)
@@ -276,6 +293,15 @@ func NormalizeAIConfig(cfg *Config, legacy bool) {
 	if cfg.AI.Text.Provider == "" {
 		cfg.AI.Text.Provider = "none"
 	}
+	cfg.AI.Proxy.Mode = strings.ToLower(strings.TrimSpace(cfg.AI.Proxy.Mode))
+	if cfg.AI.Proxy.Mode == "" {
+		cfg.AI.Proxy.Mode = AIProxyEnvironment
+	}
+	if cfg.AI.Proxy.Mode != AIProxyManual {
+		cfg.AI.Proxy.URL = ""
+	} else {
+		cfg.AI.Proxy.URL = strings.TrimSpace(cfg.AI.Proxy.URL)
+	}
 	if cfg.AI.Text.TimeoutSeconds <= 0 {
 		cfg.AI.Text.TimeoutSeconds = 6
 	}
@@ -298,6 +324,34 @@ func NormalizeAIConfig(cfg *Config, legacy bool) {
 	if legacy {
 		cfg.AI.MigrationWarning = "legacy flat AI config loaded in memory; run migrate-config.ps1 to persist schema v2"
 	}
+}
+
+func ValidateAIProxyConfig(proxy AIProxyConfig) error {
+	mode := strings.ToLower(strings.TrimSpace(proxy.Mode))
+	if mode == "" {
+		mode = AIProxyEnvironment
+	}
+	if mode != AIProxyEnvironment && mode != AIProxyDirect && mode != AIProxyManual {
+		return fmt.Errorf("proxy mode must be environment, direct, or manual")
+	}
+	if mode != AIProxyManual {
+		if strings.TrimSpace(proxy.URL) != "" {
+			return fmt.Errorf("proxy url is only allowed in manual mode")
+		}
+		return nil
+	}
+	raw := strings.TrimSpace(proxy.URL)
+	if raw == "" || len(raw) > 2048 {
+		return fmt.Errorf("manual proxy url is required and must be at most 2048 characters")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Hostname() == "" {
+		return fmt.Errorf("manual proxy url must use http or https and include a valid host")
+	}
+	if u.User != nil || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return fmt.Errorf("manual proxy url must not include userinfo, path, query, or fragment")
+	}
+	return nil
 }
 
 func isLegacyAIBlock(data []byte) bool {

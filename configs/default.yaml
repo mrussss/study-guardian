@@ -59,6 +59,9 @@ ai:
   enabled: false
   use_vision_only_when_needed: true
   min_confidence: 0.75
+  proxy:
+    mode: "environment"
+    url: ""
   provider: "none" # enable and configure a real provider explicitly
   model: ""
   api_key: ""

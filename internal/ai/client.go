@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"study-guardian/internal/config"
 )
 
 // JSONClient is the business-neutral AI contract shared by classifier and
@@ -31,6 +34,7 @@ type Options struct {
 	Timeout          time.Duration
 	Temperature      *float64
 	HTTPClient       *http.Client
+	Proxy            config.AIProxyConfig
 }
 
 type Client struct {
@@ -41,6 +45,7 @@ type Client struct {
 	supportsJSONMode bool
 	temperature      *float64
 	httpClient       *http.Client
+	initErr          error
 }
 
 func NewClient(o Options) *Client {
@@ -54,7 +59,11 @@ func NewClient(o Options) *Client {
 		o.Timeout = 30 * time.Second
 	}
 	if o.HTTPClient == nil {
-		o.HTTPClient = &http.Client{Timeout: o.Timeout}
+		var err error
+		o.HTTPClient, err = NewHTTPClient(o.Timeout, o.Proxy)
+		if err != nil {
+			return &Client{endpoint: strings.TrimRight(o.Endpoint, "/"), model: o.Model, initErr: err}
+		}
 	}
 	return &Client{
 		endpoint:         strings.TrimRight(o.Endpoint, "/"),
@@ -111,10 +120,17 @@ type response struct {
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
+		Code    string `json:"code"`
+		Type    string `json:"type"`
 	} `json:"error,omitempty"`
+	Code string `json:"code,omitempty"`
+	Type string `json:"type,omitempty"`
 }
 
 func (c *Client) complete(ctx context.Context, messages []Message) ([]byte, error) {
+	if c.initErr != nil {
+		return nil, c.initErr
+	}
 	if strings.TrimSpace(c.model) == "" {
 		return nil, errors.New("AI model is required")
 	}
@@ -148,22 +164,30 @@ func (c *Client) doRequest(ctx context.Context, messages []Message, withFormat b
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("AI provider HTTP request failed: %w", err)
+		return "", TransportError{Cause: err}
 	}
 	defer resp.Body.Close()
 	var decoded response
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 256*1024)).Decode(&decoded); err != nil {
 		if resp.StatusCode != http.StatusOK {
 			return "", HTTPError{Status: resp.StatusCode, Message: "invalid provider response"}
 		}
 		return "", fmt.Errorf("failed to decode AI response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		message := "provider request failed"
-		if decoded.Error != nil && decoded.Error.Message != "" {
-			message = decoded.Error.Message
+		httpErr := HTTPError{Status: resp.StatusCode, RetryAfter: boundedRetryAfter(resp.Header.Get("Retry-After"))}
+		if decoded.Error != nil {
+			httpErr.Code = boundedProviderField(decoded.Error.Code)
+			httpErr.Type = boundedProviderField(decoded.Error.Type)
+			httpErr.UnsupportedJSONMode = unsupportedJSONModeMessage(decoded.Error.Message)
 		}
-		return "", HTTPError{Status: resp.StatusCode, Message: message, RetryAfter: resp.Header.Get("Retry-After")}
+		if httpErr.Code == "" {
+			httpErr.Code = boundedProviderField(decoded.Code)
+		}
+		if httpErr.Type == "" {
+			httpErr.Type = boundedProviderField(decoded.Type)
+		}
+		return "", httpErr
 	}
 	if decoded.Error != nil {
 		return "", errors.New("AI provider API error")
@@ -175,13 +199,19 @@ func (c *Client) doRequest(ctx context.Context, messages []Message, withFormat b
 }
 
 type HTTPError struct {
-	Status     int
-	Message    string
-	RetryAfter string
+	Status              int
+	Code                string
+	Type                string
+	Message             string // retained for source compatibility; never populated with provider text
+	RetryAfter          string
+	UnsupportedJSONMode bool
 }
 
 func (e HTTPError) Error() string {
-	return fmt.Sprintf("AI provider returned HTTP status %d: %s", e.Status, e.Message)
+	if e.Code != "" {
+		return fmt.Sprintf("AI provider returned HTTP status %d (%s)", e.Status, e.Code)
+	}
+	return fmt.Sprintf("AI provider returned HTTP status %d", e.Status)
 }
 
 func isUnsupportedJSONMode(err error) bool {
@@ -189,8 +219,31 @@ func isUnsupportedJSONMode(err error) bool {
 	if !errors.As(err, &e) {
 		return false
 	}
-	message := strings.ToLower(e.Message)
-	return (e.Status == 400 || e.Status == 422) &&
-		(strings.Contains(message, "response_format") || strings.Contains(message, "unsupported") ||
-			strings.Contains(message, "json_object") || strings.Contains(message, "json mode"))
+	return (e.Status == 400 || e.Status == 422) && e.UnsupportedJSONMode
+}
+
+func boundedProviderField(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) > 64 {
+		return ""
+	}
+	for _, char := range value {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' && char != '-' {
+			return ""
+		}
+	}
+	return value
+}
+
+func boundedRetryAfter(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 32 {
+		return ""
+	}
+	return value
+}
+
+func unsupportedJSONModeMessage(value string) bool {
+	value = strings.ToLower(value)
+	return strings.Contains(value, "response_format") || strings.Contains(value, "unsupported") || strings.Contains(value, "json_object") || strings.Contains(value, "json mode")
 }
