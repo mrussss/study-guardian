@@ -72,3 +72,12 @@ bash scripts/test-all.sh
 AI 的 `ai.proxy` 是文字、视觉和 Daily Review 共享的 transport 策略。默认 `environment` 只读取 Supervisor 进程的 `HTTP_PROXY`/`HTTPS_PROXY`；`direct` 强制直连；`manual` 仅接受不带凭据、路径、查询或片段的 `http(s)` 主机地址。Control Center 保存草稿后才能执行“测试网络”，该测试请求文字端点的 `/models`，合法 HTTP 响应即视为网络可达，不返回响应正文。
 
 模型 fallback 只接受明确的模型级失败：模型不存在、无可用通道、明确模型限流或无效输出。裸 429、账号/配额、鉴权、DNS/TCP、代理、TLS、取消和未归属超时都停止当前 provider 的模型链。没有真实凭据时，不能把模型连接测试或视觉 JPEG E2E 标记为通过。
+
+### 真实 AIHubMix E2E 记录（2026-09-07）
+
+- 代理测试：`manual`，1005ms，`error_kind` 为空；Text、Vision、Daily Review 均通过同一共享 transport 和手动代理。
+- Text：provider `aihubmix`，model `glm-5.3-flash`，4792ms，`error_kind` 为空。
+- Vision：provider `aihubmix`，model `ox-alpha`，4853ms，`error_kind` 为空；使用真实 JPEG 请求验证，不把普通文字模型作为视觉模型。
+- Daily Review：`READY` / `AI`，provider `aihubmix`，model `glm-5.3-flash`，生成 API 总耗时 45772ms，`error_code` 为空；监督状态接口未被阻塞。
+- 本轮曾验证 20 秒和 30 秒超时会写入 deterministic fallback；模型级失败与传输/账户失败的 fallback 分类由 Go 回归测试覆盖。费用信息不由这些接口返回，因此只记录为“未知/可能产生费用”，不推断金额。
+- 记录不包含 API Key、请求正文、截图内容、聊天内容或个人数据。
