@@ -44,7 +44,7 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 		return DailyEvidenceBundle{}, err
 	}
 	for _, item := range distractions {
-		bundle.Distractions = append(bundle.Distractions, DistractionSummary{Ref: "distraction:" + item.ID, ID: item.ID, DurationSeconds: item.DurationSeconds, App: item.App, Title: item.Title, Domain: item.Domain, Task: item.Task})
+		bundle.Distractions = append(bundle.Distractions, DistractionSummary{Ref: "distraction:" + item.ID, ID: item.ID, DurationSeconds: item.DurationSeconds, App: item.App, Title: item.Title, Domain: item.Domain, Task: item.Task, ReminderLevel: item.ReminderLevel, Source: item.Source, Confidence: item.Confidence, EndReason: item.EndReason})
 	}
 	reminders, err := a.store.ListRemindersForDate(ctx, date)
 	if err != nil {
@@ -94,7 +94,29 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 		return DailyEvidenceBundle{}, err
 	}
 	for _, item := range semantic {
-		bundle.Semantic = append(bundle.Semantic, SemanticSummary{ID: item.ID, Ref: "semantic:" + itoa64(item.ID), ObservedAt: item.ObservedAt, Task: item.Task, App: item.App, Title: item.Title, Domain: item.Domain, Relation: item.Relation, Confidence: item.Confidence, Activity: item.Activity, SourceKind: item.SourceKind})
+		bundle.Semantic = append(bundle.Semantic, SemanticSummary{ID: item.ID, Ref: "semantic:" + itoa64(item.ID), ObservedAt: item.ObservedAt, Task: item.Task, App: item.App, Title: item.Title, Domain: item.Domain, Relation: item.Relation, Confidence: item.Confidence, Activity: item.Activity, Topic: item.Topic, Subtopic: item.Subtopic, Action: item.Action, ProgressSignal: item.ProgressSignal, SourceKind: item.SourceKind, DurationSeconds: item.DurationSeconds, StableIntervalSeconds: item.StableIntervalSeconds})
+	}
+	missions, err := a.store.ListCompletedMissionsForDate(ctx, date)
+	if err != nil {
+		return DailyEvidenceBundle{}, err
+	}
+	for _, mission := range missions {
+		if mission.CompletedAt == nil {
+			continue
+		}
+		linkedTask := ""
+		if mission.LinkedTaskName != nil {
+			linkedTask = *mission.LinkedTaskName
+		}
+		linkConfidence := 0.0
+		if mission.LinkConfidence != nil {
+			linkConfidence = *mission.LinkConfidence
+		}
+		bundle.Missions = append(bundle.Missions, CompletedMissionSummary{
+			Ref: "mission:" + mission.ID, ID: mission.ID, Title: mission.Title,
+			Description: mission.Description, CompletedAt: *mission.CompletedAt,
+			LinkedTaskName: linkedTask, LinkConfidence: linkConfidence,
+		})
 	}
 	if len(exclusions) > 0 {
 		bundle.Warnings = append(bundle.Warnings, "review exclusions applied")
@@ -104,7 +126,7 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 		StudyStatePresent: statePresent,
 		HasEligibleChat:   len(bundle.ChatTurns) > 0,
 		HasSemantic:       len(bundle.Semantic) > 0,
-		HasAccomplishment: false,
+		HasAccomplishment: len(bundle.Missions) > 0,
 	}
 	return bundle, nil
 }

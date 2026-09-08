@@ -26,11 +26,15 @@ type ClassificationRequest struct {
 	UserMode            string `json:"user_mode"`
 }
 type ClassificationResponse struct {
-	Relation    state.TaskRelation `json:"relation"`
-	Confidence  float64            `json:"confidence"`
-	Activity    string             `json:"activity"`
-	TaskRelated bool               `json:"task_related"`
-	ReasonShort string             `json:"reason_short"`
+	Relation       state.TaskRelation `json:"relation"`
+	Confidence     float64            `json:"confidence"`
+	Activity       string             `json:"activity"`
+	Topic          string             `json:"topic"`
+	Subtopic       string             `json:"subtopic"`
+	Action         string             `json:"action"`
+	ProgressSignal string             `json:"progress_signal"`
+	TaskRelated    bool               `json:"task_related"`
+	ReasonShort    string             `json:"reason_short"`
 }
 type TaskRelationProvider interface {
 	Classify(context.Context, ClassificationRequest) (*ClassificationResponse, error)
@@ -136,8 +140,9 @@ func boundedProviderError(err error) string {
 }
 
 const (
-	maxActivityLength = 200
-	maxReasonLength   = 240
+	maxSemanticFieldLength = 120
+	maxActivityLength      = 200
+	maxReasonLength        = 240
 )
 
 func ValidateClassificationResponse(resp *ClassificationResponse) error {
@@ -157,6 +162,41 @@ func ValidateClassificationResponse(resp *ClassificationResponse) error {
 	}
 	if strings.TrimSpace(resp.ReasonShort) == "" || len([]rune(resp.ReasonShort)) > maxReasonLength {
 		return fmt.Errorf("classification reason_short must be non-empty and at most %d characters", maxReasonLength)
+	}
+	for name, value := range map[string]string{
+		"activity": resp.Activity, "topic": resp.Topic, "subtopic": resp.Subtopic, "action": resp.Action,
+	} {
+		if err := validateSemanticText(name, value, maxSemanticFieldLength); err != nil {
+			return err
+		}
+	}
+	if resp.ProgressSignal == "" {
+		resp.ProgressSignal = state.ProgressUnknown
+	}
+	switch resp.ProgressSignal {
+	case state.ProgressObserving, state.ProgressReading, state.ProgressPracticing, state.ProgressCoding,
+		state.ProgressWriting, state.ProgressDebugging, state.ProgressReviewing, state.ProgressUnknown:
+	default:
+		return fmt.Errorf("invalid progress_signal %q", resp.ProgressSignal)
+	}
+	return nil
+}
+
+func validateSemanticText(name, value string, limit int) error {
+	trimmed := strings.TrimSpace(value)
+	if len([]rune(trimmed)) > limit {
+		return fmt.Errorf("classification %s is too long", name)
+	}
+	for _, r := range trimmed {
+		if r == '\n' || r == '\r' || r == '\x00' || (r < 0x20 && r != '\t') {
+			return fmt.Errorf("classification %s contains control characters", name)
+		}
+	}
+	lower := strings.ToLower(trimmed)
+	for _, marker := range []string{"api_key", "apikey", "authorization", "bearer ", "token=", "password", "secret", "data:image/", "http://", "https://"} {
+		if strings.Contains(lower, marker) {
+			return fmt.Errorf("classification %s contains disallowed sensitive content", name)
+		}
 	}
 	return nil
 }
@@ -262,7 +302,7 @@ func (p *OpenAICompatibleProvider) Classify(ctx context.Context, req Classificat
 		return nil, fmt.Errorf("provider cooldown until %s", u.UTC().Format(time.RFC3339))
 	}
 	p.mu.Unlock()
-	system := `You are an AI study guardian assistant. Classify if the user's current computer activity is related to their declared study task. Respond ONLY with a valid JSON object with the following schema: {"relation":"FOCUSED|DISTRACTED|UNKNOWN","confidence":number,"activity":"short description","task_related":boolean,"reason_short":"brief justification"}`
+	system := `You are an AI study guardian assistant. Classify the user's current computer activity against their declared study task. Respond ONLY with a valid JSON object: {"relation":"FOCUSED|DISTRACTED|UNKNOWN","activity":"short bounded label","topic":"short topic or empty","subtopic":"short subtopic or empty","action":"short action or empty","progress_signal":"OBSERVING|READING|PRACTICING|CODING|WRITING|DEBUGGING|REVIEWING|UNKNOWN","confidence":number,"task_related":boolean,"reason_short":"brief bounded justification"}. Never include URLs, paths, secrets, credentials, screenshots or copied page text.`
 	user := fmt.Sprintf("Declared Task: %s\nActive Window: %s\nWindow Title: %s\nDomain: %s", req.Task, req.App, req.Title, req.Domain)
 	messages := []ai.Message{{Role: "system", Content: system}}
 	if req.AnalysisImageBase64 != "" {

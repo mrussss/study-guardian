@@ -87,9 +87,11 @@ func (re *RuleEngine) Classify(app, title, domain, task string) state.Classifica
 	for _, devApp := range re.devApps {
 		if strings.Contains(appLower, devApp) {
 			return state.ClassificationResult{
-				Relation:   state.RelationFocused,
-				Confidence: 0.85,
-				Reason:     "App is a recognized development tool: " + devApp,
+				Relation:   state.RelationUnknown,
+				Confidence: 0.65,
+				Reason:     "Development tool is a candidate signal; task relation needs corroboration: " + devApp,
+				Activity:   "CODING",
+				ProgressSignal: state.ProgressCoding,
 				IsFromRule: true,
 			}
 		}
@@ -99,9 +101,11 @@ func (re *RuleEngine) Classify(app, title, domain, task string) state.Classifica
 	for _, devDomain := range re.devDomains {
 		if strings.Contains(domainLower, devDomain) {
 			return state.ClassificationResult{
-				Relation:   state.RelationFocused,
-				Confidence: 0.80,
-				Reason:     "Domain is a recognized learning/developer resource: " + devDomain,
+				Relation:   state.RelationUnknown,
+				Confidence: 0.65,
+				Reason:     "Learning/developer resource is a candidate signal; task relation needs corroboration: " + devDomain,
+				Activity:   "READING",
+				ProgressSignal: state.ProgressReading,
 				IsFromRule: true,
 			}
 		}

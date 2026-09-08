@@ -51,3 +51,16 @@ func TestFallbackV2LowEvidenceHeadline(t *testing.T) {
 		t.Fatalf("headline=%q", doc.Headline)
 	}
 }
+
+func TestFallbackUsesCompletedMissionAsAccomplishment(t *testing.T) {
+	doc := BuildFallback(evidence.DailyEvidenceBundle{
+		Date: "2026-09-05",
+		Missions: []evidence.CompletedMissionSummary{{Ref: "mission:m-1", Title: "完成 Context 超时练习", CompletedAt: time.Date(2026, 9, 5, 10, 0, 0, 0, time.Local)}},
+	})
+	if len(doc.Accomplishments) != 1 || !strings.Contains(doc.Accomplishments[0].Text, "Context 超时练习") {
+		t.Fatalf("accomplishments=%+v", doc.Accomplishments)
+	}
+	if !strings.Contains(RenderMarkdown(doc, evidence.DailyEvidenceBundle{Date: "2026-09-05", Missions: []evidence.CompletedMissionSummary{{Title: "完成 Context 超时练习"}}}), "已完成任务：完成 Context 超时练习") {
+		t.Fatal("markdown omitted completed mission")
+	}
+}

@@ -118,3 +118,30 @@ func TestAggregatorUsesSemanticDatabaseIDReference(t *testing.T) {
 		t.Fatal("semantic evidence did not set quality.has_semantic")
 	}
 }
+
+func TestAggregatorIncludesCompletedMissionEvidence(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	linked := "Go"
+	if err := store.CreateMission(ctx, storage.Mission{ID: "m-1", Title: "完成 Context 超时练习", LinkedTaskName: &linked, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, completed, err := store.CompleteMission(ctx, "m-1", now.Add(30*time.Minute)); err != nil || !completed {
+		t.Fatalf("complete mission=%v err=%v", completed, err)
+	}
+	bundle, err := NewAggregator(store, time.UTC).Build(ctx, "2026-09-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Missions) != 1 || bundle.Missions[0].Title != "完成 Context 超时练习" || bundle.Missions[0].LinkedTaskName != "Go" {
+		t.Fatalf("missions=%+v", bundle.Missions)
+	}
+	if !bundle.Quality.HasAccomplishment {
+		t.Fatal("completed mission did not set accomplishment quality")
+	}
+}

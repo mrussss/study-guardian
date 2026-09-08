@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"study-guardian/internal/ai"
 	"study-guardian/internal/config"
 	"study-guardian/internal/rules"
 	"study-guardian/internal/state"
@@ -65,6 +66,10 @@ func (s *Service) Classify(
 ) state.ClassificationResult {
 	// 1. Local deterministic rules first!
 	ruleRes := s.ruleEngine.Classify(app, title, domain, task)
+	if ruleRes.SourceKind == "" {
+		ruleRes.SourceKind = state.SourceKindLocalRule
+	}
+	ruleRes.IsFromRule = true
 	s.mu.RLock()
 	aiConfig := s.aiConfig
 	textProvider := s.provider
@@ -108,11 +113,25 @@ func (s *Service) Classify(
 	cacheKey := computeCacheKey(providerName, app, title, domain, task, screenHash, requestedVision)
 	now := time.Now()
 	if s.storage != nil {
-		if rel, conf, reason, found := s.storage.GetClassificationCache(ctx, cacheKey, now); found {
+		if cached, found := s.storage.GetClassificationCacheRecord(ctx, cacheKey, now); found {
+			sourceKind := cached.SourceKind
+			if sourceKind == "" {
+				if requestedVision {
+					sourceKind = state.SourceKindVisionAI
+				} else {
+					sourceKind = state.SourceKindTextAI
+				}
+			}
 			return state.ClassificationResult{
-				Relation:   state.TaskRelation(rel),
-				Confidence: conf,
-				Reason:     reason + " (cached)",
+				Relation:       state.TaskRelation(cached.Relation),
+				Activity:       cached.Activity,
+				Topic:          cached.Topic,
+				Subtopic:       cached.Subtopic,
+				Action:         cached.Action,
+				ProgressSignal: cached.ProgressSignal,
+				Confidence:     cached.Confidence,
+				Reason:         cached.Reason + " (cached)",
+				SourceKind:     sourceKind,
 				IsFromRule: false,
 			}
 		}
@@ -154,23 +173,44 @@ func (s *Service) Classify(
 
 	resp, err := provider.Classify(aiCtx, aiReq)
 	if err != nil {
-		log.Printf("[Classifier] AI Provider (%s) failed or timed out: %v; falling back to rules", provider.Name(), err)
+		failure := ai.ClassifyError(err)
+		log.Printf("[Classifier] AI Provider (%s) failed: kind=%s; falling back to rules", provider.Name(), failure.Kind)
 		return ruleRes
 	}
 	if err := validateClassificationResponse(resp); err != nil {
-		log.Printf("[Classifier] AI Provider (%s) returned invalid data: %v; falling back to rules", provider.Name(), err)
+		log.Printf("[Classifier] AI Provider (%s) returned invalid structured data; kind=%s; falling back to rules", provider.Name(), ai.FailureInvalidOutput)
 		return ruleRes
 	}
 
 	// 6. Save in cache
 	if s.storage != nil && resp.Confidence >= 0.70 {
-		_ = s.storage.SetClassificationCache(ctx, cacheKey, string(resp.Relation), resp.Confidence, resp.ReasonShort, now, now.Add(10*time.Minute))
+		_ = s.storage.SetClassificationCacheRecord(ctx, cacheKey, storage.ClassificationCacheRecord{
+			Relation: string(resp.Relation), Confidence: resp.Confidence, Reason: resp.ReasonShort,
+			Activity: resp.Activity, Topic: resp.Topic, Subtopic: resp.Subtopic, Action: resp.Action,
+			ProgressSignal: resp.ProgressSignal, SourceKind: func() string {
+				if requestedVision {
+					return state.SourceKindVisionAI
+				}
+				return state.SourceKindTextAI
+			}(),
+		}, now, now.Add(10*time.Minute))
 	}
 
 	return state.ClassificationResult{
-		Relation:   resp.Relation,
-		Confidence: resp.Confidence,
-		Reason:     fmt.Sprintf("[AI %s] %s: %s", provider.Name(), resp.Activity, resp.ReasonShort),
+		Relation:       resp.Relation,
+		Activity:       resp.Activity,
+		Topic:          resp.Topic,
+		Subtopic:       resp.Subtopic,
+		Action:         resp.Action,
+		ProgressSignal: resp.ProgressSignal,
+		Confidence:     resp.Confidence,
+		Reason:         fmt.Sprintf("[AI %s] %s", provider.Name(), resp.ReasonShort),
+		SourceKind: func() string {
+			if requestedVision {
+				return state.SourceKindVisionAI
+			}
+			return state.SourceKindTextAI
+		}(),
 		IsFromRule: false,
 	}
 }

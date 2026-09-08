@@ -54,6 +54,7 @@ type ReviewInput struct {
 	Reminders            []evidence.ReminderSummary    `json:"reminders"`
 	Motivation           evidence.MotivationSummary    `json:"motivation"`
 	Semantic             []evidence.SemanticSummary    `json:"semantic"`
+	CompletedMissions   []evidence.CompletedMissionSummary `json:"completed_missions"`
 	ChatConversations    []CompactedConversation       `json:"chat_conversations"`
 	Quality              evidence.EvidenceQuality      `json:"quality"`
 	Warnings             []string                      `json:"warnings"`
@@ -90,6 +91,7 @@ func Compact(bundle evidence.DailyEvidenceBundle, limits ReviewLimits) (ReviewIn
 		Reminders:            append([]evidence.ReminderSummary(nil), bundle.Reminders...),
 		Motivation:           bundle.Motivation,
 		Semantic:             append([]evidence.SemanticSummary(nil), bundle.Semantic...),
+		CompletedMissions:    append([]evidence.CompletedMissionSummary(nil), bundle.Missions...),
 		ChatConversations:    conversations,
 		Quality:              bundle.Quality,
 		Warnings:             append([]string(nil), bundle.Warnings...),
@@ -271,6 +273,11 @@ func boundFixedEvidence(input *ReviewInput) {
 		input.Semantic[index].Title = headTail(input.Semantic[index].Title, 1024)
 		input.Semantic[index].Domain = headTail(input.Semantic[index].Domain, 512)
 		input.Semantic[index].SourceKind = headTail(input.Semantic[index].SourceKind, 128)
+	}
+	for index := range input.CompletedMissions {
+		input.CompletedMissions[index].Title = headTail(input.CompletedMissions[index].Title, 512)
+		input.CompletedMissions[index].Description = headTail(input.CompletedMissions[index].Description, 1024)
+		input.CompletedMissions[index].LinkedTaskName = headTail(input.CompletedMissions[index].LinkedTaskName, 512)
 	}
 	for index := range input.Warnings {
 		input.Warnings[index] = headTail(input.Warnings[index], 1024)

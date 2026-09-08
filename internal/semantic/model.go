@@ -42,29 +42,36 @@ var DefaultTiming = Timing{
 // TickOutcome/state values already produced by Supervisor. It intentionally
 // contains no screenshot or AI-specific input.
 type Candidate struct {
-	ObservedAt  time.Time
-	Fresh       bool
-	UserMode    state.UserMode
-	Task        string
-	Interaction state.InteractionState
-	Relation    state.TaskRelation
-	Privacy     state.PrivacyState
-	App         string
-	Title       string
-	Domain      string
+	ObservedAt     time.Time
+	Fresh          bool
+	UserMode       state.UserMode
+	Task           string
+	Interaction    state.InteractionState
+	Relation       state.TaskRelation
+	Privacy        state.PrivacyState
+	App            string
+	Title          string
+	Domain         string
+	ScreenHash     string
+	Classification state.ClassificationResult
 }
 
 type CurrentActivityView struct {
-	SchemaVersion int                    `json:"schema_version"`
-	ObservedAt    time.Time              `json:"observed_at"`
-	Fresh         bool                   `json:"fresh"`
-	UserMode      state.UserMode         `json:"user_mode"`
-	Task          string                 `json:"task"`
-	Interaction   state.InteractionState `json:"interaction"`
-	Relation      state.TaskRelation     `json:"relation"`
-	Privacy       state.PrivacyState     `json:"privacy"`
-	Activity      Activity               `json:"activity"`
-	Confidence    float64                `json:"confidence"`
+	SchemaVersion  int                    `json:"schema_version"`
+	ObservedAt     time.Time              `json:"observed_at"`
+	Fresh          bool                   `json:"fresh"`
+	UserMode       state.UserMode         `json:"user_mode"`
+	Task           string                 `json:"task"`
+	Interaction    state.InteractionState `json:"interaction"`
+	Relation       state.TaskRelation     `json:"relation"`
+	Privacy        state.PrivacyState     `json:"privacy"`
+	Activity       Activity               `json:"activity"`
+	Topic          string                 `json:"topic,omitempty"`
+	Subtopic       string                 `json:"subtopic,omitempty"`
+	Action         string                 `json:"action,omitempty"`
+	ProgressSignal string                 `json:"progress_signal,omitempty"`
+	Confidence     float64                `json:"confidence"`
+	SourceKind     string                 `json:"source_kind,omitempty"`
 }
 
 func emptyView() CurrentActivityView {

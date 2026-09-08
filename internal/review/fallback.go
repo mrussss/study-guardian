@@ -44,7 +44,18 @@ func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
 		if semantic.Confidence < .6 {
 			continue
 		}
-		addTopic(semantic.Activity, "来自稳定的本地语义记录；只说明出现过该活动。", semantic.Ref, semantic.Confidence)
+		name := semantic.Topic
+		if name == "" {
+			name = semantic.Subtopic
+		}
+		if name == "" {
+			name = semantic.Activity
+		}
+		detail := "来自结构化语义记录；只说明出现过该活动。"
+		if semantic.Action != "" {
+			detail = fmt.Sprintf("记录到“%s”这一学习动作，来源为 %s。", semantic.Action, semantic.SourceKind)
+		}
+		addTopic(name, detail, semantic.Ref, semantic.Confidence)
 	}
 	for _, turn := range bundle.ChatTurns {
 		name := cleanTopic(turn.TaskAtStart)
@@ -52,6 +63,20 @@ func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
 			name = boundedChatTopic(turn.ConversationTitle, turn.UserContent)
 		}
 		addTopic(name, "今天有与该主题相关的 ChatGPT 学习讨论；讨论本身不代表已经独立掌握。", turn.Ref, .72)
+	}
+	for _, mission := range bundle.Missions {
+		name := cleanTopic(mission.Title)
+		if name == "" {
+			continue
+		}
+		doc.Accomplishments = append(doc.Accomplishments, Accomplishment{
+			Text:         fmt.Sprintf("完成任务：%s", name),
+			EvidenceRefs: []string{mission.Ref},
+			Confidence:   1,
+		})
+		if mission.LinkedTaskName != "" {
+			addTopic(mission.LinkedTaskName, "该任务有明确的完成记录；完成记录不代表已经掌握全部内容。", mission.Ref, 1)
+		}
 	}
 
 	for index, task := range tasks {
@@ -123,6 +148,7 @@ func fallbackHeadline(bundle evidence.DailyEvidenceBundle, tasks []taskInvestmen
 
 func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 	byKey := map[string]*taskInvestment{}
+	sessionKeys := map[string]bool{}
 	for _, session := range bundle.Sessions {
 		if session.Mode != "STUDY" {
 			continue
@@ -132,6 +158,7 @@ func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 			continue
 		}
 		key := strings.ToLower(name)
+		sessionKeys[key] = true
 		item := byKey[key]
 		if item == nil {
 			item = &taskInvestment{Name: name}
@@ -146,6 +173,67 @@ func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 		}
 		if last.After(item.LastAt) {
 			item.LastAt = last
+		}
+	}
+	// Semantic, mission and chat evidence can recover a task label when a
+	// session row is temporarily missing. Never add semantic duration on top of
+	// an existing session task, because that would double-count focus time.
+	for _, semantic := range bundle.Semantic {
+		name := cleanTopic(semantic.Task)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if sessionKeys[key] {
+			continue
+		}
+		item := byKey[key]
+		if item == nil {
+			item = &taskInvestment{Name: name}
+			byKey[key] = item
+		}
+		item.Seconds += max64(semantic.DurationSeconds, 0)
+		item.References = append(item.References, semantic.Ref)
+		if semantic.ObservedAt.After(item.LastAt) {
+			item.LastAt = semantic.ObservedAt
+		}
+	}
+	for _, mission := range bundle.Missions {
+		name := cleanTopic(mission.LinkedTaskName)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if sessionKeys[key] {
+			continue
+		}
+		item := byKey[key]
+		if item == nil {
+			item = &taskInvestment{Name: name}
+			byKey[key] = item
+		}
+		item.References = append(item.References, mission.Ref)
+		if mission.CompletedAt.After(item.LastAt) {
+			item.LastAt = mission.CompletedAt
+		}
+	}
+	for _, turn := range bundle.ChatTurns {
+		name := cleanTopic(turn.TaskAtStart)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if sessionKeys[key] {
+			continue
+		}
+		item := byKey[key]
+		if item == nil {
+			item = &taskInvestment{Name: name}
+			byKey[key] = item
+		}
+		item.References = append(item.References, turn.Ref)
+		if turn.ObservedAt.After(item.LastAt) {
+			item.LastAt = turn.ObservedAt
 		}
 	}
 	items := make([]taskInvestment, 0, len(byKey))
@@ -197,6 +285,9 @@ func RenderMarkdown(doc Document, bundle evidence.DailyEvidenceBundle) string {
 		b.WriteString("- 暂无足够主题证据\n")
 	}
 	b.WriteString("\n## 可以确认\n- 上述时长、任务标签和记录数量来自本地事实记录。\n")
+	for _, mission := range bundle.Missions {
+		fmt.Fprintf(&b, "- 已完成任务：%s\n", safeLine(mission.Title))
+	}
 	b.WriteString("\n## 未完成 / 不能确认\n")
 	for _, item := range doc.Unfinished {
 		fmt.Fprintf(&b, "- %s\n", safeLine(item))

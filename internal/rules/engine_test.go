@@ -16,9 +16,9 @@ func TestRuleEngine(t *testing.T) {
 	}
 
 	// 2. Dev app
-	res = engine.Classify("Code.exe", "server.go - study-guardian", "", "Go Lab")
-	if res.Relation != state.RelationFocused {
-		t.Fatalf("expected FOCUSED for VS Code, got %s", res.Relation)
+	res = engine.Classify("Code.exe", "server.go - study-guardian", "", "Rust Lab")
+	if res.Relation != state.RelationUnknown || res.Confidence >= 0.75 {
+		t.Fatalf("expected candidate UNKNOWN for VS Code, got %+v", res)
 	}
 
 	// 3. Task matching keyword

@@ -12,6 +12,7 @@ type DailyEvidenceBundle struct {
 	Motivation   MotivationSummary    `json:"motivation"`
 	ChatTurns    []ChatTurnSummary    `json:"chat_turns"`
 	Semantic     []SemanticSummary    `json:"semantic"`
+	Missions     []CompletedMissionSummary `json:"completed_missions"`
 	Quality      EvidenceQuality      `json:"quality"`
 	Warnings     []string             `json:"warnings"`
 }
@@ -35,13 +36,17 @@ type SessionSummary struct {
 }
 
 type DistractionSummary struct {
-	Ref             string `json:"ref"`
-	ID              string `json:"id"`
-	DurationSeconds int64  `json:"duration_seconds"`
-	App             string `json:"app"`
-	Title           string `json:"title"`
-	Domain          string `json:"domain"`
-	Task            string `json:"task"`
+	Ref             string  `json:"ref"`
+	ID              string  `json:"id"`
+	DurationSeconds int64   `json:"duration_seconds"`
+	App             string  `json:"app"`
+	Title           string  `json:"title"`
+	Domain          string  `json:"domain"`
+	Task            string  `json:"task"`
+	ReminderLevel   string  `json:"reminder_level"`
+	Source          string  `json:"source"`
+	Confidence      float64 `json:"confidence"`
+	EndReason       string  `json:"end_reason"`
 }
 
 type ReminderSummary struct {
@@ -74,17 +79,33 @@ type ChatTurnSummary struct {
 }
 
 type SemanticSummary struct {
-	ID         int64     `json:"id"`
-	Ref        string    `json:"ref"`
-	ObservedAt time.Time `json:"observed_at"`
-	Task       string    `json:"task"`
-	App        string    `json:"app"`
-	Title      string    `json:"title"`
-	Domain     string    `json:"domain"`
-	Relation   string    `json:"relation"`
-	Confidence float64   `json:"confidence"`
-	Activity   string    `json:"activity"`
-	SourceKind string    `json:"source_kind"`
+	ID                    int64     `json:"id"`
+	Ref                   string    `json:"ref"`
+	ObservedAt            time.Time `json:"observed_at"`
+	Task                  string    `json:"task"`
+	App                   string    `json:"app"`
+	Title                 string    `json:"title"`
+	Domain                string    `json:"domain"`
+	Relation              string    `json:"relation"`
+	Confidence            float64   `json:"confidence"`
+	Activity              string    `json:"activity"`
+	Topic                 string    `json:"topic"`
+	Subtopic              string    `json:"subtopic"`
+	Action                string    `json:"action"`
+	ProgressSignal        string    `json:"progress_signal"`
+	SourceKind            string    `json:"source_kind"`
+	DurationSeconds       int64     `json:"duration_seconds"`
+	StableIntervalSeconds int64     `json:"stable_interval_seconds"`
+}
+
+type CompletedMissionSummary struct {
+	Ref             string    `json:"ref"`
+	ID              string    `json:"id"`
+	Title           string    `json:"title"`
+	Description     string    `json:"description"`
+	CompletedAt     time.Time `json:"completed_at"`
+	LinkedTaskName  string    `json:"linked_task_name,omitempty"`
+	LinkConfidence  float64   `json:"link_confidence,omitempty"`
 }
 
 type EvidenceQuality struct {
