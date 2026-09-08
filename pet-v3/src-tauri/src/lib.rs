@@ -91,6 +91,7 @@ const SUPERVISOR_GET_PATHS: &[&str] = &[
     "/v1/task-presets",
     "/v1/settings/reminder",
     "/v1/settings/ai",
+    "/v1/settings/automation",
     "/v1/motivation/status",
     "/v1/motivation/settings",
     "/v1/motivation/history?days=7",
@@ -190,11 +191,15 @@ struct SupervisorDashboardSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     status: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    semantic: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     motivation: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     task_presets: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reminder_settings: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    automation_settings: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ai_settings: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -226,9 +231,11 @@ fn disconnected_dashboard(kind: NativeErrorKind) -> SupervisorDashboardSnapshot 
     SupervisorDashboardSnapshot {
         connected: false,
         status: None,
+        semantic: None,
         motivation: None,
         task_presets: None,
         reminder_settings: None,
+        automation_settings: None,
         ai_settings: None,
         history: None,
         achievements: None,
@@ -842,6 +849,19 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
     if let Some(last_activity_at) = optional_text_field(object, "last_activity_at", 128)? {
         output["last_activity_at"] = json!(last_activity_at);
     }
+    if let Some(mode_origin) = object.get("mode_origin").and_then(Value::as_str) {
+        if ["MANUAL", "AUTOMATION"].contains(&mode_origin) {
+            output["mode_origin"] = json!(mode_origin);
+        }
+    }
+    if let Some(pause_reason) = object.get("pause_reason").and_then(Value::as_str) {
+        if ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"].contains(&pause_reason) {
+            output["pause_reason"] = json!(pause_reason);
+        }
+    }
+    if let Some(auto_resume_eligible) = object.get("auto_resume_eligible").and_then(Value::as_bool) {
+        output["auto_resume_eligible"] = json!(auto_resume_eligible);
+    }
     Ok(output)
 }
 
@@ -1032,6 +1052,36 @@ fn sanitize_reminder_settings(value: &Value) -> Result<Value, NativeErrorKind> {
     Ok(json!({ "cooldown_minutes": cooldown, "quiet_periods": safe }))
 }
 
+fn sanitize_automation_settings(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let start = object.get("auto_start").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
+    let pause = object.get("auto_pause").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
+    let resume = object.get("auto_resume").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
+    let confidence = object.get("auto_start").and_then(Value::as_object).and_then(|v| v.get("min_confidence")).and_then(Value::as_f64).filter(|v| v.is_finite() && (0.0..=1.0).contains(v)).ok_or(NativeErrorKind::InvalidResponse)?;
+    Ok(json!({
+        "enabled": bool_field(object, "enabled")?,
+        "auto_start": {
+            "enabled": bool_field(start, "enabled")?,
+            "focused_stable_seconds": non_negative_i64_field(start, "focused_stable_seconds")?,
+            "min_confidence": confidence,
+            "allow_unclassified": bool_field(start, "allow_unclassified")?,
+            "confirm": bool_field(start, "confirm")?,
+        },
+        "auto_pause": {
+            "enabled": bool_field(pause, "enabled")?,
+            "idle_static_seconds": non_negative_i64_field(pause, "idle_static_seconds")?,
+            "locked_seconds": non_negative_i64_field(pause, "locked_seconds")?,
+            "confirm": bool_field(pause, "confirm")?,
+        },
+        "auto_resume": {
+            "enabled": bool_field(resume, "enabled")?,
+            "focused_stable_seconds": non_negative_i64_field(resume, "focused_stable_seconds")?,
+        },
+        "transition_cooldown_seconds": non_negative_i64_field(object, "transition_cooldown_seconds")?,
+        "manual_override_minutes": non_negative_i64_field(object, "manual_override_minutes")?,
+    }))
+}
+
 fn sanitize_task_preset_list(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let sanitize_rows = |key: &str, max: usize| -> Result<Value, NativeErrorKind> {
@@ -1208,7 +1258,7 @@ fn sanitize_semantic(value: &Value) -> Result<Value, NativeErrorKind> {
         .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
         .ok_or(NativeErrorKind::InvalidResponse)?;
 
-    Ok(json!({
+    let mut output = json!({
         "schema_version": 1,
         "observed_at": observed_at,
         "fresh": fresh,
@@ -1219,7 +1269,23 @@ fn sanitize_semantic(value: &Value) -> Result<Value, NativeErrorKind> {
         "privacy": privacy,
         "activity": activity,
         "confidence": confidence,
-    }))
+    });
+    for key in ["topic", "subtopic", "action"] {
+        if let Some(value) = optional_text_field(object, key, 128)? {
+            output[key] = json!(value);
+        }
+    }
+    if let Some(value) = object.get("progress_signal").and_then(Value::as_str) {
+        if ["OBSERVING", "READING", "PRACTICING", "CODING", "WRITING", "DEBUGGING", "REVIEWING", "UNKNOWN"].contains(&value) {
+            output["progress_signal"] = json!(value);
+        }
+    }
+    if let Some(value) = object.get("source_kind").and_then(Value::as_str) {
+        if ["LOCAL_RULE", "TEXT_AI", "VISION_AI"].contains(&value) {
+            output["source_kind"] = json!(value);
+        }
+    }
+    Ok(output)
 }
 
 // Supervisor requests use blocking sockets with bounded timeouts. Keep them
@@ -1276,6 +1342,9 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
         Ok(value) => value,
         Err(kind) => return disconnected_dashboard(kind),
     };
+    let semantic = fetch_supervisor_get(&host, port, &token, "/v1/activity/current")
+        .ok()
+        .and_then(|value| sanitize_semantic(&value).ok());
     let motivation = fetch_supervisor_get(&host, port, &token, "/v1/motivation/status")
         .ok()
         .and_then(|value| sanitize_motivation(&value).ok());
@@ -1285,6 +1354,9 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
     let reminder_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/reminder")
         .ok()
         .and_then(|value| sanitize_reminder_settings(&value).ok());
+    let automation_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/automation")
+        .ok()
+        .and_then(|value| sanitize_automation_settings(&value).ok());
     let ai_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/ai")
         .ok()
         .and_then(|value| sanitize_ai_settings(&value).ok());
@@ -1309,9 +1381,11 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
     SupervisorDashboardSnapshot {
         connected: true,
         status: Some(status),
+        semantic,
         motivation,
         task_presets,
         reminder_settings,
+        automation_settings,
         ai_settings,
         history,
         achievements,
@@ -1453,8 +1527,17 @@ struct AIProxyInput { mode: String, url: String }
 #[derive(Deserialize, Serialize)]
 struct AISettingsInput { enabled: bool, min_confidence: f64, #[serde(default)] proxy: AIProxyInput, text: AIEndpointInput, vision: AIEndpointInput }
 
+#[derive(Deserialize, Serialize)]
+struct AutomationStartInput { enabled: bool, focused_stable_seconds: i64, min_confidence: f64, allow_unclassified: bool, confirm: bool }
+#[derive(Deserialize, Serialize)]
+struct AutomationPauseInput { enabled: bool, idle_static_seconds: i64, locked_seconds: i64, confirm: bool }
+#[derive(Deserialize, Serialize)]
+struct AutomationResumeInput { enabled: bool, focused_stable_seconds: i64 }
+#[derive(Deserialize, Serialize)]
+struct AutomationSettingsInput { enabled: bool, auto_start: AutomationStartInput, auto_pause: AutomationPauseInput, auto_resume: AutomationResumeInput, transition_cooldown_seconds: i64, manual_override_minutes: i64 }
+
 fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value, NativeErrorKind> {
-    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("POST", "/v1/settings/ai/test") | ("POST", "/v1/settings/ai/proxy/test") | ("POST", "/v1/review/generate"));
+    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("PUT", "/v1/settings/automation") | ("POST", "/v1/settings/ai/test") | ("POST", "/v1/settings/ai/proxy/test") | ("POST", "/v1/review/generate"));
     if !allowed { return Err(NativeErrorKind::Rejected); }
     let (host, port, token) = supervisor_credentials()?;
     if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
@@ -1480,6 +1563,17 @@ async fn supervisor_save_ai_settings(settings: AISettingsInput) -> SupervisorCon
     tauri::async_runtime::spawn_blocking(move || {
         let body = match serde_json::to_vec(&settings) { Ok(value) => value, Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") } };
         match ai_supervisor_request("PUT", "/v1/settings/ai", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
+    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_save_automation_settings(settings: AutomationSettingsInput) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !(0.0..=1.0).contains(&settings.auto_start.min_confidence) || settings.auto_start.focused_stable_seconds < 1 || settings.auto_pause.idle_static_seconds < 1 || settings.auto_pause.locked_seconds < 1 || settings.auto_resume.focused_stable_seconds < 1 || settings.transition_cooldown_seconds < 1 || settings.manual_override_minutes < 0 {
+            return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
+        }
+        let body = match serde_json::to_vec(&settings) { Ok(value) => value, Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") } };
+        match ai_supervisor_request("PUT", "/v1/settings/automation", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
     }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
 }
 
@@ -1924,6 +2018,7 @@ pub fn run() {
             supervisor_cancel_mission,
             supervisor_set_reminder_settings,
             supervisor_save_ai_settings,
+            supervisor_save_automation_settings,
             supervisor_put_ai_secret,
             supervisor_delete_ai_secret,
             supervisor_test_ai_connection,

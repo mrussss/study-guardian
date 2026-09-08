@@ -23,6 +23,7 @@ type Config struct {
 	AI         AIConfig         `yaml:"ai"`
 	Motivation MotivationConfig `yaml:"motivation"`
 	Review     ReviewConfig     `yaml:"review"`
+	Automation AutomationConfig `yaml:"automation"`
 }
 
 type StandbyConfig struct {
@@ -163,6 +164,35 @@ type ReviewLimitsConfig struct {
 	MaxFinalInputChars   int `yaml:"max_final_input_chars"`
 }
 
+type AutomationConfig struct {
+	Enabled                   bool                   `yaml:"enabled"`
+	AutoStart                 AutomationStartConfig  `yaml:"auto_start"`
+	AutoPause                 AutomationPauseConfig  `yaml:"auto_pause"`
+	AutoResume                AutomationResumeConfig `yaml:"auto_resume"`
+	TransitionCooldownSeconds int                    `yaml:"transition_cooldown_seconds"`
+	ManualOverrideMinutes     int                    `yaml:"manual_override_minutes"`
+}
+
+type AutomationStartConfig struct {
+	Enabled              bool    `yaml:"enabled"`
+	FocusedStableSeconds int     `yaml:"focused_stable_seconds"`
+	MinConfidence        float64 `yaml:"min_confidence"`
+	AllowUnclassified    bool    `yaml:"allow_unclassified"`
+	Confirm              bool    `yaml:"confirm"`
+}
+
+type AutomationPauseConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	IdleStaticSeconds int  `yaml:"idle_static_seconds"`
+	LockedSeconds     int  `yaml:"locked_seconds"`
+	Confirm           bool `yaml:"confirm"`
+}
+
+type AutomationResumeConfig struct {
+	Enabled              bool `yaml:"enabled"`
+	FocusedStableSeconds int  `yaml:"focused_stable_seconds"`
+}
+
 func DefaultConfig() *Config {
 	return &Config{
 		Standby: StandbyConfig{
@@ -226,6 +256,14 @@ func DefaultConfig() *Config {
 			Trigger:   ReviewTriggerConfig{OffDebounceMinutes: 5, BackfillPreviousDay: true},
 			Retention: ReviewRetentionConfig{RawChatDays: 30, SemanticDays: 180},
 			Limits:    ReviewLimitsConfig{MaxTurnChars: 12000, MaxConversationChars: 40000, MaxFinalInputChars: 60000},
+		},
+		Automation: AutomationConfig{
+			Enabled:                   false,
+			AutoStart:                 AutomationStartConfig{Enabled: true, FocusedStableSeconds: 90, MinConfidence: .80, AllowUnclassified: true},
+			AutoPause:                 AutomationPauseConfig{Enabled: true, IdleStaticSeconds: 300, LockedSeconds: 15},
+			AutoResume:                AutomationResumeConfig{Enabled: true, FocusedStableSeconds: 45},
+			TransitionCooldownSeconds: 30,
+			ManualOverrideMinutes:     30,
 		},
 	}
 }

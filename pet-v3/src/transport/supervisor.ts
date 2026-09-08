@@ -83,6 +83,9 @@ export interface NativeSupervisorStatus {
   activitywatch_ok: boolean;
   screen_sensor_ok: boolean;
   last_activity_at?: string;
+  mode_origin?: "MANUAL" | "AUTOMATION";
+  pause_reason?: "NONE" | "IDLE" | "LOCKED" | "SLEEP" | "SENSOR_UNAVAILABLE";
+  auto_resume_eligible?: boolean;
 }
 
 export interface NativeMotivationStatus {
@@ -115,6 +118,15 @@ export interface NativeTaskPresetList {
 export interface NativeReminderSettings {
   cooldown_minutes: number;
   quiet_periods: Array<{ start: string; end: string }>;
+}
+
+export interface NativeAutomationSettings {
+  enabled: boolean;
+  auto_start: { enabled: boolean; focused_stable_seconds: number; min_confidence: number; allow_unclassified: boolean; confirm: boolean };
+  auto_pause: { enabled: boolean; idle_static_seconds: number; locked_seconds: number; confirm: boolean };
+  auto_resume: { enabled: boolean; focused_stable_seconds: number };
+  transition_cooldown_seconds: number;
+  manual_override_minutes: number;
 }
 
 export interface NativeAIEndpointSettings {
@@ -240,9 +252,11 @@ export interface NativeReviewSummary {
 export interface SupervisorDashboardSnapshot {
   connected: boolean;
   status?: NativeSupervisorStatus;
+  semantic?: CurrentActivityView;
   motivation?: NativeMotivationStatus;
   task_presets?: NativeTaskPresetList;
   reminder_settings?: NativeReminderSettings;
+  automation_settings?: NativeAutomationSettings;
   ai_settings?: NativeAISettings;
   history?: NativeHistoryDay[];
   achievements?: NativeAchievement[];
@@ -286,7 +300,10 @@ function validStatus(value: unknown): value is NativeSupervisorStatus {
     nonNegativeInteger(value.study_seconds) && nonNegativeInteger(value.break_seconds) &&
     nonNegativeInteger(value.active_seconds) && typeof value.activitywatch_ok === "boolean" &&
     typeof value.screen_sensor_ok === "boolean" &&
-    (value.last_activity_at === undefined || boundedText(value.last_activity_at, 128));
+    (value.last_activity_at === undefined || boundedText(value.last_activity_at, 128)) &&
+    (value.mode_origin === undefined || ["MANUAL", "AUTOMATION"].includes(value.mode_origin as string)) &&
+    (value.pause_reason === undefined || ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"].includes(value.pause_reason as string)) &&
+    (value.auto_resume_eligible === undefined || typeof value.auto_resume_eligible === "boolean");
 }
 
 function validMotivation(value: unknown): value is NativeMotivationStatus {
@@ -318,6 +335,15 @@ function normalizedAISettings(value: unknown): NativeAISettings | undefined {
 function validReminderSettings(value: unknown): value is NativeReminderSettings {
   return record(value) && Number.isSafeInteger(value.cooldown_minutes) && Number(value.cooldown_minutes) >= 1 && Number(value.cooldown_minutes) <= 1440 &&
     Array.isArray(value.quiet_periods) && value.quiet_periods.length <= 12 && value.quiet_periods.every(period => record(period) && boundedText(period.start, 5) && boundedText(period.end, 5));
+}
+
+function validAutomationSettings(value: unknown): value is NativeAutomationSettings {
+  if (!record(value) || typeof value.enabled !== "boolean" || !record(value.auto_start) || !record(value.auto_pause) || !record(value.auto_resume)) return false;
+  const start = value.auto_start; const pause = value.auto_pause; const resume = value.auto_resume;
+  return typeof start.enabled === "boolean" && nonNegativeInteger(start.focused_stable_seconds) && boundedRatio(start.min_confidence) && typeof start.allow_unclassified === "boolean" && typeof start.confirm === "boolean" &&
+    typeof pause.enabled === "boolean" && nonNegativeInteger(pause.idle_static_seconds) && nonNegativeInteger(pause.locked_seconds) && typeof pause.confirm === "boolean" &&
+    typeof resume.enabled === "boolean" && nonNegativeInteger(resume.focused_stable_seconds) &&
+    nonNegativeInteger(value.transition_cooldown_seconds) && nonNegativeInteger(value.manual_override_minutes);
 }
 
 function validTaskPresets(value: unknown): value is NativeTaskPresetList {
@@ -430,9 +456,11 @@ export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashbo
   return {
     connected: true,
     status: raw.status,
+    ...(isCurrentActivityView(raw.semantic) ? { semantic: raw.semantic } : {}),
     ...(validMotivation(raw.motivation) ? { motivation: raw.motivation } : {}),
     ...(validTaskPresets(raw.task_presets) ? { task_presets: raw.task_presets } : {}),
     ...(validReminderSettings(raw.reminder_settings) ? { reminder_settings: raw.reminder_settings } : {}),
+    ...(validAutomationSettings(raw.automation_settings) ? { automation_settings: raw.automation_settings } : {}),
     ...(aiSettings ? { ai_settings: aiSettings } : {}),
     ...(validHistory(raw.history) ? { history: raw.history } : {}),
     ...(validAchievements(raw.achievements) ? { achievements: raw.achievements } : {}),
@@ -566,6 +594,7 @@ export interface SupervisorControlAdapter {
   updateTaskPreset(id: string, name: string, pinned: boolean, sortOrder: number): Promise<ControlResult>;
   deleteTaskPreset(id: string): Promise<ControlResult>;
   setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult>;
+  saveAutomationSettings?: (settings: NativeAutomationSettings) => Promise<ControlResult>;
   saveAISettings(settings: NativeAISettings): Promise<ControlResult>;
   putAISecret(target: "text" | "vision", apiKey: string): Promise<ControlResult>;
   deleteAISecret(target: "text" | "vision"): Promise<ControlResult>;
@@ -648,6 +677,10 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
 
   setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult> {
     return this.invokeControl("supervisor_set_reminder_settings", { cooldownMinutes, quietPeriods });
+  }
+
+  saveAutomationSettings(settings: NativeAutomationSettings): Promise<ControlResult> {
+    return this.invokeControl("supervisor_save_automation_settings", { settings });
   }
 
   saveAISettings(settings: NativeAISettings): Promise<ControlResult> {

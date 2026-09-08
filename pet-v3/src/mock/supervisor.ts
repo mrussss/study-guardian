@@ -1,5 +1,5 @@
 import type {
-  AutostartState, ControlResult, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeMission, NativeTaskPreset, ReviewGenerationResult, ReviewGenerationStatusSnapshot,
+  AutostartState, ControlResult, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeAutomationSettings, NativeMission, NativeTaskPreset, ReviewGenerationResult, ReviewGenerationStatusSnapshot,
   SupervisorControlAdapter, SupervisorDashboardAdapter, SupervisorDashboardSnapshot, SystemIntegrationAdapter,
 } from "../transport/supervisor";
 
@@ -33,7 +33,9 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
       task: scenario === "rapid" ? "Go" : "算法", study_seconds: focusMinutes * 60 + 17,
       break_seconds: 0, active_seconds: focusMinutes * 60 + 17, activitywatch_ok: !activityWatchFailure,
       screen_sensor_ok: !sensorFailure, last_activity_at: new Date().toISOString(),
+      mode_origin: "MANUAL", pause_reason: "NONE", auto_resume_eligible: false,
     },
+    semantic: { schema_version: 1, observed_at: new Date().toISOString(), fresh: !activityWatchFailure, user_mode: "STUDY", task: scenario === "rapid" ? "Go" : "算法", interaction: "ACTIVE", relation: scenario === "reminder" ? "DISTRACTED" : "FOCUSED", privacy: "NORMAL", activity: "CODING", confidence: scenario === "reminder" ? .58 : .94, progress_signal: "CODING", source_kind: "LOCAL_RULE" },
     motivation: {
       today_credited_focus_minutes: focusMinutes, total_credited_focus_minutes: 1842 + focusMinutes,
       today_earned_ap_milli: focusMinutes * 50, today_spent_ap_milli: 0, balance_ap_milli: 6376,
@@ -52,6 +54,13 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
     reminder_settings: { cooldown_minutes: 10, quiet_periods: [
       { start: "12:00", end: "14:00" }, { start: "17:30", end: "19:00" }, { start: "21:00", end: "24:00" },
     ] },
+    automation_settings: {
+      enabled: false,
+      auto_start: { enabled: true, focused_stable_seconds: 90, min_confidence: .8, allow_unclassified: true, confirm: false },
+      auto_pause: { enabled: true, idle_static_seconds: 300, locked_seconds: 15, confirm: false },
+      auto_resume: { enabled: true, focused_stable_seconds: 45 },
+      transition_cooldown_seconds: 30, manual_override_minutes: 30,
+    },
     ai_settings: {
       enabled: false, min_confidence: 0.75,
       proxy: { mode: "environment", url: "" },
@@ -151,6 +160,9 @@ export class MockSupervisorRuntime implements SupervisorDashboardAdapter, Superv
   }); }
   setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult> { return this.mutate(() => {
     this.snapshot.reminder_settings = { cooldown_minutes: cooldownMinutes, quiet_periods: clone(quietPeriods) }; return { ok: true };
+  }); }
+  saveAutomationSettings(settings: NativeAutomationSettings): Promise<ControlResult> { return this.mutate(() => {
+    this.snapshot.automation_settings = clone(settings); return { ok: true };
   }); }
   saveAISettings(settings: NativeAISettings): Promise<ControlResult> { return this.mutate(() => {
     this.snapshot.ai_settings = clone(settings);

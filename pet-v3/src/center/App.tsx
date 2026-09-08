@@ -38,7 +38,7 @@ import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
 import { HelpDrawer } from "../shared/HelpDrawer";
 import { FocusClock } from "./FocusClock";
-import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot } from "../transport/supervisor";
+import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeAutomationSettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
 type DashboardRefresh = () => Promise<SupervisorDashboardSnapshot | void>;
@@ -429,6 +429,7 @@ export function ReviewPage({ review, onRefresh, control = getSupervisorControlAd
 }
 function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
   const status = snapshot?.status;
+  const semantic = snapshot?.semantic;
   const ai = snapshot?.ai;
   const supervision = deriveSupervisionState(Boolean(snapshot?.connected), status);
   return <DataPage title="系统状态" description="查看本地 Supervisor 与受限功能的健康状态。"><section className="surface-section data-card"><div className="section-header"><div><h2>本地服务</h2><p>不会显示 token、路径或原始错误</p></div><Activity className="section-icon" size={20} /></div><div className="system-status-grid">
@@ -436,11 +437,20 @@ function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): R
     <div><span>当前模式</span><strong>{status ? modeLabels[status.user_mode] : "暂无"}</strong></div>
     <div><span>交互状态</span><strong>{status ? interactionLabels[status.interaction_state] : "暂无"}</strong></div>
     <div><span>任务关系</span><strong>{status ? relationLabels[status.task_relation] : "暂无"}</strong></div>
+    <div><span>模式来源</span><strong>{status?.mode_origin === "AUTOMATION" ? "自动计时" : status ? "手动操作" : "暂无"}</strong></div>
+    <div><span>暂停原因</span><strong>{status?.pause_reason === "IDLE" ? "持续静止" : status?.pause_reason === "LOCKED" ? "锁屏" : status?.pause_reason === "SENSOR_UNAVAILABLE" ? "传感器不可用" : status?.pause_reason === "SLEEP" ? "系统休眠" : "无"}</strong></div>
     <div><span>隐私状态</span><strong>{status ? privacyLabels[status.privacy_state] : "暂无"}</strong></div>
     <div><span>最近活动</span><strong>{formatLastActivity(status?.last_activity_at)}</strong></div>
     <div><span>ActivityWatch</span><strong>{status ? (status.activitywatch_ok ? "正常" : "异常") : "待检查"}</strong></div>
     <div><span>Screen Sensor</span><strong>{status ? (status.screen_sensor_ok ? "正常" : "异常") : "待检查"}</strong></div>
     <div><span>AI</span><strong>{ai?.enabled && ai.text_configured ? "已配置" : "规则模式"}</strong></div>
+    <div><span>语义来源</span><strong>{semantic?.source_kind === "VISION_AI" ? "视觉 AI" : semantic?.source_kind === "TEXT_AI" ? "文字 AI" : semantic?.source_kind === "LOCAL_RULE" ? "本地规则" : "暂无"}</strong></div>
+    <div><span>语义置信度</span><strong>{semantic?.fresh ? `${Math.round(semantic.confidence * 100)}%` : "暂无"}</strong></div>
+    <div><span>活动类型</span><strong>{semantic?.fresh ? reviewTopicLabel(semantic.activity) : "暂无"}</strong></div>
+    <div><span>主题</span><strong>{semantic?.fresh ? (semantic.topic || "未识别") : "暂无"}</strong></div>
+    <div><span>子主题</span><strong>{semantic?.fresh ? (semantic.subtopic || "未识别") : "暂无"}</strong></div>
+    <div><span>学习动作</span><strong>{semantic?.fresh ? (semantic.action || "未识别") : "暂无"}</strong></div>
+    <div><span>进展信号</span><strong>{semantic?.fresh ? reviewTopicLabel(semantic.progress_signal ?? "UNKNOWN") : "暂无"}</strong></div>
   </div><p className={`system-summary is-${supervision.systemTone}`}>{supervision.systemLabel}</p></section></DataPage>;
 }
 
@@ -697,9 +707,30 @@ function SettingsPage({ snapshot, onRefresh }: { snapshot?: SupervisorDashboardS
       <div className="quiet-period-list">{quietPeriods.map((period, index) => <div className="quiet-period-row" key={`${index}-${period.start}-${period.end}`}><input aria-label={`时段 ${index + 1} 开始`} inputMode="numeric" maxLength={5} value={period.start} onChange={event => updateQuiet(index, "start", event.target.value)} /><span>—</span><input aria-label={`时段 ${index + 1} 结束`} inputMode="numeric" maxLength={5} value={period.end} onChange={event => updateQuiet(index, "end", event.target.value)} /><button className="icon-button" type="button" aria-label={`删除时段 ${index + 1}`} onClick={() => setQuietDraft(quietPeriods.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16} /></button></div>)}</div>
       <div className="setting-actions"><button className="secondary-button" type="button" disabled={quietPeriods.length >= 12} onClick={() => setQuietDraft([...quietPeriods, { start: "09:00", end: "10:00" }])}><Plus size={16} />添加时段</button><button className="primary-button" type="button" onClick={() => void saveQuiet()}>保存免打扰</button></div>
     </section>
+    <AutomationSettingsCard settings={snapshot?.automation_settings} onRefresh={onRefresh} />
     <AISettingsPanel settings={snapshot?.ai_settings} onRefresh={onRefresh} />
     {notice && <span className="settings-notice" role="status">{notice}</span>}
   </div></DataPage>;
+}
+
+function AutomationSettingsCard({ settings: source, onRefresh }: { settings?: NativeAutomationSettings; onRefresh?: DashboardRefresh }): ReactElement {
+  const fallback: NativeAutomationSettings = { enabled: false, auto_start: { enabled: true, focused_stable_seconds: 90, min_confidence: .8, allow_unclassified: true, confirm: false }, auto_pause: { enabled: true, idle_static_seconds: 300, locked_seconds: 15, confirm: false }, auto_resume: { enabled: true, focused_stable_seconds: 45 }, transition_cooldown_seconds: 30, manual_override_minutes: 30 };
+  const [draft, setDraft] = useState<NativeAutomationSettings>(source ?? fallback);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  useEffect(() => { if (source) setDraft(source); }, [source]);
+  const save = async (): Promise<void> => {
+    setBusy(true);
+    const control = getSupervisorControlAdapter();
+    const result = control.saveAutomationSettings ? await control.saveAutomationSettings(draft) : { ok: false as const, error_kind: "unavailable" as const };
+    setNotice(result.ok ? "自动学习计时设置已保存" : "自动学习计时设置暂时无法保存");
+    if (result.ok) await onRefresh?.();
+    setBusy(false);
+  };
+  return <section className="surface-section data-card settings-card automation-settings-card"><div className="section-header"><div><h2>自动学习计时</h2><p>本地规则与语义判断只生成转场意图；实际模式切换仍由 Supervisor 控制。</p></div><label className="switch-label"><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={event => setDraft({ ...draft, enabled: event.target.checked })} />{draft.enabled ? "开启" : "关闭"}</label></div>
+    <div className="automation-setting-grid"><label><span>自动开始</span><input type="checkbox" checked={draft.auto_start.enabled} disabled={busy || !draft.enabled} onChange={event => setDraft({ ...draft, auto_start: { ...draft.auto_start, enabled: event.target.checked } })} /></label><label><span>自动暂停</span><input type="checkbox" checked={draft.auto_pause.enabled} disabled={busy || !draft.enabled} onChange={event => setDraft({ ...draft, auto_pause: { ...draft.auto_pause, enabled: event.target.checked } })} /></label><label><span>自动恢复</span><input type="checkbox" checked={draft.auto_resume.enabled} disabled={busy || !draft.enabled} onChange={event => setDraft({ ...draft, auto_resume: { ...draft.auto_resume, enabled: event.target.checked } })} /></label><label><span>开始前确认</span><input type="checkbox" checked={draft.auto_start.confirm} disabled={busy || !draft.enabled} onChange={event => setDraft({ ...draft, auto_start: { ...draft.auto_start, confirm: event.target.checked } })} /></label><label><span>离开时确认</span><input type="checkbox" checked={draft.auto_pause.confirm} disabled={busy || !draft.enabled} onChange={event => setDraft({ ...draft, auto_pause: { ...draft.auto_pause, confirm: event.target.checked } })} /></label><label><span>开始稳定秒数</span><input type="number" min={1} max={3600} value={draft.auto_start.focused_stable_seconds} disabled={busy} onChange={event => setDraft({ ...draft, auto_start: { ...draft.auto_start, focused_stable_seconds: Number(event.target.value) } })} /></label><label><span>静止暂停秒数</span><input type="number" min={1} max={86400} value={draft.auto_pause.idle_static_seconds} disabled={busy} onChange={event => setDraft({ ...draft, auto_pause: { ...draft.auto_pause, idle_static_seconds: Number(event.target.value) } })} /></label><label><span>锁屏暂停秒数</span><input type="number" min={1} max={3600} value={draft.auto_pause.locked_seconds} disabled={busy} onChange={event => setDraft({ ...draft, auto_pause: { ...draft.auto_pause, locked_seconds: Number(event.target.value) } })} /></label><label><span>恢复稳定秒数</span><input type="number" min={1} max={3600} value={draft.auto_resume.focused_stable_seconds} disabled={busy} onChange={event => setDraft({ ...draft, auto_resume: { ...draft.auto_resume, focused_stable_seconds: Number(event.target.value) } })} /></label></div>
+    <p className="settings-help">自动暂停只处理锁屏或持续静止；娱乐内容仍记录为偏离，不会擅自结束学习。手动休息或结束学习不会自动恢复。</p><div className="setting-actions"><button className="primary-button" type="button" disabled={busy} onClick={() => void save()}>保存自动计时</button>{notice && <span role="status">{notice}</span>}</div>
+  </section>;
 }
 function ComingSoon({ title }: { title: string }): ReactElement {
   return <div className="coming-page"><div className="coming-icon"><Sparkles size={24} /></div><h1>{title}</h1><p>这个入口已经为 Control Center 预留，当前阶段先完成总览与视觉基础。</p><button className="secondary-button" type="button"><Play size={16} />回到总览</button></div>;

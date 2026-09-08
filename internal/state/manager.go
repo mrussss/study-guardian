@@ -42,10 +42,14 @@ type Manager struct {
 	privacyGate PrivacyEvaluator
 	reminderEng ReminderEvaluator
 
-	currentDate   string
-	userMode      UserMode
-	task          string
-	currentSessID string
+	currentDate         string
+	userMode            UserMode
+	task                string
+	currentSessID       string
+	modeOrigin          ModeOrigin
+	pauseReason         PauseReason
+	autoResumeEligible  bool
+	manualOverrideUntil *time.Time
 
 	interaction InteractionState
 	relation    TaskRelation
@@ -100,6 +104,8 @@ func NewPersistentManager(
 		relation:        RelationUnknown,
 		privacy:         PrivacyNormal,
 		confidence:      1.0,
+		modeOrigin:      ModeOriginManual,
+		pauseReason:     PauseReasonNone,
 		modeStartTime:   now,
 		lastTickTime:    now,
 		lastActivityAt:  &now,
@@ -122,12 +128,19 @@ func NewPersistentManager(
 		// never change the user's mode after a restart.
 		openSess, openErr := store.LoadOpenSession(ctx)
 		if openErr == nil {
-			if openSess.StartedAt.Format("2006-01-02") == dateStr {
+			if storage.LocalDate(openSess.StartedAt) == dateStr {
 				switch UserMode(openSess.Mode) {
 				case UserModeStandby, UserModeStudy, UserModeBreak, UserModeOff:
 					m.userMode = UserMode(openSess.Mode)
 					m.task = openSess.Task
 					m.currentModeSeconds = openSess.DurationSeconds
+					if openSess.ModeOrigin != "" {
+						m.modeOrigin = ModeOrigin(openSess.ModeOrigin)
+					}
+					if openSess.PauseReason != "" {
+						m.pauseReason = PauseReason(openSess.PauseReason)
+					}
+					m.autoResumeEligible = openSess.AutoResumeEligible
 				}
 			}
 			// Close the interrupted record using its last persisted duration. Do
@@ -138,11 +151,14 @@ func NewPersistentManager(
 		m.modeStartTime = now
 		m.currentSessID = newSessionID(now)
 		_ = store.SaveSession(ctx, storage.SessionRecord{
-			ID:              m.currentSessID,
-			Mode:            string(m.userMode),
-			Task:            m.task,
-			StartedAt:       now,
-			DurationSeconds: m.currentModeSeconds,
+			ID:                 m.currentSessID,
+			Mode:               string(m.userMode),
+			Task:               m.task,
+			StartedAt:          now,
+			DurationSeconds:    m.currentModeSeconds,
+			ModeOrigin:         string(m.modeOrigin),
+			PauseReason:        string(m.pauseReason),
+			AutoResumeEligible: m.autoResumeEligible,
 		})
 	} else {
 		m.currentSessID = newSessionID(now)
@@ -177,19 +193,23 @@ func (m *Manager) GetStatus() SystemStatus {
 	defer m.mu.RUnlock()
 
 	return SystemStatus{
-		UserMode:         m.userMode,
-		InteractionState: m.interaction,
-		TaskRelation:     m.relation,
-		PrivacyState:     m.privacy,
-		Confidence:       m.confidence,
-		Task:             m.task,
-		StudySeconds:     m.studySeconds,
-		BreakSeconds:     m.breakSeconds,
-		ActiveSeconds:    m.activeSeconds,
-		LastActivityAt:   m.lastActivityAt,
-		ActivityWatchOK:  m.activityWatchOK,
-		ScreenSensorOK:   m.screenSensorOK,
-		CurrentReminder:  m.currentReminder,
+		UserMode:            m.userMode,
+		InteractionState:    m.interaction,
+		TaskRelation:        m.relation,
+		PrivacyState:        m.privacy,
+		Confidence:          m.confidence,
+		Task:                m.task,
+		StudySeconds:        m.studySeconds,
+		BreakSeconds:        m.breakSeconds,
+		ActiveSeconds:       m.activeSeconds,
+		LastActivityAt:      m.lastActivityAt,
+		ActivityWatchOK:     m.activityWatchOK,
+		ScreenSensorOK:      m.screenSensorOK,
+		CurrentReminder:     m.currentReminder,
+		ModeOrigin:          m.modeOrigin,
+		PauseReason:         m.pauseReason,
+		AutoResumeEligible:  m.autoResumeEligible,
+		ManualOverrideUntil: m.manualOverrideUntil,
 	}
 }
 
@@ -209,6 +229,10 @@ func (m *Manager) SetModeStudy(task string) error {
 	m.closeCurrentSessionLocked(now, "USER_SWITCH_STUDY")
 
 	m.userMode = UserModeStudy
+	m.modeOrigin = ModeOriginManual
+	m.pauseReason = PauseReasonNone
+	m.autoResumeEligible = false
+	m.setManualOverrideLocked(now)
 	if task != "" {
 		m.task = task
 	}
@@ -221,10 +245,13 @@ func (m *Manager) SetModeStudy(task string) error {
 
 	if m.storage != nil {
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
-			ID:        m.currentSessID,
-			Mode:      string(UserModeStudy),
-			Task:      m.task,
-			StartedAt: now,
+			ID:                 m.currentSessID,
+			Mode:               string(UserModeStudy),
+			Task:               m.task,
+			StartedAt:          now,
+			ModeOrigin:         string(m.modeOrigin),
+			PauseReason:        string(m.pauseReason),
+			AutoResumeEligible: m.autoResumeEligible,
 		})
 	}
 	return nil
@@ -244,6 +271,10 @@ func (m *Manager) SetModeBreak() error {
 	m.closeCurrentSessionLocked(now, "USER_SWITCH_BREAK")
 
 	m.userMode = UserModeBreak
+	m.modeOrigin = ModeOriginManual
+	m.pauseReason = PauseReasonNone
+	m.autoResumeEligible = false
+	m.setManualOverrideLocked(now)
 	m.modeStartTime = now
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
@@ -253,10 +284,13 @@ func (m *Manager) SetModeBreak() error {
 
 	if m.storage != nil {
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
-			ID:        m.currentSessID,
-			Mode:      string(UserModeBreak),
-			Task:      m.task,
-			StartedAt: now,
+			ID:                 m.currentSessID,
+			Mode:               string(UserModeBreak),
+			Task:               m.task,
+			StartedAt:          now,
+			ModeOrigin:         string(m.modeOrigin),
+			PauseReason:        string(m.pauseReason),
+			AutoResumeEligible: m.autoResumeEligible,
 		})
 	}
 	return nil
@@ -272,6 +306,10 @@ func (m *Manager) SetModeOff() error {
 	m.closeCurrentSessionLocked(now, "USER_SWITCH_OFF")
 
 	m.userMode = UserModeOff
+	m.modeOrigin = ModeOriginManual
+	m.pauseReason = PauseReasonNone
+	m.autoResumeEligible = false
+	m.setManualOverrideLocked(now)
 	m.modeStartTime = now
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
@@ -281,11 +319,96 @@ func (m *Manager) SetModeOff() error {
 
 	if m.storage != nil {
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
-			ID:        m.currentSessID,
-			Mode:      string(UserModeOff),
-			Task:      m.task,
-			StartedAt: now,
+			ID:                 m.currentSessID,
+			Mode:               string(UserModeOff),
+			Task:               m.task,
+			StartedAt:          now,
+			ModeOrigin:         string(m.modeOrigin),
+			PauseReason:        string(m.pauseReason),
+			AutoResumeEligible: m.autoResumeEligible,
 		})
+	}
+	return nil
+}
+
+func (m *Manager) setManualOverrideLocked(now time.Time) {
+	minutes := 30
+	if m.cfg != nil && m.cfg.Automation.ManualOverrideMinutes > 0 {
+		minutes = m.cfg.Automation.ManualOverrideMinutes
+	}
+	deadline := now.Add(time.Duration(minutes) * time.Minute)
+	m.manualOverrideUntil = &deadline
+}
+
+// ApplyAutomationIntent is the only path by which the independent automation
+// controller changes mode. It runs after TickWithClassification has released
+// the manager mutex, so classification and time accounting never recurse into
+// a mode transition while the manager is locked.
+func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
+	m.mu.Lock()
+	now := m.clock.Now()
+	if m.manualOverrideUntil != nil && now.Before(*m.manualOverrideUntil) {
+		m.mu.Unlock()
+		return errors.New("manual override is active")
+	}
+	m.checkMidnightResetLocked(now)
+	notice := ""
+	switch intent.Transition {
+	case AutomationStart:
+		if m.userMode != UserModeStandby {
+			m.mu.Unlock()
+			return errors.New("automatic start requires STANDBY")
+		}
+		m.closeCurrentSessionLocked(now, "AUTOMATION_START")
+		m.userMode = UserModeStudy
+		if strings.TrimSpace(intent.Task) != "" {
+			m.task = strings.Join(strings.Fields(intent.Task), " ")
+		}
+		m.modeOrigin, m.pauseReason, m.autoResumeEligible = ModeOriginAutomation, PauseReasonNone, false
+		notice = "检测到持续学习，已开始计时"
+	case AutomationPause:
+		if m.userMode != UserModeStudy {
+			m.mu.Unlock()
+			return errors.New("automatic pause requires STUDY")
+		}
+		m.closeCurrentSessionLocked(now, "AUTOMATION_PAUSE")
+		m.userMode = UserModeBreak
+		m.modeOrigin, m.pauseReason, m.autoResumeEligible = ModeOriginAutomation, intent.Reason, true
+		notice = "已离开学习，计时已自动暂停。"
+	case AutomationResume:
+		if m.userMode != UserModeBreak || m.modeOrigin != ModeOriginAutomation || !m.autoResumeEligible {
+			m.mu.Unlock()
+			return errors.New("automatic resume is not eligible")
+		}
+		m.closeCurrentSessionLocked(now, "AUTOMATION_RESUME")
+		m.userMode = UserModeStudy
+		m.modeOrigin, m.pauseReason, m.autoResumeEligible = ModeOriginAutomation, PauseReasonNone, false
+		notice = "检测到恢复学习，已继续计时"
+	default:
+		m.mu.Unlock()
+		return errors.New("unknown automation transition")
+	}
+	m.modeStartTime = now
+	m.currentModeSeconds = 0
+	m.distractedSeconds = 0
+	m.idleStaticSeconds = 0
+	m.currentReminder = nil
+	m.currentSessID = newSessionID(now)
+	var saveErr error
+	if m.storage != nil {
+		saveErr = m.storage.SaveSession(context.Background(), storage.SessionRecord{ID: m.currentSessID, Mode: string(m.userMode), Task: m.task, StartedAt: now, ModeOrigin: string(m.modeOrigin), PauseReason: string(m.pauseReason), AutoResumeEligible: m.autoResumeEligible})
+	}
+	notifier := m.toastNotifier
+	task := strings.TrimSpace(m.task)
+	m.mu.Unlock()
+	if saveErr != nil {
+		return saveErr
+	}
+	if notifier != nil {
+		if task != "" && intent.Transition == AutomationStart {
+			notice += "：" + task
+		}
+		_ = notifier("StudyGuardian", notice)
 	}
 	return nil
 }
@@ -341,6 +464,10 @@ func (m *Manager) Tick(now time.Time, app, title, domain string, isAFK bool, scr
 	} else {
 		classification = ClassificationResult{Relation: RelationUnknown, Confidence: 0.5}
 	}
+	if classification.SourceKind == "" {
+		classification.SourceKind = SourceKindLocalRule
+	}
+	classification.IsFromRule = true
 	return m.TickWithClassification(now, app, title, domain, isAFK, screenChanged, isLocked, classification)
 }
 
@@ -420,10 +547,12 @@ func (m *Manager) TickWithClassification(
 
 	// 7. Task Relation Evaluation (from classification result). Lock screen
 	// observations must not inherit a stale DISTRACTED result.
+	effectiveClassification := classification
 	if isLocked {
 		m.interaction = InteractionUnknown
 		m.relation = RelationUnknown
 		m.confidence = 1.0
+		effectiveClassification = ClassificationResult{Relation: RelationUnknown, Confidence: 1.0, Reason: "lock screen", SourceKind: SourceKindLocalRule, IsFromRule: true}
 	} else {
 		m.relation = classification.Relation
 		m.confidence = classification.Confidence
@@ -486,11 +615,14 @@ func (m *Manager) TickWithClassification(
 		_ = m.storage.UpdateDailyState(context.Background(), m.currentDate,
 			m.standbySeconds, m.studySeconds, m.breakSeconds, m.offSeconds, m.activeSeconds, now)
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
-			ID:              m.currentSessID,
-			Mode:            string(m.userMode),
-			Task:            m.task,
-			StartedAt:       m.modeStartTime,
-			DurationSeconds: m.currentModeSeconds,
+			ID:                 m.currentSessID,
+			Mode:               string(m.userMode),
+			Task:               m.task,
+			StartedAt:          m.modeStartTime,
+			DurationSeconds:    m.currentModeSeconds,
+			ModeOrigin:         string(m.modeOrigin),
+			PauseReason:        string(m.pauseReason),
+			AutoResumeEligible: m.autoResumeEligible,
 		})
 	}
 
@@ -503,6 +635,7 @@ func (m *Manager) TickWithClassification(
 		ActivityValid:     m.activityWatchOK,
 		Locked:            isLocked,
 		IdleStaticSeconds: m.idleStaticSeconds,
+		Classification:    effectiveClassification,
 	}
 }
 
@@ -524,15 +657,21 @@ func (m *Manager) checkMidnightResetLocked(now time.Time) {
 		m.idleStaticSeconds = 0
 		m.currentModeSeconds = 0
 		m.currentReminder = nil
+		m.modeOrigin = ModeOriginManual
+		m.pauseReason = PauseReasonNone
+		m.autoResumeEligible = false
 		m.modeStartTime = now
 		m.currentSessID = newSessionID(now)
 
 		if m.storage != nil {
 			_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
-				ID:        m.currentSessID,
-				Mode:      string(UserModeStandby),
-				Task:      m.task,
-				StartedAt: now,
+				ID:                 m.currentSessID,
+				Mode:               string(UserModeStandby),
+				Task:               m.task,
+				StartedAt:          now,
+				ModeOrigin:         string(m.modeOrigin),
+				PauseReason:        string(m.pauseReason),
+				AutoResumeEligible: m.autoResumeEligible,
 			})
 		}
 	}
@@ -541,13 +680,16 @@ func (m *Manager) checkMidnightResetLocked(now time.Time) {
 func (m *Manager) closeCurrentSessionLocked(now time.Time, reason string) {
 	if m.currentSessID != "" && m.storage != nil {
 		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
-			ID:              m.currentSessID,
-			Mode:            string(m.userMode),
-			Task:            m.task,
-			StartedAt:       m.modeStartTime,
-			EndedAt:         &now,
-			DurationSeconds: m.currentModeSeconds,
-			EndReason:       reason,
+			ID:                 m.currentSessID,
+			Mode:               string(m.userMode),
+			Task:               m.task,
+			StartedAt:          m.modeStartTime,
+			EndedAt:            &now,
+			DurationSeconds:    m.currentModeSeconds,
+			EndReason:          reason,
+			ModeOrigin:         string(m.modeOrigin),
+			PauseReason:        string(m.pauseReason),
+			AutoResumeEligible: m.autoResumeEligible,
 		})
 	}
 }

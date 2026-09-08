@@ -8,6 +8,8 @@ export const VALID_ACTIVITIES = [
   "CODING", "ALGORITHM", "READING", "WRITING", "WATCHING", "AI_ASSISTED",
   "BROWSING", "GENERAL_STUDY", "UNKNOWN",
 ] as const;
+export const VALID_PROGRESS_SIGNALS = ["OBSERVING", "READING", "PRACTICING", "CODING", "WRITING", "DEBUGGING", "REVIEWING", "UNKNOWN"] as const;
+export const VALID_SOURCE_KINDS = ["LOCAL_RULE", "TEXT_AI", "VISION_AI"] as const;
 
 export type UserMode = "STANDBY" | "STUDY" | "BREAK" | "OFF";
 export type Interaction = "ACTIVE" | "IDLE_STATIC" | "IDLE_DYNAMIC" | "UNKNOWN";
@@ -23,6 +25,8 @@ export type Activity =
   | "BROWSING"
   | "GENERAL_STUDY"
   | "UNKNOWN";
+export type ProgressSignal = typeof VALID_PROGRESS_SIGNALS[number];
+export type SourceKind = typeof VALID_SOURCE_KINDS[number];
 
 // This is intentionally identical to Supervisor's CurrentActivityView. P1
 // uses a local mock; no token or real Supervisor HTTP client is present.
@@ -36,6 +40,11 @@ export interface CurrentActivityView {
   relation: Relation;
   privacy: Privacy;
   activity: Activity;
+  topic?: string;
+  subtopic?: string;
+  action?: string;
+  progress_signal?: ProgressSignal;
+  source_kind?: SourceKind;
   confidence: number;
 }
 
@@ -53,5 +62,10 @@ export function isCurrentActivityView(value: unknown): value is CurrentActivityV
     typeof v.privacy === "string" && VALID_PRIVACY.includes(v.privacy as Privacy) &&
     typeof v.activity === "string" && VALID_ACTIVITIES.includes(v.activity as Activity) &&
     typeof v.confidence === "number" && Number.isFinite(v.confidence) &&
-    v.confidence >= 0 && v.confidence <= 1;
+    v.confidence >= 0 && v.confidence <= 1 &&
+    (v.topic === undefined || typeof v.topic === "string" && v.topic.length <= 128) &&
+    (v.subtopic === undefined || typeof v.subtopic === "string" && v.subtopic.length <= 128) &&
+    (v.action === undefined || typeof v.action === "string" && v.action.length <= 128) &&
+    (v.progress_signal === undefined || VALID_PROGRESS_SIGNALS.includes(v.progress_signal as ProgressSignal)) &&
+    (v.source_kind === undefined || VALID_SOURCE_KINDS.includes(v.source_kind as SourceKind));
 }

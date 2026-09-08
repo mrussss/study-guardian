@@ -17,9 +17,11 @@ import (
 	"study-guardian/internal/activitywatch"
 	"study-guardian/internal/aisettings"
 	"study-guardian/internal/api"
+	"study-guardian/internal/automation"
 	"study-guardian/internal/classifier"
 	"study-guardian/internal/classifier/providers"
 	"study-guardian/internal/config"
+	"study-guardian/internal/distraction"
 	"study-guardian/internal/motivation"
 	"study-guardian/internal/platform/windows"
 	"study-guardian/internal/reminder"
@@ -91,6 +93,14 @@ func main() {
 			config.NormalizeAIConfig(cfg, false)
 		}
 	}
+	if raw, ok, loadErr := store.GetSetting(context.Background(), "automation.config.v1"); loadErr != nil {
+		log.Printf("[Automation] settings load failed: %v", loadErr)
+	} else if ok {
+		var persisted automation.Settings
+		if decodeErr := json.Unmarshal([]byte(raw), &persisted); decodeErr == nil && automation.ValidateSettings(persisted) == nil {
+			cfg.Automation = automation.ConfigFromSettings(persisted)
+		}
+	}
 	runRetentionCleanup := func(ctx context.Context) {
 		retentionStats, err := store.PruneRetention(ctx, time.Now(), cfg.Review.Retention.RawChatDays, cfg.Review.Retention.SemanticDays)
 		if err != nil {
@@ -144,8 +154,11 @@ func main() {
 
 	stateMgr := state.NewPersistentManager(clock, cfg, store, ruleEngine, privacyGate, reminderEng)
 	stateMgr.SetToastNotifier(windows.SendToast)
+	automationController := automation.New(cfg.Automation)
+	automationSettings := automation.NewSettingsService(cfg, store, automationController)
 
 	server := api.NewServer(cfg, stateMgr)
+	server.SetAutomationSettings(automationSettings)
 	server.SetStorage(store)
 	server.SetReminderSettings(reminderEng)
 	reviewService := review.NewService(store, time.Local, filepath.Join(filepath.Dir(targetDB), "reviews"))
@@ -174,6 +187,10 @@ func main() {
 	server.SetAIStatus(func() interface{} { return aiSettingsService.Status() })
 	semanticService := semantic.NewService(store)
 	server.SetSemantic(semanticService)
+	distractionTracker := distraction.New(store)
+	if err := distractionTracker.Restore(context.Background()); err != nil {
+		log.Printf("[Distraction] restore failed: %v", err)
+	}
 
 	// ActivityWatch & Screen Sensor clients
 	awClient := activitywatch.NewClient(*awURL)
@@ -295,9 +312,13 @@ func main() {
 					}
 					lastCaptureTime = t
 
-					// BREAK is time-only: do not judge entertainment or invoke AI.
+					// BREAK never invokes AI, but local rules still provide the
+					// bounded evidence needed for an eligible automatic resume.
 					if sysStatus.UserMode == state.UserModeBreak {
-						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "BREAK mode"}
+						lastClassRes = ruleEngine.Classify(app, title, domain, stateMgr.GetCurrentTask())
+						if lastClassRes.Relation == state.RelationUnknown {
+							lastClassRes.Reason = "BREAK mode; no local focus evidence"
+						}
 					} else {
 						currentTask := stateMgr.GetCurrentTask()
 						lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), "")
@@ -316,8 +337,6 @@ func main() {
 				} else if sysStatus.UserMode == state.UserModeOff {
 					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "System is OFF"}
 					lastScreenChanged = false
-				} else if sysStatus.UserMode == state.UserModeBreak {
-					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "BREAK mode"}
 				} else {
 					// Between samples, just run rule engine (very cheap) to keep reaction fast if window changes
 					// But we don't do AI or Capture.
@@ -330,6 +349,14 @@ func main() {
 				outcome := stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes)
 				motivationService.RecordTick(outcome)
 				postStatus := stateMgr.GetStatus()
+				if intent := automationController.Evaluate(outcome.Now, outcome, postStatus); intent != nil {
+					if err := stateMgr.ApplyAutomationIntent(*intent); err != nil {
+						log.Printf("[Automation] transition rejected: %v", err)
+					} else {
+						postStatus = stateMgr.GetStatus()
+						log.Printf("[Automation] transition=%s reason=%s", intent.Transition, intent.Reason)
+					}
+				}
 				if lastObservedMode != postStatus.UserMode && postStatus.UserMode == state.UserModeOff {
 					if _, err := reviewService.MarkStaleIfChanged(tickerCtx, outcome.Now.In(time.Local).Format("2006-01-02")); err != nil {
 						log.Printf("[Review] OFF transition stale check failed: %v", err)
@@ -343,17 +370,32 @@ func main() {
 				// window across multiple Supervisor ticks.
 				observedAt := outcome.Now
 				semanticFresh := latestSnapshot != nil && awOK && !isStale && latestSnapshot.IsFresh(outcome.Now, semantic.DefaultTiming.LiveMaxAge)
+				reminderLevel := "NONE"
+				if postStatus.CurrentReminder != nil {
+					reminderLevel = string(postStatus.CurrentReminder.Level)
+				}
+				if err := distractionTracker.Observe(tickerCtx, distraction.Input{
+					Now: outcome.Now, UserMode: outcome.UserMode, ActivityWatchOK: outcome.ActivityValid,
+					ActivityFresh: semanticFresh, Privacy: postStatus.PrivacyState, Relation: outcome.Relation,
+					Confidence: outcome.Classification.Confidence, Source: outcome.Classification.SourceKind,
+					Interaction: outcome.Interaction, Locked: outcome.Locked, App: app, Title: title,
+					Domain: domain, Task: postStatus.Task, ReminderLevel: reminderLevel,
+				}); err != nil {
+					log.Printf("[Distraction] observation failed: %v", err)
+				}
 				if err := semanticService.Observe(tickerCtx, semantic.Candidate{
-					ObservedAt:  observedAt,
-					Fresh:       semanticFresh,
-					UserMode:    outcome.UserMode,
-					Task:        postStatus.Task,
-					Interaction: outcome.Interaction,
-					Relation:    outcome.Relation,
-					Privacy:     postStatus.PrivacyState,
-					App:         app,
-					Title:       title,
-					Domain:      domain,
+					ObservedAt:     observedAt,
+					Fresh:          semanticFresh,
+					UserMode:       outcome.UserMode,
+					Task:           postStatus.Task,
+					Interaction:    outcome.Interaction,
+					Relation:       outcome.Relation,
+					Privacy:        postStatus.PrivacyState,
+					App:            app,
+					Title:          title,
+					Domain:         domain,
+					ScreenHash:     lastScreenHash,
+					Classification: outcome.Classification,
 				}); err != nil {
 					log.Printf("[Semantic] observation failed: %v", err)
 				}
@@ -369,6 +411,7 @@ func main() {
 	log.Printf("[Supervisor] Shutting down...")
 	cancelRetention()
 	cancelTicker()
+	_ = distractionTracker.Close(context.Background(), time.Now(), "SUPERVISOR_SHUTDOWN")
 	stateMgr.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
