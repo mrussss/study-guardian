@@ -81,3 +81,11 @@ AI 的 `ai.proxy` 是文字、视觉和 Daily Review 共享的 transport 策略�
 - Daily Review：`READY` / `AI`，provider `aihubmix`，model `glm-5.3-flash`，生成 API 总耗时 45772ms，`error_code` 为空；监督状态接口未被阻塞。
 - 本轮曾验证 20 秒和 30 秒超时会写入 deterministic fallback；模型级失败与传输/账户失败的 fallback 分类由 Go 回归测试覆盖。费用信息不由这些接口返回，因此只记录为“未知/可能产生费用”，不推断金额。
 - 记录不包含 API Key、请求正文、截图内容、聊天内容或个人数据。
+
+## 6. 自动监督与语义证据
+
+- Daily Review 的 sessions、observations、reminders、distraction events 和 AP ledger 使用显式 `local_date`；新写入时间去除 Go monotonic clock 并保存为 UTC，日历归属由 Supervisor 本地时区计算。
+- `DistractionTracker` 独立维护连续偏离区间；短暂窗口切换不会直接落库，恢复专注、锁屏、BREAK/OFF、重启和跨午夜会关闭当前区间。
+- 本地规则、文字 AI 和视觉 AI 共用结构化分类结果；只保存经过白名单、长度和隐私校验的 activity/topic/subtopic/action/progress/source 字段，不保存原始截图或原始 Provider 响应。
+- 自动学习计时默认关闭。启用后由独立 `AutomationController` 在 Supervisor 主循环外生成转场意图，Manager 在锁外应用；手动 BREAK/OFF 保留人工优先级，主动分心不会自动结束学习会话。
+- 自动化检查依次使用 `go test ./...`、`./scripts/pet-v3.sh check`、Windows `cargo test`、`./scripts/pet-v3.sh native` 和 `./scripts/pet-v3.sh candidate`。真实游戏/锁屏/静态离开、Windows Toast 和 Vision JPEG 仍必须在目标机器按 Windows E2E Gate 单独验收，不能用单元测试替代。
