@@ -98,6 +98,7 @@ motivation:
 review:
   enabled: true
   timezone: "local"
+  generation_timeout_seconds: 110
   provider:
     inherit_text_profile: true
     provider: ""

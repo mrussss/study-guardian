@@ -125,12 +125,13 @@ type MotivationConfig struct {
 }
 
 type ReviewConfig struct {
-	Enabled   bool                  `yaml:"enabled"`
-	Timezone  string                `yaml:"timezone"`
-	Provider  ReviewProviderConfig  `yaml:"provider"`
-	Trigger   ReviewTriggerConfig   `yaml:"trigger"`
-	Retention ReviewRetentionConfig `yaml:"retention"`
-	Limits    ReviewLimitsConfig    `yaml:"limits"`
+	Enabled                  bool                  `yaml:"enabled"`
+	Timezone                 string                `yaml:"timezone"`
+	GenerationTimeoutSeconds int                   `yaml:"generation_timeout_seconds"`
+	Provider                 ReviewProviderConfig  `yaml:"provider"`
+	Trigger                  ReviewTriggerConfig   `yaml:"trigger"`
+	Retention                ReviewRetentionConfig `yaml:"retention"`
+	Limits                   ReviewLimitsConfig    `yaml:"limits"`
 }
 
 type ReviewProviderConfig struct {
@@ -220,7 +221,7 @@ func DefaultConfig() *Config {
 		},
 		Motivation: MotivationConfig{Enabled: true, DefaultDailyTargetMinutes: 120, CheckinThresholdMinutes: 30, IdleStaticCreditGraceSeconds: 300, APPerFocusHourMilli: 1000},
 		Review: ReviewConfig{
-			Enabled: true, Timezone: "local",
+			Enabled: true, Timezone: "local", GenerationTimeoutSeconds: 110,
 			Provider:  ReviewProviderConfig{InheritTextProfile: true, TimeoutSeconds: 60, JSONMode: "auto"},
 			Trigger:   ReviewTriggerConfig{OffDebounceMinutes: 5, BackfillPreviousDay: true},
 			Retention: ReviewRetentionConfig{RawChatDays: 30, SemanticDays: 180},

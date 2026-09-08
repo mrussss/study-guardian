@@ -33,18 +33,19 @@ type StateManager interface {
 }
 
 type Server struct {
-	cfg              *config.Config
-	stateMgr         StateManager
-	httpServer       *http.Server
-	mu               sync.RWMutex
-	motivation       MotivationManager
-	aiStatus         func() interface{}
-	store            *storage.Storage
-	review           *review.Service
-	reviewTrigger    *review.ReviewTrigger
-	semantic         *semantic.Service
-	reminderSettings ReminderSettingsManager
-	aiSettings       AISettingsManager
+	cfg               *config.Config
+	stateMgr          StateManager
+	httpServer        *http.Server
+	mu                sync.RWMutex
+	motivation        MotivationManager
+	aiStatus          func() interface{}
+	store             *storage.Storage
+	review            *review.Service
+	reviewCoordinator *review.Coordinator
+	reviewTrigger     *review.ReviewTrigger
+	semantic          *semantic.Service
+	reminderSettings  ReminderSettingsManager
+	aiSettings        AISettingsManager
 }
 
 type MotivationManager interface {
@@ -100,6 +101,8 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/collector/heartbeat", s.withCollectorAuth(s.handleCollectorHeartbeat))
 	mux.HandleFunc("/v1/review/daily", s.withAuth(s.handleReviewDaily))
 	mux.HandleFunc("/v1/review/generate", s.withAuth(s.handleReviewGenerate))
+	mux.HandleFunc("/v1/review/generate/sync", s.withAuth(s.handleReviewGenerateSync))
+	mux.HandleFunc("/v1/review/generation", s.withAuth(s.handleReviewGeneration))
 	mux.HandleFunc("/v1/review/exclude", s.withAuth(s.handleReviewExclude))
 	mux.HandleFunc("/v1/review/evidence", s.withAuth(s.handleReviewEvidence))
 
@@ -121,6 +124,10 @@ func (s *Server) SetAIStatus(fn func() interface{}) { s.aiStatus = fn }
 func (s *Server) SetStorage(store *storage.Storage) { s.store = store }
 func (s *Server) SetReview(service *review.Service) {
 	s.review = service
+	if s.reviewCoordinator != nil {
+		s.reviewCoordinator.Close()
+		s.reviewCoordinator = nil
+	}
 	if s.reviewTrigger != nil {
 		s.reviewTrigger.Close()
 	}
@@ -128,16 +135,22 @@ func (s *Server) SetReview(service *review.Service) {
 		s.reviewTrigger = nil
 		return
 	}
+	totalTimeout := 110 * time.Second
+	if s.cfg != nil && s.cfg.Review.GenerationTimeoutSeconds > 0 {
+		totalTimeout = time.Duration(s.cfg.Review.GenerationTimeoutSeconds) * time.Second
+	}
+	s.reviewCoordinator = review.NewCoordinator(service, totalTimeout, 5*time.Second)
 	debounce := 5 * time.Minute
 	if s.cfg != nil && s.cfg.Review.Trigger.OffDebounceMinutes > 0 {
 		debounce = time.Duration(s.cfg.Review.Trigger.OffDebounceMinutes) * time.Minute
 	}
 	s.reviewTrigger = review.NewReviewTrigger(debounce, func(ctx context.Context, date string) error {
-		_, err := service.Generate(ctx, date)
+		_, err := s.reviewCoordinator.Start(date)
 		return err
 	})
 }
-func (s *Server) SetSemantic(service *semantic.Service) { s.semantic = service }
+func (s *Server) ReviewCoordinator() *review.Coordinator { return s.reviewCoordinator }
+func (s *Server) SetSemantic(service *semantic.Service)  { s.semantic = service }
 
 func (s *Server) Start() error {
 	addr := s.httpServer.Addr
@@ -151,6 +164,9 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.reviewTrigger != nil {
 		s.reviewTrigger.Close()
+	}
+	if s.reviewCoordinator != nil {
+		s.reviewCoordinator.Close()
 	}
 	return s.httpServer.Shutdown(ctx)
 }
@@ -292,6 +308,9 @@ func (s *Server) handleModeOff(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.reviewTrigger != nil {
 		s.reviewTrigger.OnModeChanged(string(state.UserModeOff), time.Now())
+	}
+	if s.review != nil {
+		_, _ = s.review.MarkStaleIfChanged(r.Context(), time.Now().Format("2006-01-02"))
 	}
 
 	st := s.stateMgr.GetStatus()

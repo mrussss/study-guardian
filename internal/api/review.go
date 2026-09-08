@@ -67,7 +67,7 @@ func (s *Server) handleReviewGenerate(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	if s.review == nil {
+	if s.review == nil || s.reviewCoordinator == nil {
 		serviceUnavailable(w)
 		return
 	}
@@ -79,15 +79,69 @@ func (s *Server) handleReviewGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	date := strings.TrimSpace(request.Date)
-	if date == "" {
-		date = time.Now().Format("2006-01-02")
+	date, err := review.NormalizeDate(date)
+	if err != nil {
+		jsonError(w, err, http.StatusBadRequest)
+		return
 	}
-	record, err := s.review.Generate(context.Background(), date)
+	status, err := s.reviewCoordinator.Start(date)
+	if err != nil {
+		jsonError(w, err, http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(status)
+}
+
+// handleReviewGenerateSync is retained for older integrations and CLI tools.
+// The Control Center uses handleReviewGenerate plus the generation status API.
+func (s *Server) handleReviewGenerateSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if s.review == nil {
+		serviceUnavailable(w)
+		return
+	}
+	var request struct {
+		Date string `json:"date"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && err.Error() != "EOF" {
+		jsonError(w, fmt.Errorf("invalid review generate JSON"), http.StatusBadRequest)
+		return
+	}
+	date, err := review.NormalizeDate(request.Date)
+	if err != nil {
+		jsonError(w, err, http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), aiOperationTimeout)
+	defer cancel()
+	record, err := s.review.Generate(ctx, date)
 	if err != nil {
 		jsonError(w, err, http.StatusInternalServerError)
 		return
 	}
 	jsonOK(w, record)
+}
+
+func (s *Server) handleReviewGeneration(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if s.reviewCoordinator == nil {
+		serviceUnavailable(w)
+		return
+	}
+	status, err := s.reviewCoordinator.Status(r.URL.Query().Get("date"))
+	if err != nil {
+		jsonError(w, err, http.StatusBadRequest)
+		return
+	}
+	jsonOK(w, status)
 }
 
 func (s *Server) handleReviewExclude(w http.ResponseWriter, r *http.Request) {

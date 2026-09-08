@@ -48,6 +48,9 @@ func (p *ModelFallbackProvider) Generate(ctx context.Context, input ReviewInput)
 	var lastMetadata ProviderMetadata
 	var lastErr error
 	for index, provider := range p.providers {
+		if index > 0 && reviewProviderWouldExceedDeadline(ctx, provider) {
+			break
+		}
 		document, metadata, err := provider.Generate(ctx, input)
 		lastMetadata = metadata
 		if err == nil {
@@ -59,6 +62,18 @@ func (p *ModelFallbackProvider) Generate(ctx context.Context, input ReviewInput)
 		}
 	}
 	return Document{}, lastMetadata, lastErr
+}
+
+func reviewProviderWouldExceedDeadline(ctx context.Context, provider Provider) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	timed, ok := provider.(interface{ Timeout() time.Duration })
+	if !ok || timed.Timeout() <= 0 {
+		return false
+	}
+	deadline, ok := ctx.Deadline()
+	return ok && time.Until(deadline) <= timed.Timeout()
 }
 
 func shouldFallbackReviewModel(ctx context.Context, err error) bool {
@@ -124,6 +139,7 @@ type HTTPReviewProvider struct {
 	model    string
 	apiKey   string
 	endpoint string
+	timeout  time.Duration
 	client   *ai.Client
 }
 
@@ -143,9 +159,12 @@ func NewProvider(o ProviderOptions) (*HTTPReviewProvider, error) {
 	return &HTTPReviewProvider{
 		name: strings.TrimSpace(o.Name), model: strings.TrimSpace(o.Model),
 		apiKey: o.APIKey, endpoint: strings.TrimRight(o.Endpoint, "/"),
-		client: ai.NewClient(ai.Options{Endpoint: o.Endpoint, APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Timeout: o.Timeout, Temperature: o.Temperature, HTTPClient: o.HTTPClient, Proxy: o.Proxy}),
+		timeout: o.Timeout,
+		client:  ai.NewClient(ai.Options{Endpoint: o.Endpoint, APIKey: o.APIKey, Model: o.Model, JSONMode: o.JSONMode, SupportsJSONMode: o.SupportsJSONMode, Timeout: o.Timeout, Temperature: o.Temperature, HTTPClient: o.HTTPClient, Proxy: o.Proxy}),
 	}, nil
 }
+
+func (p *HTTPReviewProvider) Timeout() time.Duration { return p.timeout }
 
 func (p *HTTPReviewProvider) Generate(ctx context.Context, input ReviewInput) (Document, ProviderMetadata, error) {
 	metadata := ProviderMetadata{Provider: p.name, Model: p.model, PromptVersion: ReviewPromptVersion}

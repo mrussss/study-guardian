@@ -120,10 +120,12 @@ func TestReviewGenerateAndEvidenceAPI(t *testing.T) {
 	server.SetReview(review.NewService(store, time.UTC, t.TempDir()))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/review/generate", server.withAuth(server.handleReviewGenerate))
+	mux.HandleFunc("/v1/review/generate/sync", server.withAuth(server.handleReviewGenerateSync))
+	mux.HandleFunc("/v1/review/generation", server.withAuth(server.handleReviewGeneration))
 	mux.HandleFunc("/v1/review/daily", server.withAuth(server.handleReviewDaily))
 	mux.HandleFunc("/v1/review/evidence", server.withAuth(server.handleReviewEvidence))
 	mux.HandleFunc("/v1/review/exclude", server.withAuth(server.handleReviewExclude))
-	request := httptest.NewRequest(http.MethodPost, "/v1/review/generate", bytes.NewBufferString(`{"date":"2026-09-03"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/review/generate/sync", bytes.NewBufferString(`{"date":"2026-09-03"}`))
 	request.Header.Set("Authorization", "Bearer main-token")
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
@@ -151,6 +153,54 @@ func TestReviewGenerateAndEvidenceAPI(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid exclusion status=%d body=%s", response.Code, response.Body.String())
 	}
+}
+
+func TestReviewGenerationAPIIsAsyncAndSingleFlight(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.IPC.AuthToken = "main-token"
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+	server := NewServer(cfg, state.NewManager(state.NewFakeClock(now)))
+	server.SetReview(review.NewService(store, time.UTC, t.TempDir()))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/review/generate", server.withAuth(server.handleReviewGenerate))
+	mux.HandleFunc("/v1/review/generation", server.withAuth(server.handleReviewGeneration))
+	request := httptest.NewRequest(http.MethodPost, "/v1/review/generate", bytes.NewBufferString(`{"date":"2026-09-03"}`))
+	request.Header.Set("Authorization", "Bearer main-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || !bytes.Contains(response.Body.Bytes(), []byte(`"state":"PENDING"`)) {
+		t.Fatalf("async generate status=%d body=%s", response.Code, response.Body.String())
+	}
+	var accepted review.GenerationStatus
+	if err := json.Unmarshal(response.Body.Bytes(), &accepted); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/review/generate", bytes.NewBufferString(`{"date":"2026-09-03"}`))
+	request.Header.Set("Authorization", "Bearer main-token")
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || !bytes.Contains(response.Body.Bytes(), []byte(`"already_running":true`)) {
+		t.Fatalf("single-flight status=%d body=%s", response.Code, response.Body.String())
+	}
+	for attempt := 0; attempt < 40; attempt++ {
+		request = httptest.NewRequest(http.MethodGet, "/v1/review/generation?date=2026-09-03", nil)
+		request.Header.Set("Authorization", "Bearer main-token")
+		response = httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status code=%d body=%s", response.Code, response.Body.String())
+		}
+		if bytes.Contains(response.Body.Bytes(), []byte(`"state":"READY"`)) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("async generation did not reach READY")
 }
 
 func TestReviewDailyNormalizesLegacyNullLists(t *testing.T) {

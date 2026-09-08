@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"study-guardian/internal/ai"
 	"study-guardian/internal/config"
 )
 
@@ -165,5 +166,29 @@ func TestReviewModelFallbackUsesNextModelAfterInvalidSchema(t *testing.T) {
 	}
 	if document.Headline != "复盘" || metadata.Model != "paid-model" || len(models) != 2 {
 		t.Fatalf("document=%+v metadata=%+v models=%v", document, metadata, models)
+	}
+}
+
+type deadlineAwareReviewProvider struct {
+	timeout time.Duration
+	calls   int
+	err     error
+}
+
+func (p *deadlineAwareReviewProvider) Generate(context.Context, ReviewInput) (Document, ProviderMetadata, error) {
+	p.calls++
+	return Document{}, ProviderMetadata{Provider: "test", Model: "test"}, p.err
+}
+
+func (p *deadlineAwareReviewProvider) Timeout() time.Duration { return p.timeout }
+
+func TestReviewModelFallbackDoesNotStartAfterTotalDeadline(t *testing.T) {
+	first := &deadlineAwareReviewProvider{timeout: time.Second, err: ProviderError{Kind: ProviderErrorHTTP, FailureKind: ai.FailureModelNotFound, FailureScope: ai.FailureScopeModel}}
+	second := &deadlineAwareReviewProvider{timeout: time.Second, err: errors.New("must not run")}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	_, _, _ = NewModelFallbackProvider(first, second).Generate(ctx, ReviewInput{Date: "2026-09-07"})
+	if first.calls != 1 || second.calls != 0 {
+		t.Fatalf("calls first=%d second=%d", first.calls, second.calls)
 	}
 }
