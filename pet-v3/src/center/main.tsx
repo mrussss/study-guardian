@@ -21,6 +21,7 @@ function RuntimeControlCenter(): ReactElement {
   const [snapshot, setSnapshot] = useState<SupervisorDashboardSnapshot>();
   const [routeRequest, setRouteRequest] = useState<ControlCenterRouteRequest>({ route: "overview", revision: 0 });
   const pollerRef = useRef<SupervisorDashboardPollLoop | undefined>(undefined);
+  const latestSnapshotRef = useRef<SupervisorDashboardSnapshot | undefined>(undefined);
 
   useEffect(() => {
     if (!isTauriRuntime) {
@@ -71,7 +72,7 @@ function RuntimeControlCenter(): ReactElement {
     const adapter = getSupervisorDashboardAdapter();
     const poller = new SupervisorDashboardPollLoop(adapter, 2500);
     pollerRef.current = poller;
-    poller.start(next => { if (!stopped) setSnapshot(next); });
+    poller.start(next => { latestSnapshotRef.current = next; if (!stopped) setSnapshot(next); });
     return () => {
       stopped = true;
       poller.stop();
@@ -82,7 +83,7 @@ function RuntimeControlCenter(): ReactElement {
   return <ControlCenter snapshot={snapshot} live initialActive={routeRequest.route} routeRevision={routeRequest.revision}
     onTaskChanged={() => pollerRef.current?.refresh()}
     onTaskMutationStarted={() => pollerRef.current?.markMutation()}
-    onRefresh={() => pollerRef.current?.refresh() ?? Promise.resolve()}
+    onRefresh={async () => { await pollerRef.current?.refresh(); return latestSnapshotRef.current; }}
   />;
 }
 

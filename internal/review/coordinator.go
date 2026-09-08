@@ -19,7 +19,6 @@ const (
 	GenerationFailed  = "FAILED"
 
 	defaultGenerationTimeout = 110 * time.Second
-	defaultFallbackTimeout   = 5 * time.Second
 )
 
 // GenerationStatus is deliberately a small, secret-free status DTO. It does
@@ -44,11 +43,10 @@ type generationJob struct {
 // generation for a date, regardless of whether it was started manually, by
 // the OFF trigger, or by startup backfill.
 type Coordinator struct {
-	service         *Service
-	totalTimeout    time.Duration
-	fallbackTimeout time.Duration
-	ctx             context.Context
-	cancel          context.CancelFunc
+	service      *Service
+	totalTimeout time.Duration
+	ctx          context.Context
+	cancel       context.CancelFunc
 
 	mu     sync.Mutex
 	jobs   map[string]*generationJob
@@ -57,16 +55,13 @@ type Coordinator struct {
 	seq    uint64
 }
 
-func NewCoordinator(service *Service, totalTimeout, fallbackTimeout time.Duration) *Coordinator {
+func NewCoordinator(service *Service, totalTimeout time.Duration) *Coordinator {
 	if totalTimeout <= 0 {
 		totalTimeout = defaultGenerationTimeout
 	}
-	if fallbackTimeout <= 0 {
-		fallbackTimeout = defaultFallbackTimeout
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Coordinator{
-		service: service, totalTimeout: totalTimeout, fallbackTimeout: fallbackTimeout,
+		service: service, totalTimeout: totalTimeout,
 		ctx: ctx, cancel: cancel, jobs: make(map[string]*generationJob),
 	}
 }
@@ -159,11 +154,7 @@ func (c *Coordinator) run(date string, job *generationJob) {
 	defer c.wg.Done()
 	ctx, cancel := context.WithTimeout(c.ctx, c.totalTimeout)
 	defer cancel()
-	fallbackBase := context.WithoutCancel(ctx)
-	fallbackCtx, cancelFallback := context.WithTimeout(fallbackBase, c.fallbackTimeout)
-	defer cancelFallback()
-
-	record, err := c.service.GenerateWithFallbackContext(ctx, fallbackCtx, date)
+	record, err := c.service.Generate(ctx, date)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.jobs[date] != job {

@@ -15,6 +15,11 @@ type blockingReviewProvider struct {
 	calls int
 }
 
+type timedBlockingReviewProvider struct {
+	started  chan struct{}
+	duration chan time.Duration
+}
+
 func (p *blockingReviewProvider) Generate(ctx context.Context, input ReviewInput) (Document, ProviderMetadata, error) {
 	p.mu.Lock()
 	p.calls++
@@ -27,6 +32,17 @@ func (p *blockingReviewProvider) Calls() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.calls
+}
+
+func (p *timedBlockingReviewProvider) Generate(ctx context.Context, input ReviewInput) (Document, ProviderMetadata, error) {
+	startedAt := time.Now()
+	select {
+	case p.started <- struct{}{}:
+	default:
+	}
+	<-ctx.Done()
+	p.duration <- time.Since(startedAt)
+	return Document{}, ProviderMetadata{Provider: "test", Model: "blocking", PromptVersion: ReviewPromptVersion}, ctx.Err()
 }
 
 func waitForProviderCall(t *testing.T, provider *blockingReviewProvider) {
@@ -55,7 +71,7 @@ func TestCoordinatorSingleFlightsManualAndAutoByDate(t *testing.T) {
 	provider := &blockingReviewProvider{}
 	service, store := newCoordinatorTestService(t, provider)
 	defer store.Close()
-	coordinator := NewCoordinator(service, time.Second, 100*time.Millisecond)
+	coordinator := NewCoordinator(service, time.Second)
 	first, err := coordinator.Start("2026-09-07")
 	if err != nil || first.State != GenerationPending || first.GenerationID == "" {
 		t.Fatalf("first=%+v err=%v", first, err)
@@ -75,7 +91,7 @@ func TestCoordinatorPersistsFallbackAfterGenerationDeadline(t *testing.T) {
 	provider := &blockingReviewProvider{}
 	service, store := newCoordinatorTestService(t, provider)
 	defer store.Close()
-	coordinator := NewCoordinator(service, 20*time.Millisecond, 200*time.Millisecond)
+	coordinator := NewCoordinator(service, 20*time.Millisecond)
 	status, err := coordinator.Start("2026-09-07")
 	if err != nil {
 		t.Fatal(err)
@@ -103,11 +119,67 @@ func TestCoordinatorPersistsFallbackAfterGenerationDeadline(t *testing.T) {
 	t.Fatalf("generation %s did not settle", status.GenerationID)
 }
 
+func TestCoordinatorStartsFallbackTimeoutAfterAIDeadline(t *testing.T) {
+	provider := &timedBlockingReviewProvider{started: make(chan struct{}, 1), duration: make(chan time.Duration, 1)}
+	service, store := newCoordinatorTestService(t, provider)
+	defer store.Close()
+	service.fallbackPersistenceTimeout = 20 * time.Millisecond
+	date := "2026-09-07"
+	first, err := service.GenerateFallback(context.Background(), date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordSemanticSnapshot(context.Background(), storage.SemanticSnapshotRecord{
+		ObservedAt: time.Date(2026, 9, 7, 10, 0, 0, 0, time.UTC), LocalDate: date,
+		Relation: "FOCUSED", Confidence: .9, Activity: "READING", SourceKind: "LOCAL_RULE",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	coordinator := NewCoordinator(service, 60*time.Millisecond)
+	defer coordinator.Close()
+	if _, err := coordinator.Start(date); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not start")
+	}
+	aiElapsed := <-provider.duration
+	if aiElapsed <= service.fallbackPersistenceTimeout {
+		t.Fatalf("AI path elapsed=%s, want longer than fallback timeout=%s", aiElapsed, service.fallbackPersistenceTimeout)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		status, statusErr := coordinator.Status(date)
+		if statusErr != nil {
+			t.Fatal(statusErr)
+		}
+		if status.State == GenerationReady {
+			if status.GenerationMode != "FALLBACK" || status.ErrorKind != "timeout" || status.Revision != first.Revision+1 {
+				t.Fatalf("generation status=%+v first=%+v", status, first)
+			}
+			record, loadErr := service.Get(context.Background(), date)
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if record.Status != StatusReady || record.GenerationMode != "FALLBACK" || record.Revision != first.Revision+1 || record.ErrorCode != "timeout" {
+				t.Fatalf("fallback record=%+v first=%+v", record, first)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("fallback did not settle after the AI deadline")
+}
+
 func TestCoordinatorCloseCancelsRunningGeneration(t *testing.T) {
 	provider := &blockingReviewProvider{}
 	service, store := newCoordinatorTestService(t, provider)
 	defer store.Close()
-	coordinator := NewCoordinator(service, time.Minute, 100*time.Millisecond)
+	coordinator := NewCoordinator(service, time.Minute)
 	if _, err := coordinator.Start("2026-09-07"); err != nil {
 		t.Fatal(err)
 	}

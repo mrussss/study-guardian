@@ -26,16 +26,17 @@ const (
 )
 
 type Service struct {
-	store      *storage.Storage
-	aggregator *evidence.Aggregator
-	outputDir  string
-	provider   Provider
-	limits     ReviewLimits
-	mu         sync.Mutex
+	store                      *storage.Storage
+	aggregator                 *evidence.Aggregator
+	outputDir                  string
+	provider                   Provider
+	limits                     ReviewLimits
+	fallbackPersistenceTimeout time.Duration
+	mu                         sync.Mutex
 }
 
 func NewService(store *storage.Storage, timezone *time.Location, outputDir string) *Service {
-	return &Service{store: store, aggregator: evidence.NewAggregator(store, timezone), outputDir: outputDir, limits: normalizeReviewLimits(ReviewLimits{})}
+	return &Service{store: store, aggregator: evidence.NewAggregator(store, timezone), outputDir: outputDir, limits: normalizeReviewLimits(ReviewLimits{}), fallbackPersistenceTimeout: fallbackPersistenceTime}
 }
 
 func (s *Service) SetProvider(provider Provider) {
@@ -126,25 +127,9 @@ func hasReviewEvidence(bundle evidence.DailyEvidenceBundle) bool {
 
 // Generate executes the complete guarded AI path. Any provider, sanitization
 // or validation failure is persisted as a deterministic fallback so the API
-// remains useful while the failure is observable in ErrorCode.
+// remains useful while the failure is observable in ErrorCode. The fallback
+// context is created only in the failure branch, after the AI path has ended.
 func (s *Service) Generate(ctx context.Context, date string) (storage.DailyReviewRecord, error) {
-	fallbackBase := context.WithoutCancel(ctx)
-	fallbackCtx, cancel := context.WithTimeout(fallbackBase, fallbackPersistenceTime)
-	defer cancel()
-	return s.GenerateWithFallbackContext(ctx, fallbackCtx, date)
-}
-
-// GenerateWithFallbackContext runs the AI path with ctx and uses fallbackCtx
-// only for the bounded persistence step after an AI deadline or provider
-// failure. The two contexts are intentionally separate: an expired model
-// request must not prevent the deterministic local summary from being saved.
-func (s *Service) GenerateWithFallbackContext(ctx, fallbackCtx context.Context, date string) (storage.DailyReviewRecord, error) {
-	if fallbackCtx == nil {
-		fallbackBase := context.WithoutCancel(ctx)
-		var cancel context.CancelFunc
-		fallbackCtx, cancel = context.WithTimeout(fallbackBase, fallbackPersistenceTime)
-		defer cancel()
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	bundle, err := s.aggregator.Build(ctx, date)
@@ -153,11 +138,11 @@ func (s *Service) GenerateWithFallbackContext(ctx, fallbackCtx context.Context, 
 	}
 	input, err := Compact(bundle, s.limits)
 	if err != nil {
-		return s.generateFallbackLocked(fallbackCtx, bundle, "compaction_failed")
+		return s.generateFallbackAfterFailureLocked(ctx, bundle, "compaction_failed")
 	}
 	inputHash, err := hashReviewInput(input)
 	if err != nil {
-		return s.generateFallbackLocked(fallbackCtx, bundle, "input_hash_failed")
+		return s.generateFallbackAfterFailureLockedWithHash(ctx, bundle, "", "input_hash_failed")
 	}
 	if previous, loadErr := s.store.LoadDailyReview(ctx, date); loadErr == nil {
 		if previous.Status == StatusReady && previous.InputHash == inputHash {
@@ -168,23 +153,44 @@ func (s *Service) GenerateWithFallbackContext(ctx, fallbackCtx context.Context, 
 		}
 	}
 	if s.provider == nil {
-		return s.generateFallbackLockedWithHash(fallbackCtx, bundle, inputHash, "provider_not_configured")
+		return s.generateFallbackAfterFailureLockedWithHash(ctx, bundle, inputHash, "provider_not_configured")
 	}
 	sanitized, sanitizerReport, err := Sanitize(input, s.limits.MaxFinalInputChars)
 	if err != nil {
-		return s.generateFallbackLockedWithHash(fallbackCtx, bundle, inputHash, "sanitizer_failed")
+		return s.generateFallbackAfterFailureLockedWithHash(ctx, bundle, inputHash, "sanitizer_failed")
 	}
 	document, metadata, err := s.provider.Generate(ctx, sanitized)
 	if err != nil {
-		return s.generateFallbackLockedWithHash(fallbackCtx, bundle, inputHash, providerErrorCode(err))
+		return s.generateFallbackAfterFailureLockedWithHash(ctx, bundle, inputHash, providerErrorCode(err))
 	}
 	validated, validationReport, err := ValidateDocument(sanitized, document)
 	if err != nil {
-		return s.generateFallbackLockedWithHash(fallbackCtx, bundle, inputHash, "validation_failed")
+		return s.generateFallbackAfterFailureLockedWithHash(ctx, bundle, inputHash, "validation_failed")
 	}
 	validated.EvidenceQuality = input.Quality
 	validated.Warnings = appendReviewWarnings(input.Warnings, sanitizerReport.Warnings, validationReport.Warnings)
 	return s.persistLocked(ctx, bundle, validated, inputHash, "AI", metadata.Provider, metadata.Model, metadata.PromptVersion, "")
+}
+
+func (s *Service) newFallbackContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := s.fallbackPersistenceTimeout
+	if timeout <= 0 {
+		timeout = fallbackPersistenceTime
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), timeout)
+}
+
+func (s *Service) generateFallbackAfterFailureLocked(ctx context.Context, bundle evidence.DailyEvidenceBundle, errorCode string) (storage.DailyReviewRecord, error) {
+	return s.generateFallbackAfterFailureLockedWithHash(ctx, bundle, "", errorCode)
+}
+
+func (s *Service) generateFallbackAfterFailureLockedWithHash(ctx context.Context, bundle evidence.DailyEvidenceBundle, inputHash, errorCode string) (storage.DailyReviewRecord, error) {
+	// This context must be created after the AI/provider/validation path has
+	// failed. Creating it before the provider call would spend the persistence
+	// budget while the model request is still running.
+	fallbackCtx, cancel := s.newFallbackContext(ctx)
+	defer cancel()
+	return s.generateFallbackLockedWithHash(fallbackCtx, bundle, inputHash, errorCode)
 }
 
 // GenerateFallback is deterministic and offline-safe. The mutex is the single

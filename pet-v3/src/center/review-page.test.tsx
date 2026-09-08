@@ -76,6 +76,35 @@ test("review generation failure is not styled as a success", async () => {
   assert.match(screen.getByRole("status").className, /is-warning/);
 });
 
+test("failed timeout uses the freshly refreshed fallback review", async () => {
+  const initialReview: NativeReviewSummary = { ...review, generation_mode: "AI", error_code: undefined };
+  const refreshedReview: NativeReviewSummary = { ...review, status: "READY", revision: 2 };
+  render(<ReviewPage review={initialReview} onRefresh={async () => ({ connected: true, review: refreshedReview })} control={control({
+    startReviewGeneration: async () => ({ state: "FAILED", error_kind: "timeout" }),
+  })} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "更新今日总结" }));
+  await waitFor(() => assert.equal(screen.getByRole("status").textContent, "AI 响应超时，已生成本地总结"));
+  assert.equal(screen.queryByText("今日总结暂时无法生成"), null);
+});
+
+test("review renders known activity enums with Chinese labels", () => {
+  const localizedReview: NativeReviewSummary = {
+    ...review,
+    status: "READY",
+    topics: [
+      { name: "AI_ASSISTED", summary: "使用辅助工具学习", confidence: .9 },
+      { name: "READING", summary: "阅读资料", confidence: .9 },
+      { name: "自定义主题", summary: "保留原文", confidence: .9 },
+    ],
+  };
+  render(<ReviewPage review={localizedReview} control={control()} />);
+  assert.ok(screen.getByText("AI 辅助学习"));
+  assert.ok(screen.getByText("阅读"));
+  assert.ok(screen.getByText("自定义主题"));
+  assert.equal(screen.queryByText("AI_ASSISTED"), null);
+  assert.equal(screen.queryByText("READING"), null);
+});
+
 test("generation stays pending while polling and ignores a stale generation id", async () => {
   let statusCalls = 0;
   const controlAdapter = control({

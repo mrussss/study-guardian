@@ -30,7 +30,7 @@ import {
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { clampProgress, formatFocusMinutes, totalFocusMinutes, type FocusDay } from "../shared/models/dashboard";
 import { BrandMark } from "../shared/BrandMark";
-import { deriveSupervisionState, formatLastActivity, interactionLabels, modeLabels, privacyLabels, relationLabels } from "../shared/models/supervision-state";
+import { activityLabels, deriveSupervisionState, formatLastActivity, interactionLabels, modeLabels, privacyLabels, relationLabels } from "../shared/models/supervision-state";
 import { useTaskSelectionState } from "../shared/use-task-selection-state";
 import { getSupervisorControlAdapter, getSystemIntegrationAdapter } from "../runtime/adapters";
 import { TaskWheel } from "../shared/task-wheel/TaskWheel";
@@ -41,6 +41,7 @@ import { FocusClock } from "./FocusClock";
 import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
+type DashboardRefresh = () => Promise<SupervisorDashboardSnapshot | void>;
 
 const primaryNav: NavItem[] = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
@@ -74,7 +75,7 @@ const missionRows = [
 
 const achievement = { title: "一周坚持", description: "连续打卡 7 天，保持稳定的节奏", progress: .71, detail: "5 / 7 天" };
 
-type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void; onTaskChanged?: () => void | Promise<void>; onTaskMutationStarted?: () => void; onRefresh?: () => Promise<void>; onOpenHelp?: () => void };
+type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void; onTaskChanged?: () => void | Promise<void>; onTaskMutationStarted?: () => void; onRefresh?: DashboardRefresh; onOpenHelp?: () => void };
 
 const modeTitle: Record<"STANDBY" | "STUDY" | "BREAK" | "OFF", string> = {
   STANDBY: "准备开始",
@@ -243,7 +244,7 @@ function EmptyData({ text }: { text: string }): ReactElement {
   return <div className="data-empty"><Sparkles size={20} /><span>{text}</span></div>;
 }
 
-function MissionSummary({ missions, live, motivation, onNavigate, onRefresh }: { missions?: NativeMission[]; live: boolean; motivation?: NativeMotivationStatus; onNavigate?: (id: string) => void; onRefresh?: () => Promise<void> }): ReactElement {
+function MissionSummary({ missions, live, motivation, onNavigate, onRefresh }: { missions?: NativeMission[]; live: boolean; motivation?: NativeMotivationStatus; onNavigate?: (id: string) => void; onRefresh?: DashboardRefresh }): ReactElement {
   const [busyId, setBusyId] = useState<string>();
   const [notice, setNotice] = useState("");
   const control = getSupervisorControlAdapter();
@@ -270,7 +271,7 @@ function MissionSummary({ missions, live, motivation, onNavigate, onRefresh }: {
   </section>;
 }
 
-function MissionsPage({ missions, taskPresets, onRefresh }: { missions?: NativeMission[]; taskPresets?: NativeTaskPresetList; onRefresh?: () => Promise<void> }): ReactElement {
+function MissionsPage({ missions, taskPresets, onRefresh }: { missions?: NativeMission[]; taskPresets?: NativeTaskPresetList; onRefresh?: DashboardRefresh }): ReactElement {
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -327,7 +328,12 @@ function HistoryPage({ history }: { history?: SupervisorDashboardSnapshot["histo
   return <DataPage title="历史" description="回看最近 7 天的有效专注，不追踪原始屏幕内容。"><section className="surface-section data-card"><div className="section-header"><div><h2>专注记录</h2><p>仅显示 Supervisor 提供的分钟级汇总</p></div><History className="section-icon" size={20} /></div>{history && history.length > 0 ? <div className="data-list">{history.map(day => <div className="data-row" key={day.date}><div><strong>{day.date}</strong><span>目标 {day.target_minutes} 分钟 · {day.target_completed ? "已达标" : "进行中"}</span></div><em>{day.focus_minutes} min</em></div>)}</div> : <EmptyData text="暂无历史记录" />}</section></DataPage>;
 }
 
-export function ReviewPage({ review, onRefresh, control = getSupervisorControlAdapter(), pollIntervalMs = 2000, maxWaitMs = 120000 }: { review?: NativeReviewSummary; onRefresh?: () => Promise<void>; control?: ReturnType<typeof getSupervisorControlAdapter>; pollIntervalMs?: number; maxWaitMs?: number }): ReactElement {
+function reviewTopicLabel(name: string): string {
+  const key = name.trim().toUpperCase();
+  return Object.prototype.hasOwnProperty.call(activityLabels, key) ? activityLabels[key as keyof typeof activityLabels] : name;
+}
+
+export function ReviewPage({ review, onRefresh, control = getSupervisorControlAdapter(), pollIntervalMs = 2000, maxWaitMs = 120000 }: { review?: NativeReviewSummary; onRefresh?: DashboardRefresh; control?: ReturnType<typeof getSupervisorControlAdapter>; pollIntervalMs?: number; maxWaitMs?: number }): ReactElement {
   const [notice, setNotice] = useState<{ text: string; tone: "neutral" | "success" | "warning" }>();
   const [generating, setGenerating] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -338,15 +344,21 @@ export function ReviewPage({ review, onRefresh, control = getSupervisorControlAd
   }, []);
   const finish = async (status: ReviewGenerationStatusSnapshot, token: number): Promise<void> => {
     if (token !== runRef.current) return;
-    await onRefresh?.();
+    const refreshedSnapshot = await onRefresh?.();
     if (token !== runRef.current) return;
+    const refreshedReview = refreshedSnapshot && typeof refreshedSnapshot === "object" && "review" in refreshedSnapshot
+      ? refreshedSnapshot.review
+      : undefined;
     if (status.state === "READY") {
       const message = status.generation_mode === "FALLBACK" && status.error_kind === "timeout"
         ? "AI 响应超时，已生成本地总结"
         : status.generation_mode === "FALLBACK" ? "今日总结已生成本地总结" : "AI 总结已生成";
       setNotice({ text: message, tone: "success" });
-    } else if (review?.generation_mode === "FALLBACK" && review.status !== "PENDING") {
-      setNotice({ text: "今日总结已生成本地总结", tone: "success" });
+    } else if (refreshedReview?.generation_mode === "FALLBACK" && refreshedReview.status !== "PENDING") {
+      const message = status.error_kind === "timeout" || refreshedReview.error_code === "timeout"
+        ? "AI 响应超时，已生成本地总结"
+        : "今日总结已生成本地总结";
+      setNotice({ text: message, tone: "success" });
     } else {
       setNotice({ text: "今日总结暂时无法生成", tone: "warning" });
     }
@@ -413,7 +425,7 @@ export function ReviewPage({ review, onRefresh, control = getSupervisorControlAd
   };
   const reason = review?.status === "STALE" ? "生成后又有新的学习记录。" : review?.generation_mode === "FALLBACK" ? (review.error_code && review.error_code !== "provider_not_configured" ? "AI 暂时不可用，本次已自动使用本地总结。" : "尚未配置 AI，本次使用本地证据生成。") : "根据今天记录的学习活动整理。";
   const noticeView = notice && <span className={`settings-notice is-${notice.tone}`} role="status" aria-live="polite">{notice.text}</span>;
-  return <DataPage title="学习复盘" description="摘要来自本地 Review，不展示原始聊天或屏幕内容。"><section className="surface-section data-card" aria-busy={generating}>{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · {reason}</p></div><span className="review-badge">{reviewStatusLabel(review.status)}</span></div>{review.status === "STALE" && <p className="review-stale-notice">生成后又有新的学习记录，当前内容仍可查看。</p>}<div className="review-detail-grid"><div><span className="eyebrow">学习进展</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>今天记录了学习活动，但还没有足够证据确认具体完成项。</p>}</div><div><span className="eyebrow">尚未记录完成项</span>{review.unfinished.length > 0 ? review.unfinished.map(item => <p key={item}>{item}</p>) : <p>暂无待办</p>}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div></div>{review.status === "STALE" && <button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在更新…" : "更新今日总结"}</button>}</> : <div className="review-generate-empty"><EmptyData text="今日总结将在结束学习后约 5 分钟自动生成" /><button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在生成…" : "立即生成"}</button></div>}{noticeView}</section></DataPage>;
+  return <DataPage title="学习复盘" description="摘要来自本地 Review，不展示原始聊天或屏幕内容。"><section className="surface-section data-card" aria-busy={generating}>{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · {reason}</p></div><span className="review-badge">{reviewStatusLabel(review.status)}</span></div>{review.status === "STALE" && <p className="review-stale-notice">生成后又有新的学习记录，当前内容仍可查看。</p>}<div className="review-detail-grid"><div><span className="eyebrow">学习进展</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{reviewTopicLabel(topic.name)}</strong> · {topic.summary}</p>) : <p>今天记录了学习活动，但还没有足够证据确认具体完成项。</p>}</div><div><span className="eyebrow">尚未记录完成项</span>{review.unfinished.length > 0 ? review.unfinished.map(item => <p key={item}>{item}</p>) : <p>暂无待办</p>}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div></div>{review.status === "STALE" && <button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在更新…" : "更新今日总结"}</button>}</> : <div className="review-generate-empty"><EmptyData text="今日总结将在结束学习后约 5 分钟自动生成" /><button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在生成…" : "立即生成"}</button></div>}{noticeView}</section></DataPage>;
 }
 function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
   const status = snapshot?.status;
@@ -492,7 +504,7 @@ function sameAISettings(left: NativeAISettings, right: NativeAISettings): boolea
 
 export function AISettingsPanel({ settings: source, onRefresh, control: controlOverride }: {
   settings?: NativeAISettings;
-  onRefresh?: () => Promise<void>;
+  onRefresh?: DashboardRefresh;
   control?: ReturnType<typeof getSupervisorControlAdapter>;
 }): ReactElement {
   const fallback: NativeAISettings = { enabled: false, min_confidence: .75, proxy: { mode: "environment", url: "" }, text: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 6, json_mode: "auto" }, vision: { enabled: false, provider: "none", model: "", fallback_models: [], base_url: "", api_key_configured: false, timeout_seconds: 8, json_mode: "auto" } };
@@ -639,7 +651,7 @@ export function AISettingsPanel({ settings: source, onRefresh, control: controlO
   </section>;
 }
 
-function SettingsPage({ snapshot, onRefresh }: { snapshot?: SupervisorDashboardSnapshot; onRefresh?: () => Promise<void> }): ReactElement {
+function SettingsPage({ snapshot, onRefresh }: { snapshot?: SupervisorDashboardSnapshot; onRefresh?: DashboardRefresh }): ReactElement {
   const [targetInput, setTargetInput] = useState("");
   const [quietDraft, setQuietDraft] = useState<Array<{ start: string; end: string }>>();
   const [notice, setNotice] = useState("");
@@ -693,7 +705,7 @@ function ComingSoon({ title }: { title: string }): ReactElement {
   return <div className="coming-page"><div className="coming-icon"><Sparkles size={24} /></div><h1>{title}</h1><p>这个入口已经为 Control Center 预留，当前阶段先完成总览与视觉基础。</p><button className="secondary-button" type="button"><Play size={16} />回到总览</button></div>;
 }
 
-function LiveSection({ active, snapshot, live, onRefresh }: { active: string; snapshot?: SupervisorDashboardSnapshot; live: boolean; onRefresh?: () => Promise<void> }): ReactElement {
+function LiveSection({ active, snapshot, live, onRefresh }: { active: string; snapshot?: SupervisorDashboardSnapshot; live: boolean; onRefresh?: DashboardRefresh }): ReactElement {
   if (!live) return <ComingSoon title={displayTitle(active)} />;
   switch (active) {
     case "missions": return <MissionsPage missions={snapshot?.missions} taskPresets={snapshot?.task_presets} onRefresh={onRefresh} />;

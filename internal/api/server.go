@@ -139,7 +139,7 @@ func (s *Server) SetReview(service *review.Service) {
 	if s.cfg != nil && s.cfg.Review.GenerationTimeoutSeconds > 0 {
 		totalTimeout = time.Duration(s.cfg.Review.GenerationTimeoutSeconds) * time.Second
 	}
-	s.reviewCoordinator = review.NewCoordinator(service, totalTimeout, 5*time.Second)
+	s.reviewCoordinator = review.NewCoordinator(service, totalTimeout)
 	debounce := 5 * time.Minute
 	if s.cfg != nil && s.cfg.Review.Trigger.OffDebounceMinutes > 0 {
 		debounce = time.Duration(s.cfg.Review.Trigger.OffDebounceMinutes) * time.Minute
