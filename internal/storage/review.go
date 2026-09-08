@@ -9,19 +9,29 @@ import (
 )
 
 type SemanticSnapshotRecord struct {
-	ID           int64     `json:"id"`
-	ObservedAt   time.Time `json:"observed_at"`
-	LocalDate    string    `json:"local_date"`
-	Task         string    `json:"task"`
-	App          string    `json:"app"`
-	Title        string    `json:"title"`
-	Domain       string    `json:"domain"`
-	Relation     string    `json:"relation"`
-	Confidence   float64   `json:"confidence"`
-	Activity     string    `json:"activity"`
-	Reason       string    `json:"reason"`
-	SourceKind   string    `json:"source_kind"`
-	MetadataJSON string    `json:"metadata_json"`
+	ID                    int64      `json:"id"`
+	ObservedAt            time.Time  `json:"observed_at"`
+	LocalDate             string     `json:"local_date"`
+	Task                  string     `json:"task"`
+	App                   string     `json:"app"`
+	Title                 string     `json:"title"`
+	Domain                string     `json:"domain"`
+	Relation              string     `json:"relation"`
+	Confidence            float64    `json:"confidence"`
+	Activity              string     `json:"activity"`
+	Topic                 string     `json:"topic"`
+	Subtopic              string     `json:"subtopic"`
+	Action                string     `json:"action"`
+	ProgressSignal        string     `json:"progress_signal"`
+	Reason                string     `json:"reason"`
+	SourceKind            string     `json:"source_kind"`
+	WindowFingerprint     string     `json:"window_fingerprint"`
+	ScreenHash            string     `json:"screen_hash,omitempty"`
+	FirstObservedAt       *time.Time `json:"first_observed_at,omitempty"`
+	LastObservedAt        *time.Time `json:"last_observed_at,omitempty"`
+	DurationSeconds       int64      `json:"duration_seconds"`
+	StableIntervalSeconds int64      `json:"stable_interval_seconds"`
+	MetadataJSON          string     `json:"metadata_json"`
 }
 
 type ReviewExclusionRecord struct {
@@ -57,9 +67,22 @@ func (s *Storage) RecordSemanticSnapshot(ctx context.Context, record SemanticSna
 	if record.MetadataJSON == "" {
 		record.MetadataJSON = "{}"
 	}
+	if record.ProgressSignal == "" {
+		record.ProgressSignal = "UNKNOWN"
+	}
+	firstObserved := record.FirstObservedAt
+	lastObserved := record.LastObservedAt
+	if firstObserved == nil {
+		value := record.ObservedAt
+		firstObserved = &value
+	}
+	if lastObserved == nil {
+		value := record.ObservedAt
+		lastObserved = &value
+	}
 	result, err := s.db.ExecContext(ctx, `INSERT INTO semantic_snapshots
-		(observed_at, local_date, task, app, title, domain, relation, confidence, activity, reason, source_kind, metadata_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, record.ObservedAt, record.LocalDate, record.Task, record.App, record.Title, record.Domain, record.Relation, record.Confidence, record.Activity, record.Reason, record.SourceKind, record.MetadataJSON)
+		(observed_at, local_date, task, app, title, domain, relation, confidence, activity, topic, subtopic, action, progress_signal, reason, source_kind, window_fingerprint, screen_hash, first_observed_at, last_observed_at, duration_seconds, stable_interval_seconds, metadata_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, canonicalDBTime(record.ObservedAt), record.LocalDate, record.Task, record.App, record.Title, record.Domain, record.Relation, record.Confidence, record.Activity, record.Topic, record.Subtopic, record.Action, record.ProgressSignal, record.Reason, record.SourceKind, record.WindowFingerprint, record.ScreenHash, canonicalDBTime(*firstObserved), canonicalDBTime(*lastObserved), record.DurationSeconds, record.StableIntervalSeconds, record.MetadataJSON)
 	if err != nil {
 		return 0, err
 	}

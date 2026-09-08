@@ -8,6 +8,7 @@ import (
 type DistractionEvidenceRecord struct {
 	ID              string
 	StartedAt       time.Time
+	LocalDate       string
 	EndedAt         *time.Time
 	DurationSeconds int64
 	App             string
@@ -15,6 +16,9 @@ type DistractionEvidenceRecord struct {
 	Domain          string
 	Task            string
 	ReminderLevel   string
+	Source          string
+	Confidence      float64
+	EndReason       string
 }
 
 type ChatTurnEvidenceRecord struct {
@@ -34,7 +38,7 @@ type ChatTurnEvidenceRecord struct {
 }
 
 func (s *Storage) ListSessionsForDate(ctx context.Context, date string) ([]SessionRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, mode, task, started_at, ended_at, duration_seconds, end_reason FROM sessions WHERE date(started_at) = ? ORDER BY started_at`, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, mode, task, started_at, local_date, ended_at, duration_seconds, end_reason, mode_origin, pause_reason, auto_resume_eligible FROM sessions WHERE local_date = ? ORDER BY started_at`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +46,7 @@ func (s *Storage) ListSessionsForDate(ctx context.Context, date string) ([]Sessi
 	var out []SessionRecord
 	for rows.Next() {
 		var record SessionRecord
-		if err := rows.Scan(&record.ID, &record.Mode, &record.Task, &record.StartedAt, &record.EndedAt, &record.DurationSeconds, &record.EndReason); err != nil {
+		if err := rows.Scan(&record.ID, &record.Mode, &record.Task, &record.StartedAt, &record.LocalDate, &record.EndedAt, &record.DurationSeconds, &record.EndReason, &record.ModeOrigin, &record.PauseReason, &record.AutoResumeEligible); err != nil {
 			return nil, err
 		}
 		out = append(out, record)
@@ -51,7 +55,7 @@ func (s *Storage) ListSessionsForDate(ctx context.Context, date string) ([]Sessi
 }
 
 func (s *Storage) ListDistractionsForDate(ctx context.Context, date string) ([]DistractionEvidenceRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, started_at, ended_at, duration_seconds, app, title, domain, task, reminder_level FROM distraction_events WHERE date(started_at) = ? ORDER BY started_at`, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, started_at, local_date, ended_at, duration_seconds, app, title, domain, task, reminder_level, source, confidence, end_reason FROM distraction_events WHERE local_date = ? ORDER BY started_at`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +63,7 @@ func (s *Storage) ListDistractionsForDate(ctx context.Context, date string) ([]D
 	var out []DistractionEvidenceRecord
 	for rows.Next() {
 		var record DistractionEvidenceRecord
-		if err := rows.Scan(&record.ID, &record.StartedAt, &record.EndedAt, &record.DurationSeconds, &record.App, &record.Title, &record.Domain, &record.Task, &record.ReminderLevel); err != nil {
+		if err := rows.Scan(&record.ID, &record.StartedAt, &record.LocalDate, &record.EndedAt, &record.DurationSeconds, &record.App, &record.Title, &record.Domain, &record.Task, &record.ReminderLevel, &record.Source, &record.Confidence, &record.EndReason); err != nil {
 			return nil, err
 		}
 		out = append(out, record)
@@ -68,7 +72,7 @@ func (s *Storage) ListDistractionsForDate(ctx context.Context, date string) ([]D
 }
 
 func (s *Storage) ListRemindersForDate(ctx context.Context, date string) ([]ReminderRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, created_at, mode, level, message, reason, cooldown_until FROM reminders WHERE date(created_at) = ? ORDER BY created_at`, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, created_at, local_date, mode, level, message, reason, cooldown_until FROM reminders WHERE local_date = ? ORDER BY created_at`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +80,7 @@ func (s *Storage) ListRemindersForDate(ctx context.Context, date string) ([]Remi
 	var out []ReminderRecord
 	for rows.Next() {
 		var record ReminderRecord
-		if err := rows.Scan(&record.ID, &record.CreatedAt, &record.Mode, &record.Level, &record.Message, &record.Reason, &record.CooldownUntil); err != nil {
+		if err := rows.Scan(&record.ID, &record.CreatedAt, &record.LocalDate, &record.Mode, &record.Level, &record.Message, &record.Reason, &record.CooldownUntil); err != nil {
 			return nil, err
 		}
 		out = append(out, record)
@@ -111,7 +115,7 @@ func (s *Storage) ListChatTurnsForDate(ctx context.Context, date string) ([]Chat
 }
 
 func (s *Storage) ListSemanticSnapshotsForDate(ctx context.Context, date string) ([]SemanticSnapshotRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, observed_at, local_date, task, app, title, domain, relation, confidence, activity, reason, source_kind, metadata_json FROM semantic_snapshots WHERE local_date = ? ORDER BY observed_at, id`, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, observed_at, local_date, task, app, title, domain, relation, confidence, activity, topic, subtopic, action, progress_signal, reason, source_kind, window_fingerprint, screen_hash, first_observed_at, last_observed_at, duration_seconds, stable_interval_seconds, metadata_json FROM semantic_snapshots WHERE local_date = ? ORDER BY observed_at, id`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +123,7 @@ func (s *Storage) ListSemanticSnapshotsForDate(ctx context.Context, date string)
 	var out []SemanticSnapshotRecord
 	for rows.Next() {
 		var record SemanticSnapshotRecord
-		if err := rows.Scan(&record.ID, &record.ObservedAt, &record.LocalDate, &record.Task, &record.App, &record.Title, &record.Domain, &record.Relation, &record.Confidence, &record.Activity, &record.Reason, &record.SourceKind, &record.MetadataJSON); err != nil {
+		if err := rows.Scan(&record.ID, &record.ObservedAt, &record.LocalDate, &record.Task, &record.App, &record.Title, &record.Domain, &record.Relation, &record.Confidence, &record.Activity, &record.Topic, &record.Subtopic, &record.Action, &record.ProgressSignal, &record.Reason, &record.SourceKind, &record.WindowFingerprint, &record.ScreenHash, &record.FirstObservedAt, &record.LastObservedAt, &record.DurationSeconds, &record.StableIntervalSeconds, &record.MetadataJSON); err != nil {
 			return nil, err
 		}
 		out = append(out, record)

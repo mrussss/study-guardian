@@ -171,7 +171,7 @@ func (s *Storage) APSummaryForDate(ctx context.Context, date string, apPerFocusH
 		return 0, 0, err
 	}
 	var positive, negative int64
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN delta_milli_ap>0 THEN delta_milli_ap ELSE 0 END),0), COALESCE(SUM(CASE WHEN delta_milli_ap<0 THEN -delta_milli_ap ELSE 0 END),0) FROM ap_ledger WHERE date(created_at)=?`, date).Scan(&positive, &negative)
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN delta_milli_ap>0 THEN delta_milli_ap ELSE 0 END),0), COALESCE(SUM(CASE WHEN delta_milli_ap<0 THEN -delta_milli_ap ELSE 0 END),0) FROM ap_ledger WHERE local_date=?`, date).Scan(&positive, &negative)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -310,6 +310,26 @@ func (s *Storage) ListMissions(ctx context.Context) ([]Mission, error) {
 	}
 	return out, rows.Err()
 }
+
+// ListCompletedMissionsForDate returns only explicit completion evidence. A
+// mission being open or merely due on a date is not evidence that it was
+// completed. Filtering uses the canonical local-date helper rather than
+// SQLite date() so legacy timestamps and local time zones remain consistent
+// with the rest of the evidence bundle.
+func (s *Storage) ListCompletedMissionsForDate(ctx context.Context, date string) ([]Mission, error) {
+	missions, err := s.ListMissions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Mission, 0)
+	for _, mission := range missions {
+		if mission.Status != "COMPLETED" || mission.CompletedAt == nil || LocalDate(*mission.CompletedAt) != date {
+			continue
+		}
+		out = append(out, mission)
+	}
+	return out, nil
+}
 func (s *Storage) CreateMission(ctx context.Context, m Mission) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO missions(id,title,description,reward_milli_ap,due_date,status,created_at,linked_task_preset_id,linked_task_name,link_source,link_confidence) VALUES(?,?,?,?,?,'OPEN',?,?,?,?,?)`, m.ID, m.Title, m.Description, m.RewardMilliAP, m.DueDate, m.CreatedAt, m.LinkedTaskPresetID, m.LinkedTaskName, m.LinkSource, m.LinkConfidence)
 	return err
@@ -335,7 +355,7 @@ func (s *Storage) CompleteMission(ctx context.Context, id string, now time.Time)
 		return Mission{}, false, err
 	}
 	if m.RewardMilliAP > 0 {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO ap_ledger(id,source,reference_id,delta_milli_ap,created_at) VALUES(?,?,?,?,?)`, fmt.Sprintf("mission-%s", id), "MISSION", id, m.RewardMilliAP, now); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO ap_ledger(id,source,reference_id,delta_milli_ap,created_at,local_date) VALUES(?,?,?,?,?,?)`, fmt.Sprintf("mission-%s", id), "MISSION", id, m.RewardMilliAP, canonicalDBTime(now), LocalDate(now)); err != nil {
 			return Mission{}, false, err
 		}
 	}
@@ -441,7 +461,7 @@ func (s *Storage) RedeemReward(ctx context.Context, id string, now time.Time, ap
 	if _, err = tx.ExecContext(ctx, `INSERT INTO reward_redemptions(id,reward_id,reward_name,cost_milli_ap,redeemed_at) VALUES(?,?,?,?,?)`, rid, r.ID, r.Name, r.CostMilliAP, now); err != nil {
 		return Redemption{}, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO ap_ledger(id,source,reference_id,delta_milli_ap,created_at) VALUES(?,?,?,?,?)`, rid, "REWARD_REDEEM", rid, -r.CostMilliAP, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO ap_ledger(id,source,reference_id,delta_milli_ap,created_at,local_date) VALUES(?,?,?,?,?,?)`, rid, "REWARD_REDEEM", rid, -r.CostMilliAP, canonicalDBTime(now), LocalDate(now)); err != nil {
 		return Redemption{}, err
 	}
 	if err = tx.Commit(); err != nil {
