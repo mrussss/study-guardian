@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
 import { mockSemantic } from "../mock/semantic";
-import { NativeSupervisorControlAdapter, normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, normalizeReviewGenerationResult, SupervisorDashboardPollLoop, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter, type SupervisorDashboardPollScheduler, type SupervisorDashboardSnapshot } from "./supervisor";
+import { NativeSupervisorControlAdapter, normalizeControlResult, normalizeNativeDashboardSnapshot, normalizeNativeSnapshot, normalizeReviewGenerationResult, normalizeReviewGenerationStatus, SupervisorDashboardPollLoop, SupervisorPollLoop, type PetTransportSnapshot, type SupervisorAdapter, type SupervisorDashboardPollScheduler, type SupervisorDashboardSnapshot } from "./supervisor";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -55,6 +55,18 @@ test("review generation results keep only bounded status and generation fields",
   assert.deepEqual(normalizeReviewGenerationResult({ ok: false, error_kind: "provider_not_configured", response: "must be ignored" }), { ok: false, error_kind: "provider_not_configured" });
   assert.deepEqual(normalizeReviewGenerationResult({ ok: true, status: "READY", generation_mode: "FALLBACK", error_kind: "raw-provider-error" }), { ok: false, error_kind: "invalid_response" });
   assert.deepEqual(normalizeReviewGenerationResult({ ok: true, status: "READY" }), { ok: false, error_kind: "invalid_response" });
+});
+
+test("async review generation status keeps only bounded Chinese-safe state fields", () => {
+  assert.deepEqual(normalizeReviewGenerationStatus({ accepted: true, generation_id: "g-1", date: "2026-09-07", state: "PENDING", prompt: "ignored", markdown: "ignored" }), {
+    accepted: true, generation_id: "g-1", date: "2026-09-07", state: "PENDING",
+  });
+  assert.deepEqual(normalizeReviewGenerationStatus({ date: "2026-09-07", state: "READY", generation_mode: "FALLBACK", error_kind: "timeout", revision: 2 }), {
+    date: "2026-09-07", state: "READY", generation_mode: "FALLBACK", error_kind: "timeout", revision: 2,
+  });
+  assert.deepEqual(normalizeReviewGenerationStatus({ date: "2026-02-30", state: "READY" }), { state: "FAILED", error_kind: "invalid_response" });
+  assert.deepEqual(normalizeReviewGenerationStatus({ date: "bad", state: "READY" }), { state: "FAILED", error_kind: "invalid_response" });
+  assert.deepEqual(normalizeReviewGenerationStatus({ state: "BROKEN" }), { state: "FAILED", error_kind: "invalid_response" });
 });
 
 test("daily target control rejects values outside the typed range before native invoke", async () => {

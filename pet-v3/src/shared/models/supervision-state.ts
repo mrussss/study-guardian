@@ -1,4 +1,5 @@
 import type { NativeSupervisorStatus } from "../../transport/supervisor";
+import type { Activity } from "../../model/semantic";
 
 export type SupervisionTone = "success" | "neutral" | "reminder" | "warning";
 
@@ -33,6 +34,19 @@ export const privacyLabels: Record<NativeSupervisorStatus["privacy_state"], stri
   NORMAL: "正常",
   SENSITIVE: "隐私保护中",
 };
+
+export const activityLabels: Record<Activity, string> = {
+  CODING: "编程",
+  ALGORITHM: "算法",
+  READING: "阅读",
+  WRITING: "写作",
+  WATCHING: "视频学习",
+  AI_ASSISTED: "AI 辅助学习",
+  BROWSING: "资料浏览",
+  GENERAL_STUDY: "学习",
+  UNKNOWN: "其他活动",
+};
+
 
 export function deriveSupervisionState(connected: boolean, status?: NativeSupervisorStatus): SupervisionState {
   if (!connected) {

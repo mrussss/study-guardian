@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type ReactElement } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactElement } from "react";
 import {
   Activity,
   ArrowUpRight,
@@ -38,7 +38,7 @@ import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
 import { HelpDrawer } from "../shared/HelpDrawer";
 import { FocusClock } from "./FocusClock";
-import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, SupervisorDashboardSnapshot } from "../transport/supervisor";
+import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
 
@@ -82,6 +82,17 @@ const modeTitle: Record<"STANDBY" | "STUDY" | "BREAK" | "OFF", string> = {
   BREAK: "休息中",
   OFF: "今天已结束",
 };
+
+const reviewStatusLabels: Record<NativeReviewSummary["status"], string> = {
+  PENDING: "正在生成",
+  READY: "最新",
+  STALE: "有新记录，建议更新",
+  FAILED: "生成失败",
+};
+
+function reviewStatusLabel(status: NativeReviewSummary["status"] | undefined): string {
+  return status ? reviewStatusLabels[status] : "待生成";
+}
 
 function liveMissionRows(missions: NativeMission[] | undefined): typeof missionRows {
   return (missions ?? []).map(mission => ({
@@ -214,7 +225,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
       </section>
 
       <section className="surface-section review-section" aria-labelledby="review-title">
-        <div className="section-header"><div><h2 id="review-title">今日复盘</h2><p>{snapshot?.review ? (snapshot.review.generation_mode === "AI" ? "AI 总结" : "本地总结 · 未使用云端 AI") : "结束学习后自动整理"}</p></div><span className="review-badge">{snapshot?.review?.status === "READY" ? "已生成" : "待生成"}</span></div>
+        <div className="section-header"><div><h2 id="review-title">今日复盘</h2><p>{snapshot?.review ? (snapshot.review.generation_mode === "AI" ? "AI 总结" : "本地总结 · 未使用云端 AI") : "结束学习后自动整理"}</p></div><span className="review-badge">{reviewStatusLabel(snapshot?.review?.status)}</span></div>
         <div className="review-body"><span className="review-icon"><BarChart3 size={20} /></span><div><strong>{snapshot?.review?.headline ?? "今天的故事还在继续"}</strong><span>{snapshot?.review ? snapshot.review.tomorrow_priority : "完成一次学习后，就能看到今天的进展摘要。"}</span></div></div>
         <button className="section-link" type="button" onClick={() => onNavigate?.("review")}>{snapshot?.review ? "查看今日总结" : "打开学习复盘"}<ChevronRight size={16} /></button>
       </section>
@@ -316,36 +327,93 @@ function HistoryPage({ history }: { history?: SupervisorDashboardSnapshot["histo
   return <DataPage title="历史" description="回看最近 7 天的有效专注，不追踪原始屏幕内容。"><section className="surface-section data-card"><div className="section-header"><div><h2>专注记录</h2><p>仅显示 Supervisor 提供的分钟级汇总</p></div><History className="section-icon" size={20} /></div>{history && history.length > 0 ? <div className="data-list">{history.map(day => <div className="data-row" key={day.date}><div><strong>{day.date}</strong><span>目标 {day.target_minutes} 分钟 · {day.target_completed ? "已达标" : "进行中"}</span></div><em>{day.focus_minutes} min</em></div>)}</div> : <EmptyData text="暂无历史记录" />}</section></DataPage>;
 }
 
-export function ReviewPage({ review, onRefresh, control = getSupervisorControlAdapter() }: { review?: NativeReviewSummary; onRefresh?: () => Promise<void>; control?: ReturnType<typeof getSupervisorControlAdapter> }): ReactElement {
+export function ReviewPage({ review, onRefresh, control = getSupervisorControlAdapter(), pollIntervalMs = 2000, maxWaitMs = 120000 }: { review?: NativeReviewSummary; onRefresh?: () => Promise<void>; control?: ReturnType<typeof getSupervisorControlAdapter>; pollIntervalMs?: number; maxWaitMs?: number }): ReactElement {
   const [notice, setNotice] = useState<{ text: string; tone: "neutral" | "success" | "warning" }>();
   const [generating, setGenerating] = useState(false);
-  const generate = async (): Promise<void> => {
-    if (generating) return;
-    setGenerating(true);
-    setNotice({ text: "正在整理本地证据…", tone: "neutral" });
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runRef = useRef(0);
+  useEffect(() => () => {
+    runRef.current += 1;
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+  }, []);
+  const finish = async (status: ReviewGenerationStatusSnapshot, token: number): Promise<void> => {
+    if (token !== runRef.current) return;
+    await onRefresh?.();
+    if (token !== runRef.current) return;
+    if (status.state === "READY") {
+      const message = status.generation_mode === "FALLBACK" && status.error_kind === "timeout"
+        ? "AI 响应超时，已生成本地总结"
+        : status.generation_mode === "FALLBACK" ? "今日总结已生成本地总结" : "AI 总结已生成";
+      setNotice({ text: message, tone: "success" });
+    } else if (review?.generation_mode === "FALLBACK" && review.status !== "PENDING") {
+      setNotice({ text: "今日总结已生成本地总结", tone: "success" });
+    } else {
+      setNotice({ text: "今日总结暂时无法生成", tone: "warning" });
+    }
+    setGenerating(false);
+  };
+
+  const poll = async (generationId: string | undefined, startedAt: number, token: number, finalAttempt = false): Promise<void> => {
+    if (token !== runRef.current) return;
+    let status: ReviewGenerationStatusSnapshot;
     try {
-      const result = await control.generateReview();
-      if (!result.ok) {
-        setNotice({ text: "今日总结暂时无法生成", tone: "warning" });
+      status = await control.getReviewGenerationStatus();
+    } catch {
+      status = { state: "FAILED", error_kind: "unavailable" };
+    }
+    if (token !== runRef.current) return;
+    if (generationId && status.generation_id && status.generation_id !== generationId) {
+      if (finalAttempt) {
+        await onRefresh?.();
+        if (token === runRef.current) {
+          setNotice({ text: "正在生成，你可以继续使用 StudyGuardian", tone: "neutral" });
+          setGenerating(false);
+        }
+        return;
+      }
+      timerRef.current = setTimeout(() => void poll(generationId, startedAt, token), Math.max(100, pollIntervalMs));
+      return;
+    }
+    if (status.state === "READY" || status.state === "FAILED") {
+      await finish(status, token);
+      return;
+    }
+    if (Date.now() - startedAt >= maxWaitMs) {
+      if (!finalAttempt) {
+        await poll(generationId, startedAt, token, true);
         return;
       }
       await onRefresh?.();
-      const message = result.status === "READY" && result.generation_mode === "FALLBACK" && result.error_kind === "timeout"
-        ? "AI 响应超时，已生成本地总结"
-        : result.status === "READY" && result.generation_mode === "FALLBACK"
-          ? "今日总结已生成本地总结"
-          : "今日总结已生成";
-      setNotice({ text: message, tone: "success" });
+      if (token === runRef.current) {
+        setNotice({ text: "正在生成，你可以继续使用 StudyGuardian", tone: "neutral" });
+        setGenerating(false);
+      }
+      return;
+    }
+    timerRef.current = setTimeout(() => void poll(generationId, startedAt, token), Math.max(100, pollIntervalMs));
+  };
+
+  const generate = async (): Promise<void> => {
+    if (generating) return;
+    const token = ++runRef.current;
+    setGenerating(true);
+    setNotice({ text: "正在生成今日总结…", tone: "neutral" });
+    try {
+      const result = await control.startReviewGeneration();
+      if (token !== runRef.current) return;
+      if (result.state === "FAILED" || result.state === "IDLE") {
+        await finish(result, token);
+        return;
+      }
+      await poll(result.generation_id, Date.now(), token);
     } catch {
       setNotice({ text: "今日总结暂时无法生成", tone: "warning" });
-    } finally {
       setGenerating(false);
     }
   };
-  const label = review?.generation_mode === "AI" ? "AI 总结" : "本地总结";
-  const reason = review?.status === "STALE" ? "生成后又有新的学习记录。" : review?.generation_mode === "FALLBACK" ? (review.error_code && review.error_code !== "provider_not_configured" ? "AI 暂时不可用，本次已自动使用本地总结。" : "尚未配置 AI，本次使用本地证据生成。") : "通过 Provider、净化和校验链路生成。";
+  const reason = review?.status === "STALE" ? "生成后又有新的学习记录。" : review?.generation_mode === "FALLBACK" ? (review.error_code && review.error_code !== "provider_not_configured" ? "AI 暂时不可用，本次已自动使用本地总结。" : "尚未配置 AI，本次使用本地证据生成。") : "根据今天记录的学习活动整理。";
   const noticeView = notice && <span className={`settings-notice is-${notice.tone}`} role="status" aria-live="polite">{notice.text}</span>;
-  return <DataPage title="学习复盘" description="摘要来自 canonical Review，不展示原始聊天或屏幕内容。"><section className="surface-section data-card" aria-busy={generating}>{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · {reason}</p></div><span className="review-badge">{label}</span></div>{review.status === "STALE" && <p className="review-stale-notice">生成后又有新的学习记录，当前内容仍可查看。</p>}<div className="review-detail-grid"><div><span className="eyebrow">主题</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>暂无足够主题证据</p>}</div><div><span className="eyebrow">不能确认</span>{review.unfinished.map(item => <p key={item}>{item}</p>)}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div><div><span className="eyebrow">诊断</span><p>{review.status} · revision {review.revision} · attempt {review.attempt_count} · warnings {review.warnings_count}</p></div></div>{review.status === "STALE" && <button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在更新…" : "更新今日总结"}</button>}</> : <div className="review-generate-empty"><EmptyData text="今日总结将在结束学习后约 5 分钟自动生成" /><button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在生成…" : "立即生成"}</button></div>}{noticeView}</section></DataPage>;
+  return <DataPage title="学习复盘" description="摘要来自本地 Review，不展示原始聊天或屏幕内容。"><section className="surface-section data-card" aria-busy={generating}>{review ? <><div className="section-header"><div><h2>{review.headline}</h2><p>{review.date} · {reason}</p></div><span className="review-badge">{reviewStatusLabel(review.status)}</span></div>{review.status === "STALE" && <p className="review-stale-notice">生成后又有新的学习记录，当前内容仍可查看。</p>}<div className="review-detail-grid"><div><span className="eyebrow">学习进展</span>{review.topics.length > 0 ? review.topics.map(topic => <p key={topic.name}><strong>{topic.name}</strong> · {topic.summary}</p>) : <p>今天记录了学习活动，但还没有足够证据确认具体完成项。</p>}</div><div><span className="eyebrow">尚未记录完成项</span>{review.unfinished.length > 0 ? review.unfinished.map(item => <p key={item}>{item}</p>) : <p>暂无待办</p>}</div><div><span className="eyebrow">明日优先级</span><p>{review.tomorrow_priority || "暂无记录"}</p></div></div>{review.status === "STALE" && <button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在更新…" : "更新今日总结"}</button>}</> : <div className="review-generate-empty"><EmptyData text="今日总结将在结束学习后约 5 分钟自动生成" /><button className="primary-button" type="button" disabled={generating} onClick={() => void generate()}>{generating ? "正在生成…" : "立即生成"}</button></div>}{noticeView}</section></DataPage>;
 }
 function SystemPage({ snapshot }: { snapshot?: SupervisorDashboardSnapshot }): ReactElement {
   const status = snapshot?.status;

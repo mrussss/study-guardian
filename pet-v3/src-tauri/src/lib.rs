@@ -99,6 +99,7 @@ const SUPERVISOR_GET_PATHS: &[&str] = &[
     "/v1/rewards",
     "/v1/ai/status",
     "/v1/review/daily",
+    "/v1/review/generation",
 ];
 const DEFAULT_SUPERVISOR_HOST: &str = "127.0.0.1";
 const DEFAULT_SUPERVISOR_PORT: u16 = 17321;
@@ -162,6 +163,25 @@ struct SupervisorReviewResult {
     generation_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error_kind: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+struct SupervisorReviewGenerationStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    accepted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    already_running: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date: Option<String>,
+    state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -733,6 +753,41 @@ fn optional_text_field(object: &serde_json::Map<String, Value>, key: &str, max_b
         Some(Value::String(value)) if value.len() <= max_bytes => Ok(Some(value.clone())),
         _ => Err(NativeErrorKind::InvalidResponse),
     }
+}
+
+fn optional_bool_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<bool>, NativeErrorKind> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        _ => Err(NativeErrorKind::InvalidResponse),
+    }
+}
+
+fn optional_non_negative_i64_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<i64>, NativeErrorKind> {
+    match object.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(value)) => value
+            .as_i64()
+            .filter(|value| *value >= 0)
+            .map(Some)
+            .ok_or(NativeErrorKind::InvalidResponse),
+        _ => Err(NativeErrorKind::InvalidResponse),
+    }
+}
+
+fn valid_review_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' || !bytes.iter().enumerate().all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit()) {
+        return false;
+    }
+    let year = value[0..4].parse::<i32>().ok();
+    let month = value[5..7].parse::<u32>().ok();
+    let day = value[8..10].parse::<u32>().ok();
+    let (Some(year), Some(month), Some(day)) = (year, month, day) else { return false; };
+    if !(1..=12).contains(&month) || day == 0 { return false; }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let max_day = match month { 2 if leap => 29, 2 => 28, 4 | 6 | 9 | 11 => 30, _ => 31 };
+    day <= max_day
 }
 
 fn non_negative_i64_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<i64, NativeErrorKind> {
@@ -1405,7 +1460,8 @@ fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value,
     if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
     let address = loopback_address(&host, port)?;
     let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).map_err(|error| map_io_error(&error))?;
-    stream.set_read_timeout(Some(Duration::from_secs(130))).map_err(|error| map_io_error(&error))?;
+    let read_timeout = if path == "/v1/review/generate/sync" { Duration::from_secs(130) } else { REQUEST_TIMEOUT };
+    stream.set_read_timeout(Some(read_timeout)).map_err(|error| map_io_error(&error))?;
     stream.set_write_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
     let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body)).map_err(|error| map_io_error(&error))?;
@@ -1458,7 +1514,7 @@ async fn supervisor_test_ai_connection(target: String) -> Value {
 }
 
 fn valid_ai_error_kind(value: &str) -> bool {
-    matches!(value, "authentication_failed" | "model_not_found" | "model_unavailable" | "model_rate_limited" | "account_rate_limited" | "timeout" | "network_unavailable" | "proxy_unreachable" | "tls_failed" | "invalid_response" | "invalid_output" | "provider_unavailable" | "unavailable" | "rate_limited")
+    matches!(value, "authentication_failed" | "model_not_found" | "model_unavailable" | "model_rate_limited" | "account_rate_limited" | "timeout" | "network_unavailable" | "proxy_unreachable" | "tls_failed" | "invalid_response" | "invalid_output" | "provider_unavailable" | "storage_unavailable" | "unavailable" | "rate_limited")
 }
 
 #[tauri::command]
@@ -1477,11 +1533,64 @@ async fn supervisor_test_ai_proxy() -> Value {
 #[tauri::command]
 async fn supervisor_generate_review() -> SupervisorReviewResult {
     tauri::async_runtime::spawn_blocking(move || {
-        match ai_supervisor_request("POST", "/v1/review/generate", b"{}").and_then(|value| sanitize_review_generation_result(&value)) {
+        match ai_supervisor_request("POST", "/v1/review/generate/sync", b"{}").and_then(|value| sanitize_review_generation_result(&value)) {
             Ok(result) => result,
             Err(kind) => SupervisorReviewResult { ok: false, status: None, generation_mode: None, error_kind: Some(kind.as_str()) },
         }
     }).await.unwrap_or(SupervisorReviewResult { ok: false, status: None, generation_mode: None, error_kind: Some("unavailable") })
+}
+
+fn review_generation_error(kind: NativeErrorKind) -> SupervisorReviewGenerationStatus {
+    SupervisorReviewGenerationStatus {
+        accepted: Some(false), already_running: None, generation_id: None, date: None,
+        state: "FAILED".to_string(), generation_mode: None, error_kind: Some(kind.as_str()), revision: None,
+    }
+}
+
+#[tauri::command]
+async fn supervisor_start_review_generation() -> SupervisorReviewGenerationStatus {
+    tauri::async_runtime::spawn_blocking(move || {
+        match ai_supervisor_request("POST", "/v1/review/generate", b"{}").and_then(|value| sanitize_review_generation_status(&value)) {
+            Ok(result) => result,
+            Err(kind) => review_generation_error(kind),
+        }
+    }).await.unwrap_or_else(|_| review_generation_error(NativeErrorKind::Unavailable))
+}
+
+#[tauri::command]
+async fn supervisor_review_generation_status() -> SupervisorReviewGenerationStatus {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (host, port, token) = match supervisor_credentials() {
+            Ok(credentials) => credentials,
+            Err(kind) => return review_generation_error(kind),
+        };
+        match fetch_supervisor_get(&host, port, &token, "/v1/review/generation")
+            .and_then(|value| sanitize_review_generation_status(&value))
+        {
+            Ok(result) => result,
+            Err(kind) => review_generation_error(kind),
+        }
+    }).await.unwrap_or_else(|_| review_generation_error(NativeErrorKind::Unavailable))
+}
+
+fn sanitize_review_generation_status(value: &Value) -> Result<SupervisorReviewGenerationStatus, NativeErrorKind> {
+    let row = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let state = enum_field(row, "state", &["IDLE", "PENDING", "READY", "FAILED"])?;
+    let date = text_field(row, "date", 32)?;
+    if !valid_review_date(&date) { return Err(NativeErrorKind::InvalidResponse); }
+    let accepted = optional_bool_field(row, "accepted")?;
+    let already_running = optional_bool_field(row, "already_running")?;
+    let generation_id = optional_text_field(row, "generation_id", 128)?;
+    let generation_mode = match row.get("generation_mode") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) if value == "AI" || value == "FALLBACK" => Some(value.clone()),
+        _ => return Err(NativeErrorKind::InvalidResponse),
+    };
+    let raw_error = optional_text_field(row, "error_kind", 64)?;
+    let error_kind = raw_error.as_deref().and_then(review_error_kind);
+    if raw_error.is_some() && error_kind.is_none() { return Err(NativeErrorKind::InvalidResponse); }
+    let revision = optional_non_negative_i64_field(row, "revision")?;
+    Ok(SupervisorReviewGenerationStatus { accepted, already_running, generation_id, date: Some(date), state, generation_mode, error_kind, revision })
 }
 
 fn sanitize_review_generation_result(value: &Value) -> Result<SupervisorReviewResult, NativeErrorKind> {
@@ -1510,6 +1619,9 @@ fn review_error_kind(value: &str) -> Option<&'static str> {
         "input_hash_failed" => Some("input_hash_failed"),
         "sanitizer_failed" => Some("sanitizer_failed"),
         "validation_failed" => Some("validation_failed"),
+        "generation_failed" => Some("unavailable"),
+        "storage_unavailable" => Some("storage_unavailable"),
+        "canceled" => Some("canceled"),
         _ => None,
     }
 }
@@ -1817,6 +1929,8 @@ pub fn run() {
             supervisor_test_ai_connection,
             supervisor_test_ai_proxy,
             supervisor_generate_review,
+            supervisor_start_review_generation,
+            supervisor_review_generation_status,
             supervisor_set_daily_target,
             open_quick_panel,
             hide_quick_panel,
@@ -1885,7 +1999,7 @@ mod tests {
     use super::{
         bounded_control_center_route, bounded_panel_position, bounded_quick_panel_debug_event, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
         disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
-        sanitize_ai_settings, sanitize_missions, sanitize_motivation, sanitize_review, sanitize_review_generation_result, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event, task_preset_path_allowed,
+        sanitize_ai_settings, sanitize_missions, sanitize_motivation, sanitize_review, sanitize_review_generation_result, sanitize_review_generation_status, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event, task_preset_path_allowed,
         launch_without_pet, requested_launch_route, LaunchRoute, NativeErrorKind,
         SupervisorSnapshot,
     };
@@ -2010,6 +2124,25 @@ mod tests {
         assert_eq!(classify_control_status(403), Err(NativeErrorKind::Unauthorized));
         assert_eq!(map_io_error(&io::Error::new(io::ErrorKind::TimedOut, "hidden detail")), NativeErrorKind::Timeout);
         assert_eq!(map_io_error(&io::Error::new(io::ErrorKind::ConnectionRefused, "hidden detail")), NativeErrorKind::Unavailable);
+    }
+
+    #[test]
+    fn review_generation_status_is_bounded_and_secret_free() {
+        let status = sanitize_review_generation_status(&json!({
+            "accepted": true,
+            "already_running": false,
+            "generation_id": "2f8c7f8e",
+            "date": "2026-09-07",
+            "state": "PENDING",
+            "token": "must-not-cross-boundary",
+            "prompt": "must-not-cross-boundary",
+        })).expect("valid generation status");
+        let encoded = serde_json::to_string(&status).expect("status serializes");
+        assert!(encoded.contains("PENDING"));
+        assert!(!encoded.contains("must-not-cross-boundary"));
+        assert!(sanitize_review_generation_status(&json!({"date":"2026-02-30","state":"IDLE"})).is_err());
+        assert!(sanitize_review_generation_status(&json!({"date":"2026-09-07","state":"UNKNOWN"})).is_err());
+        assert!(sanitize_review_generation_status(&json!({"date":"2026-09-07","state":"READY","error_kind":"raw-provider-error"})).is_err());
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { deriveSupervisionState, formatLastActivity } from "./supervision-state";
+import { activityLabels, deriveSupervisionState, formatLastActivity } from "./supervision-state";
+import { VALID_ACTIVITIES } from "../../model/semantic";
 import type { NativeSupervisorStatus } from "../../transport/supervisor";
 
 const base: NativeSupervisorStatus = {
@@ -61,4 +62,11 @@ test("last activity uses bounded friendly relative labels", () => {
   assert.equal(formatLastActivity("2026-09-06T09:59:30Z", now), "刚刚");
   assert.equal(formatLastActivity("2026-09-06T09:42:00Z", now), "18 分钟前");
   assert.equal(formatLastActivity(undefined, now), "暂无记录");
+});
+
+test("every semantic activity has a Chinese display label", () => {
+  for (const activity of VALID_ACTIVITIES) {
+    assert.equal(typeof activityLabels[activity], "string");
+    assert.ok(activityLabels[activity].length > 0);
+  }
 });

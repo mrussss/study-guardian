@@ -1,5 +1,5 @@
 import type {
-  AutostartState, ControlResult, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeMission, NativeTaskPreset, ReviewGenerationResult,
+  AutostartState, ControlResult, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeMission, NativeTaskPreset, ReviewGenerationResult, ReviewGenerationStatusSnapshot,
   SupervisorControlAdapter, SupervisorDashboardAdapter, SupervisorDashboardSnapshot, SystemIntegrationAdapter,
 } from "../transport/supervisor";
 
@@ -94,6 +94,7 @@ export class MockSupervisorRuntime implements SupervisorDashboardAdapter, Superv
   private autostart = false;
   private nextPreset = 1;
   private nextMission = 1;
+  private reviewGeneration: ReviewGenerationStatusSnapshot | undefined;
   constructor(readonly scenario: MockScenarioId) { this.snapshot = initialSnapshot(scenario); }
 
   async poll(): Promise<SupervisorDashboardSnapshot> {
@@ -183,6 +184,30 @@ export class MockSupervisorRuntime implements SupervisorDashboardAdapter, Superv
       return { ok: true, status: "READY", generation_mode: this.snapshot.review.generation_mode };
     }
     return { ok: true, status: "READY", generation_mode: "FALLBACK" };
+  }
+  async startReviewGeneration(): Promise<ReviewGenerationStatusSnapshot> {
+    const failure = await this.beforeMutation();
+    const date = this.snapshot.review?.date ?? new Date().toISOString().slice(0, 10);
+    if (failure) return { state: "FAILED", date, error_kind: failure.error_kind };
+    if (this.reviewGeneration?.state === "PENDING") return { ...clone(this.reviewGeneration), accepted: true, already_running: true };
+    this.reviewGeneration = { accepted: true, date, state: "PENDING", generation_id: `mock-generation-${Date.now()}` };
+    return clone(this.reviewGeneration);
+  }
+  async getReviewGenerationStatus(): Promise<ReviewGenerationStatusSnapshot> {
+    await this.wait(25);
+    if (this.reviewGeneration?.state === "PENDING") {
+      if (this.snapshot.review) {
+        this.snapshot.review.status = "READY";
+        this.snapshot.review.revision += 1;
+      }
+      this.reviewGeneration = {
+        ...this.reviewGeneration,
+        state: "READY",
+        generation_mode: this.snapshot.review?.generation_mode === "AI" ? "AI" : "FALLBACK",
+        revision: this.snapshot.review?.revision ?? 1,
+      };
+    }
+    return clone(this.reviewGeneration ?? { date: this.snapshot.review?.date ?? new Date().toISOString().slice(0, 10), state: "IDLE" });
   }
   setDailyTarget(minutes: number): Promise<ControlResult> { return this.mutate(() => {
     if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440 || !this.snapshot.motivation) return { ok: false, error_kind: "rejected" };

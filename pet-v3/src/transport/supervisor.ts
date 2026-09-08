@@ -143,7 +143,7 @@ export interface NativeAISettings {
   vision: NativeAIEndpointSettings;
 }
 
-export type AIConnectionErrorKind = "authentication_failed" | "model_not_found" | "model_unavailable" | "model_rate_limited" | "account_rate_limited" | "timeout" | "network_unavailable" | "proxy_unreachable" | "tls_failed" | "invalid_response" | "invalid_output" | "provider_unavailable" | "unavailable" | "rate_limited";
+export type AIConnectionErrorKind = "authentication_failed" | "model_not_found" | "model_unavailable" | "model_rate_limited" | "account_rate_limited" | "timeout" | "network_unavailable" | "proxy_unreachable" | "tls_failed" | "invalid_response" | "invalid_output" | "provider_unavailable" | "storage_unavailable" | "unavailable" | "rate_limited";
 
 export interface NativeAIConnectionResult {
   ok: boolean;
@@ -160,7 +160,7 @@ export interface NativeAIProxyTestResult {
   error_kind?: AIConnectionErrorKind;
 }
 
-const AI_ERROR_KINDS: AIConnectionErrorKind[] = ["authentication_failed", "model_not_found", "model_unavailable", "model_rate_limited", "account_rate_limited", "timeout", "network_unavailable", "proxy_unreachable", "tls_failed", "invalid_response", "invalid_output", "provider_unavailable", "unavailable", "rate_limited"];
+const AI_ERROR_KINDS: AIConnectionErrorKind[] = ["authentication_failed", "model_not_found", "model_unavailable", "model_rate_limited", "account_rate_limited", "timeout", "network_unavailable", "proxy_unreachable", "tls_failed", "invalid_response", "invalid_output", "provider_unavailable", "storage_unavailable", "unavailable", "rate_limited"];
 
 function aiErrorKind(value: unknown): AIConnectionErrorKind | undefined {
   return typeof value === "string" && AI_ERROR_KINDS.includes(value as AIConnectionErrorKind) ? value as AIConnectionErrorKind : undefined;
@@ -259,6 +259,13 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function boundedText(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length <= max;
+}
+
+function validReviewDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }
 
 function nonNegativeInteger(value: unknown): value is number {
@@ -456,9 +463,21 @@ export interface ControlResult {
   task?: string;
 }
 
+export type ReviewGenerationState = "IDLE" | "PENDING" | "READY" | "FAILED";
 export type ReviewGenerationStatus = "READY" | "STALE" | "FAILED";
 export type ReviewGenerationMode = "AI" | "FALLBACK" | "";
-export type ReviewGenerationErrorKind = ControlErrorKind | "provider_not_configured" | "compaction_failed" | "input_hash_failed" | "sanitizer_failed" | "validation_failed" | "network" | "http" | "invalid_json" | "schema_invalid" | "unsupported_version" | "not_configured";
+export type ReviewGenerationErrorKind = ControlErrorKind | "provider_not_configured" | "compaction_failed" | "input_hash_failed" | "sanitizer_failed" | "validation_failed" | "network" | "http" | "invalid_json" | "schema_invalid" | "unsupported_version" | "not_configured" | "storage_unavailable" | "canceled";
+
+export interface ReviewGenerationStatusSnapshot {
+  accepted?: boolean;
+  already_running?: boolean;
+  generation_id?: string;
+  date?: string;
+  state: ReviewGenerationState;
+  generation_mode?: Exclude<ReviewGenerationMode, "">;
+  error_kind?: ReviewGenerationErrorKind;
+  revision?: number;
+}
 
 export interface ReviewGenerationResult {
   ok: boolean;
@@ -482,7 +501,43 @@ export function normalizeControlResult(raw: unknown): ControlResult {
   };
 }
 
-const REVIEW_GENERATION_ERROR_KINDS: ReviewGenerationErrorKind[] = ["timeout", "unauthorized", "unavailable", "invalid_response", "rejected", "provider_not_configured", "compaction_failed", "input_hash_failed", "sanitizer_failed", "validation_failed", "network", "http", "invalid_json", "schema_invalid", "unsupported_version", "not_configured"];
+const REVIEW_GENERATION_ERROR_KINDS: ReviewGenerationErrorKind[] = ["timeout", "unauthorized", "unavailable", "invalid_response", "rejected", "provider_not_configured", "compaction_failed", "input_hash_failed", "sanitizer_failed", "validation_failed", "network", "http", "invalid_json", "schema_invalid", "unsupported_version", "not_configured", "storage_unavailable", "canceled"];
+
+function normalizeReviewGenerationError(value: unknown): ReviewGenerationErrorKind | undefined {
+  return typeof value === "string" && REVIEW_GENERATION_ERROR_KINDS.includes(value as ReviewGenerationErrorKind)
+    ? value as ReviewGenerationErrorKind
+    : undefined;
+}
+
+export function normalizeReviewGenerationStatus(raw: unknown): ReviewGenerationStatusSnapshot {
+  if (!record(raw) || !["IDLE", "PENDING", "READY", "FAILED"].includes(raw.state as string)) {
+    return { state: "FAILED", error_kind: "invalid_response" };
+  }
+  const state = raw.state as ReviewGenerationState;
+  if (raw.date !== undefined && (!boundedText(raw.date, 32) || !validReviewDate(raw.date))) {
+    return { state: "FAILED", error_kind: "invalid_response" };
+  }
+  if (raw.generation_id !== undefined && (!boundedText(raw.generation_id, 128) || raw.generation_id.trim() === "")) {
+    return { state: "FAILED", error_kind: "invalid_response" };
+  }
+  if (raw.accepted !== undefined && typeof raw.accepted !== "boolean") return { state: "FAILED", error_kind: "invalid_response" };
+  if (raw.already_running !== undefined && typeof raw.already_running !== "boolean") return { state: "FAILED", error_kind: "invalid_response" };
+  const generationMode = raw.generation_mode === undefined || raw.generation_mode === null ? undefined : raw.generation_mode === "AI" || raw.generation_mode === "FALLBACK" ? raw.generation_mode : null;
+  if (generationMode === null) return { state: "FAILED", error_kind: "invalid_response" };
+  const errorKind = normalizeReviewGenerationError(raw.error_kind);
+  if (raw.error_kind !== undefined && raw.error_kind !== null && !errorKind) return { state: "FAILED", error_kind: "invalid_response" };
+  if (raw.revision !== undefined && !nonNegativeInteger(raw.revision)) return { state: "FAILED", error_kind: "invalid_response" };
+  return {
+    state,
+    ...(typeof raw.accepted === "boolean" ? { accepted: raw.accepted } : {}),
+    ...(typeof raw.already_running === "boolean" ? { already_running: raw.already_running } : {}),
+    ...(typeof raw.generation_id === "string" ? { generation_id: raw.generation_id } : {}),
+    ...(typeof raw.date === "string" ? { date: raw.date } : {}),
+    ...(generationMode ? { generation_mode: generationMode } : {}),
+    ...(errorKind ? { error_kind: errorKind } : {}),
+    ...(nonNegativeInteger(raw.revision) ? { revision: raw.revision } : {}),
+  };
+}
 
 export function normalizeReviewGenerationResult(raw: unknown): ReviewGenerationResult {
   if (!record(raw) || typeof raw.ok !== "boolean") return { ok: false, error_kind: "invalid_response" };
@@ -516,6 +571,8 @@ export interface SupervisorControlAdapter {
   deleteAISecret(target: "text" | "vision"): Promise<ControlResult>;
   testAIConnection(target: "text" | "vision"): Promise<NativeAIConnectionResult>;
   testAIProxy(): Promise<NativeAIProxyTestResult>;
+  startReviewGeneration(): Promise<ReviewGenerationStatusSnapshot>;
+  getReviewGenerationStatus(): Promise<ReviewGenerationStatusSnapshot>;
   generateReview(): Promise<ReviewGenerationResult>;
   setDailyTarget(minutes: number): Promise<ControlResult>;
   createMission(title: string, description: string, dueDate?: string, linkedTaskName?: string, linkedTaskPresetId?: string): Promise<ControlResult>;
@@ -628,6 +685,22 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
       return normalizeReviewGenerationResult(await invoke<unknown>("supervisor_generate_review"));
     } catch (error) {
       return { ok: false, error_kind: classifyControlError(error) };
+    }
+  }
+
+  async startReviewGeneration(): Promise<ReviewGenerationStatusSnapshot> {
+    try {
+      return normalizeReviewGenerationStatus(await invoke<unknown>("supervisor_start_review_generation"));
+    } catch (error) {
+      return { state: "FAILED", error_kind: classifyControlError(error) };
+    }
+  }
+
+  async getReviewGenerationStatus(): Promise<ReviewGenerationStatusSnapshot> {
+    try {
+      return normalizeReviewGenerationStatus(await invoke<unknown>("supervisor_review_generation_status"));
+    } catch (error) {
+      return { state: "FAILED", error_kind: classifyControlError(error) };
     }
   }
 
