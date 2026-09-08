@@ -154,7 +154,7 @@ func (s *Server) ingestCollectorTurn(ctx context.Context, req CollectorTurnReque
 		Platform: req.Platform, ExternalConversationID: req.ExternalConversationID, Title: req.Title, URL: req.URL,
 		CapturePolicy: req.CapturePolicy, ObservedAt: observedAt,
 	}, turn, messages, time.Now())
-	if err == nil && s.review != nil {
+	if err == nil && s.review != nil && turn.EligibleForReview && strings.EqualFold(mode, "STUDY") {
 		if _, staleErr := s.review.MarkStaleIfChanged(ctx, turn.LocalDate); staleErr != nil {
 			return staleErr
 		}

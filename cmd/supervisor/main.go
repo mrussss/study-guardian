@@ -156,9 +156,10 @@ func main() {
 		log.Printf("[Review] Warning: %s", reviewStatus.Warning)
 	}
 	server.SetReview(reviewService)
+	reviewCoordinator := server.ReviewCoordinator()
 	if cfg.Review.Trigger.BackfillPreviousDay {
 		go func() {
-			if err := reviewService.BackfillPreviousDay(context.Background(), time.Now(), true); err != nil {
+			if _, err := reviewCoordinator.StartPreviousDayIfNeeded(context.Background(), time.Now(), true); err != nil {
 				log.Printf("[Review] Previous-day backfill failed: %v", err)
 			}
 		}()
@@ -197,6 +198,7 @@ func main() {
 		var lastScreenHash string
 		var lastCaptureTime time.Time
 		var latestSnapshot *activitywatch.ActivitySnapshot
+		lastObservedMode := state.UserModeStandby
 		lastClassRes := state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "No observation yet"}
 
 		for {
@@ -328,6 +330,12 @@ func main() {
 				outcome := stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes)
 				motivationService.RecordTick(outcome)
 				postStatus := stateMgr.GetStatus()
+				if lastObservedMode != postStatus.UserMode && postStatus.UserMode == state.UserModeOff {
+					if _, err := reviewService.MarkStaleIfChanged(tickerCtx, outcome.Now.In(time.Local).Format("2006-01-02")); err != nil {
+						log.Printf("[Review] OFF transition stale check failed: %v", err)
+					}
+				}
+				lastObservedMode = postStatus.UserMode
 				// observed_at is the time Supervisor actually observed this
 				// candidate, not the ActivityWatch event time or DB insert time.
 				// The source event time is used only for the age-based freshness
@@ -348,8 +356,6 @@ func main() {
 					Domain:      domain,
 				}); err != nil {
 					log.Printf("[Semantic] observation failed: %v", err)
-				} else if _, err := reviewService.MarkStaleIfChanged(tickerCtx, observedAt.In(time.Local).Format("2006-01-02")); err != nil {
-					log.Printf("[Review] stale check failed: %v", err)
 				}
 			}
 		}
