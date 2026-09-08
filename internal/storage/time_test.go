@@ -55,3 +55,24 @@ func TestParseLegacyGoTimeStringWithMonotonicSuffix(t *testing.T) {
 		t.Fatalf("local date=%q, want 2026-09-08", got)
 	}
 }
+
+func TestLegacyDateBackfillUsesValidatedPrefixInBulk(t *testing.T) {
+	store, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.db.Exec(`INSERT INTO sessions(id, mode, task, started_at, local_date) VALUES('legacy-prefix', 'STUDY', '', '2026-09-08 16:10:55.459449600 +0800 CST m=+525.143675301', '')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureDailyEvidenceDateColumns(); err != nil {
+		t.Fatal(err)
+	}
+	var date string
+	if err := store.db.QueryRow(`SELECT local_date FROM sessions WHERE id='legacy-prefix'`).Scan(&date); err != nil {
+		t.Fatal(err)
+	}
+	if date != "2026-09-08" {
+		t.Fatalf("backfilled local_date=%q", date)
+	}
+}

@@ -195,7 +195,7 @@ WIN_TARGET_DIR="$(wslpath -w "${TARGET_DIR}")"
 WIN_CONFIG_FILE="$(wslpath -w "${CONFIG_FILE}")"
 WIN_TOKEN_FILE="$(wslpath -w "${TOKEN_FILE}")"
 WIN_DB_FILE="$(wslpath -w "${TARGET_DIR}/data/studyguardian.db")"
-SMOKE_COMMAND="\$ErrorActionPreference='Stop'; \$p=Start-Process -FilePath '${WIN_TARGET_DIR}\\bin\\study-supervisor.exe' -ArgumentList @('-config','${WIN_CONFIG_FILE}','-token','${WIN_TOKEN_FILE}','-collector-token','${WIN_TARGET_DIR}\\config\\collector-token','-db','${WIN_DB_FILE}') -WorkingDirectory '${WIN_TARGET_DIR}' -WindowStyle Hidden -PassThru; try { for(\$i=0;\$i -lt 20;\$i++){ try { \$h=Invoke-RestMethod -Uri 'http://127.0.0.1:17321/healthz'; if(\$h.status -eq 'ok'){ exit 0 } } catch {} Start-Sleep -Milliseconds 500 }; exit 1 } finally { if(\$p -and -not \$p.HasExited){ Stop-Process -Id \$p.Id -Force } }"
+SMOKE_COMMAND="\$ErrorActionPreference='Stop'; \$p=Start-Process -FilePath '${WIN_TARGET_DIR}\\bin\\study-supervisor.exe' -ArgumentList @('-config','${WIN_CONFIG_FILE}','-token','${WIN_TOKEN_FILE}','-collector-token','${WIN_TARGET_DIR}\\config\\collector-token','-db','${WIN_DB_FILE}') -WorkingDirectory '${WIN_TARGET_DIR}' -WindowStyle Hidden -PassThru; try { for(\$i=0;\$i -lt 60;\$i++){ try { \$h=Invoke-RestMethod -Uri 'http://127.0.0.1:17321/healthz'; if(\$h.status -eq 'ok'){ exit 0 } } catch {} Start-Sleep -Milliseconds 500 }; exit 1 } finally { if(\$p -and -not \$p.HasExited){ Stop-Process -Id \$p.Id -Force } }"
 echo "[Deploy] Running Supervisor health smoke..."
 "${POWERSHELL_BIN}" -NoProfile -ExecutionPolicy Bypass -Command "${SMOKE_COMMAND}"
 

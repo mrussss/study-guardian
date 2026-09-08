@@ -482,6 +482,18 @@ func (s *Storage) ensureDailyEvidenceDateColumns() error {
 		if err := s.ensureColumn(item.table, "local_date", "TEXT NOT NULL DEFAULT ''"); err != nil {
 			return err
 		}
+		// Most legacy rows use Go's wall-clock string, whose first ten
+		// characters are the original local calendar date. Validate that
+		// prefix in SQLite and backfill it in one statement; doing one
+		// autocommit UPDATE per historical row makes startup unbounded on a
+		// real database. Rows with an unusual but parseable representation
+		// are handled by the bounded fallback loop below.
+		if _, err := s.db.Exec(`UPDATE ` + item.table + ` SET local_date = substr(` + item.time + `, 1, 10)
+			WHERE COALESCE(local_date, '') = ''
+			AND substr(` + item.time + `, 1, 10) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+			AND date(substr(` + item.time + `, 1, 10)) IS NOT NULL`); err != nil {
+			return err
+		}
 		rows, err := s.db.Query(`SELECT ` + item.key + `, ` + item.time + ` FROM ` + item.table + ` WHERE local_date = ''`)
 		if err != nil {
 			return err
@@ -502,18 +514,35 @@ func (s *Storage) ensureDailyEvidenceDateColumns() error {
 			return err
 		}
 		rows.Close()
-		for _, row := range pending {
-			value, ok := parseStoredDBTime(row.value)
-			if !ok {
-				continue
-			}
-			date := LocalDate(value)
-			if date == "" {
-				continue
-			}
-			if _, err := s.db.Exec(`UPDATE `+item.table+` SET local_date = ? WHERE `+item.key+` = ? AND local_date = ''`, date, row.id); err != nil {
+		if len(pending) > 0 {
+			transaction, err := s.db.Begin()
+			if err != nil {
 				return err
 			}
+			rollback := true
+			defer func() {
+				if rollback {
+					_ = transaction.Rollback()
+				}
+			}()
+			for _, row := range pending {
+				value, ok := parseStoredDBTime(row.value)
+				if !ok {
+					continue
+				}
+				date := LocalDate(value)
+				if date == "" {
+					continue
+				}
+				if _, err := transaction.Exec(`UPDATE `+item.table+` SET local_date = ? WHERE `+item.key+` = ? AND local_date = ''`, date, row.id); err != nil {
+					_ = transaction.Rollback()
+					return err
+				}
+			}
+			if err := transaction.Commit(); err != nil {
+				return err
+			}
+			rollback = false
 		}
 		if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_` + item.table + `_local_date ON ` + item.table + `(local_date)`); err != nil {
 			return err
