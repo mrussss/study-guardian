@@ -11,7 +11,7 @@ test("CurrentActivityView validator rejects invalid enums, dates, and confidence
   const base = mockSemantic();
   assert.equal(isCurrentActivityView({ ...base, schema_version: 2 }), false);
   assert.equal(isCurrentActivityView({ ...base, user_mode: "RUNNING" }), false);
-  assert.equal(isCurrentActivityView({ ...base, activity: "OTHER" }), false);
+  assert.equal(isCurrentActivityView({ ...base, activity: "NOT_AN_ACTIVITY" }), false);
   assert.equal(isCurrentActivityView({ ...base, observed_at: "" }), false);
   assert.equal(isCurrentActivityView({ ...base, observed_at: "not-a-date" }), false);
   for (const confidence of [-0.01, 1.01, Number.NaN, Number.POSITIVE_INFINITY]) {

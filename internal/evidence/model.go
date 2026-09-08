@@ -3,18 +3,19 @@ package evidence
 import "time"
 
 type DailyEvidenceBundle struct {
-	Date         string               `json:"date"`
-	Timezone     string               `json:"timezone"`
-	DailyState   DailyStateSummary    `json:"daily_state"`
-	Sessions     []SessionSummary     `json:"sessions"`
-	Distractions []DistractionSummary `json:"distractions"`
-	Reminders    []ReminderSummary    `json:"reminders"`
-	Motivation   MotivationSummary    `json:"motivation"`
-	ChatTurns    []ChatTurnSummary    `json:"chat_turns"`
-	Semantic     []SemanticSummary    `json:"semantic"`
-	Missions     []CompletedMissionSummary `json:"completed_missions"`
-	Quality      EvidenceQuality      `json:"quality"`
-	Warnings     []string             `json:"warnings"`
+	Date             string                    `json:"date"`
+	Timezone         string                    `json:"timezone"`
+	EvidenceRevision int64                     `json:"evidence_revision"`
+	DailyState       DailyStateSummary         `json:"daily_state"`
+	Sessions         []SessionSummary          `json:"sessions"`
+	Distractions     []DistractionSummary      `json:"distractions"`
+	Reminders        []ReminderSummary         `json:"reminders"`
+	Motivation       MotivationSummary         `json:"motivation"`
+	ChatTurns        []ChatTurnSummary         `json:"chat_turns"`
+	Semantic         []SemanticSummary         `json:"semantic"`
+	Missions         []CompletedMissionSummary `json:"completed_missions"`
+	Quality          EvidenceQuality           `json:"quality"`
+	Warnings         []string                  `json:"warnings"`
 }
 
 type DailyStateSummary struct {
@@ -87,6 +88,7 @@ type SemanticSummary struct {
 	Title                 string    `json:"title"`
 	Domain                string    `json:"domain"`
 	Relation              string    `json:"relation"`
+	Privacy               string    `json:"privacy"`
 	Confidence            float64   `json:"confidence"`
 	Activity              string    `json:"activity"`
 	Topic                 string    `json:"topic"`
@@ -99,13 +101,13 @@ type SemanticSummary struct {
 }
 
 type CompletedMissionSummary struct {
-	Ref             string    `json:"ref"`
-	ID              string    `json:"id"`
-	Title           string    `json:"title"`
-	Description     string    `json:"description"`
-	CompletedAt     time.Time `json:"completed_at"`
-	LinkedTaskName  string    `json:"linked_task_name,omitempty"`
-	LinkConfidence  float64   `json:"link_confidence,omitempty"`
+	Ref            string    `json:"ref"`
+	ID             string    `json:"id"`
+	Title          string    `json:"title"`
+	Description    string    `json:"description"`
+	CompletedAt    time.Time `json:"completed_at"`
+	LinkedTaskName string    `json:"linked_task_name,omitempty"`
+	LinkConfidence float64   `json:"link_confidence,omitempty"`
 }
 
 type EvidenceQuality struct {

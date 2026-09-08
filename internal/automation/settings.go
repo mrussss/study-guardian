@@ -65,18 +65,19 @@ func (s *SettingsService) Save(ctx context.Context, input Settings) (Settings, e
 	}
 	next := toConfig(input)
 	s.mu.Lock()
-	s.cfg.Automation = next
+	defer s.mu.Unlock()
+	// Persist first. The in-memory config and controller must not move ahead
+	// of durable settings when SQLite rejects the write.
 	if s.store != nil {
 		if err := s.store.SetSetting(ctx, settingKey, marshalSettings(next), time.Now()); err != nil {
-			s.mu.Unlock()
 			return Settings{}, err
 		}
 	}
+	s.cfg.Automation = next
 	if s.controller != nil {
 		s.controller.UpdateConfig(next)
 	}
-	s.mu.Unlock()
-	return input, nil
+	return fromConfig(next), nil
 }
 
 func fromConfig(value config.AutomationConfig) Settings {

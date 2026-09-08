@@ -17,11 +17,11 @@ func NewRuleEngine() *RuleEngine {
 	return &RuleEngine{
 		distractionApps: []string{
 			"steam", "epicgames", "genshinimpact", "honkaistarrail", "leagueclient", "riotclient",
-			"valorant", "csgo", "dota2", "minecraft", "overwatch",
+			"valorant", "csgo", "dota2", "minecraft", "overwatch", "wechat", "weixin", "discord", "telegram",
 		},
 		distractionDomains: []string{
 			"store.steampowered.com", "steamcommunity.com", "epicgames.com", "qidian.com",
-			"jjwxc.net", "biquge", "novel", "mangadex.org", "douyu.com", "huya.com", "twitch.tv",
+			"jjwxc.net", "biquge", "novel", "mangadex.org", "douyu.com", "huya.com", "twitch.tv", "weixin.qq.com",
 		},
 		devApps: []string{
 			"code", "goland", "pycharm", "clion", "idea", "webstorm", "cursor", "devenv",
@@ -44,9 +44,14 @@ func (re *RuleEngine) Classify(app, title, domain, task string) state.Classifica
 	// 1. Check definite distractions
 	for _, dApp := range re.distractionApps {
 		if strings.Contains(appLower, dApp) {
+			activity := state.ActivityGaming
+			if dApp == "wechat" || dApp == "weixin" || dApp == "discord" || dApp == "telegram" {
+				activity = state.ActivityMessaging
+			}
 			return state.ClassificationResult{
 				Relation:   state.RelationDistracted,
 				Confidence: 0.95,
+				Activity:   activity,
 				Reason:     "App matches known distraction blacklist: " + dApp,
 				IsFromRule: true,
 			}
@@ -55,9 +60,14 @@ func (re *RuleEngine) Classify(app, title, domain, task string) state.Classifica
 
 	for _, dDomain := range re.distractionDomains {
 		if strings.Contains(domainLower, dDomain) {
+			activity := state.ActivityGaming
+			if strings.Contains(dDomain, "weixin") {
+				activity = state.ActivityMessaging
+			}
 			return state.ClassificationResult{
 				Relation:   state.RelationDistracted,
 				Confidence: 0.90,
+				Activity:   activity,
 				Reason:     "Domain matches known distraction blacklist: " + dDomain,
 				IsFromRule: true,
 			}
@@ -87,12 +97,12 @@ func (re *RuleEngine) Classify(app, title, domain, task string) state.Classifica
 	for _, devApp := range re.devApps {
 		if strings.Contains(appLower, devApp) {
 			return state.ClassificationResult{
-				Relation:   state.RelationUnknown,
-				Confidence: 0.65,
-				Reason:     "Development tool is a candidate signal; task relation needs corroboration: " + devApp,
-				Activity:   "CODING",
+				Relation:       state.RelationUnknown,
+				Confidence:     0.65,
+				Reason:         "Development tool is a candidate signal; task relation needs corroboration: " + devApp,
+				Activity:       "CODING",
 				ProgressSignal: state.ProgressCoding,
-				IsFromRule: true,
+				IsFromRule:     true,
 			}
 		}
 	}
@@ -101,12 +111,12 @@ func (re *RuleEngine) Classify(app, title, domain, task string) state.Classifica
 	for _, devDomain := range re.devDomains {
 		if strings.Contains(domainLower, devDomain) {
 			return state.ClassificationResult{
-				Relation:   state.RelationUnknown,
-				Confidence: 0.65,
-				Reason:     "Learning/developer resource is a candidate signal; task relation needs corroboration: " + devDomain,
-				Activity:   "READING",
+				Relation:       state.RelationUnknown,
+				Confidence:     0.65,
+				Reason:         "Learning/developer resource is a candidate signal; task relation needs corroboration: " + devDomain,
+				Activity:       "READING",
 				ProgressSignal: state.ProgressReading,
-				IsFromRule: true,
+				IsFromRule:     true,
 			}
 		}
 	}

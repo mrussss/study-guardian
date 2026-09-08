@@ -21,6 +21,9 @@ func NewAggregator(store *storage.Storage, timezone *time.Location) *Aggregator 
 
 func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundle, error) {
 	bundle := DailyEvidenceBundle{Date: date, Timezone: a.timezone.String()}
+	if revision, revisionErr := a.store.GetEvidenceRevision(ctx, date); revisionErr == nil {
+		bundle.EvidenceRevision = revision
+	}
 	statePresent := false
 	standby, study, breakSeconds, off, active, err := a.store.LoadDailyState(ctx, date)
 	if err == nil {
@@ -94,7 +97,7 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 		return DailyEvidenceBundle{}, err
 	}
 	for _, item := range semantic {
-		bundle.Semantic = append(bundle.Semantic, SemanticSummary{ID: item.ID, Ref: "semantic:" + itoa64(item.ID), ObservedAt: item.ObservedAt, Task: item.Task, App: item.App, Title: item.Title, Domain: item.Domain, Relation: item.Relation, Confidence: item.Confidence, Activity: item.Activity, Topic: item.Topic, Subtopic: item.Subtopic, Action: item.Action, ProgressSignal: item.ProgressSignal, SourceKind: item.SourceKind, DurationSeconds: item.DurationSeconds, StableIntervalSeconds: item.StableIntervalSeconds})
+		bundle.Semantic = append(bundle.Semantic, SemanticSummary{ID: item.ID, Ref: "semantic:" + itoa64(item.ID), ObservedAt: item.ObservedAt, Task: item.Task, App: item.App, Title: item.Title, Domain: item.Domain, Relation: item.Relation, Privacy: item.Privacy, Confidence: item.Confidence, Activity: item.Activity, Topic: item.Topic, Subtopic: item.Subtopic, Action: item.Action, ProgressSignal: item.ProgressSignal, SourceKind: item.SourceKind, DurationSeconds: item.DurationSeconds, StableIntervalSeconds: item.StableIntervalSeconds})
 	}
 	missions, err := a.store.ListCompletedMissionsForDate(ctx, date)
 	if err != nil {

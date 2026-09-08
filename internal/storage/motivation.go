@@ -364,6 +364,9 @@ func (s *Storage) CompleteMission(ctx context.Context, id string, now time.Time)
 	if err = tx.Commit(); err != nil {
 		return Mission{}, false, err
 	}
+	if _, err = s.BumpEvidenceRevision(ctx, LocalDate(now), now); err != nil {
+		return Mission{}, false, err
+	}
 	return m, true, nil
 }
 func (s *Storage) CancelMission(ctx context.Context, id string) error {

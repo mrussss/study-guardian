@@ -160,6 +160,7 @@ func ValidateClassificationResponse(resp *ClassificationResponse) error {
 	if strings.TrimSpace(resp.Activity) == "" || len([]rune(resp.Activity)) > maxActivityLength {
 		return fmt.Errorf("classification activity must be non-empty and at most %d characters", maxActivityLength)
 	}
+	resp.Activity, _ = state.NormalizeActivity(resp.Activity)
 	if strings.TrimSpace(resp.ReasonShort) == "" || len([]rune(resp.ReasonShort)) > maxReasonLength {
 		return fmt.Errorf("classification reason_short must be non-empty and at most %d characters", maxReasonLength)
 	}

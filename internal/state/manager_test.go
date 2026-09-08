@@ -336,3 +336,94 @@ func TestSetTaskPersistsIntoOpenSessionAndRestartRecovery(t *testing.T) {
 		t.Fatalf("recovered task=%q, want 算法 练习", got)
 	}
 }
+
+func TestManagerClearsReminderAfterStableFocusedRecovery(t *testing.T) {
+	now := time.Date(2026, 9, 8, 15, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	cfg := config.DefaultConfig()
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	mgr := NewPersistentManager(clock, cfg, store, mockRuleClassifier{}, mockPrivacyEvaluator{}, mockReminderEvaluator{})
+	if err := mgr.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 100; i++ {
+		now = now.Add(5 * time.Second)
+		clock.Set(now)
+		mgr.Tick(now, "steam.exe", "Steam", "", false, true, false)
+	}
+	if mgr.GetStatus().CurrentReminder == nil {
+		t.Fatal("expected distraction reminder")
+	}
+	for i := 0; i < 5; i++ {
+		now = now.Add(5 * time.Second)
+		clock.Set(now)
+		mgr.Tick(now, "code.exe", "main.go", "", false, true, false)
+	}
+	if got := mgr.GetStatus().CurrentReminder; got != nil {
+		t.Fatalf("reminder cleared before recovery window: %+v", got)
+	}
+}
+
+func TestAutomationConfirmationAcceptRejectAndExpiry(t *testing.T) {
+	now := time.Date(2026, 9, 8, 17, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	cfg := config.DefaultConfig()
+	cfg.Automation.ManualOverrideMinutes = 0
+	mgr := NewPersistentManager(clock, cfg, nil, nil, nil, nil)
+	intent := AutomationIntent{ID: "intent-start", Transition: AutomationStart, Task: "Go", Reason: PauseReasonNone, RequiresConfirmation: true}
+	if err := mgr.ApplyAutomationIntent(intent); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.GetStatus(); got.UserMode != UserModeStandby || got.PendingAutomationIntent == nil {
+		t.Fatalf("pending=%+v", got)
+	}
+	if err := mgr.RejectAutomationIntent("intent-start"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.GetStatus(); got.PendingAutomationIntent != nil || got.UserMode != UserModeStandby {
+		t.Fatalf("rejected intent still active: %+v", got)
+	}
+
+	if err := mgr.ApplyAutomationIntent(intent); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.AcceptAutomationIntent("intent-start"); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.GetStatus(); got.UserMode != UserModeStudy || got.Task != "Go" {
+		t.Fatalf("accepted intent did not start study: %+v", got)
+	}
+
+	if err := mgr.SetModeOff(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ApplyAutomationIntent(intent); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(16 * time.Second)
+	clock.Set(now)
+	if got := mgr.GetStatus(); got.PendingAutomationIntent != nil {
+		t.Fatalf("expired intent remains: %+v", got.PendingAutomationIntent)
+	}
+}
+
+func TestManualStudyStillAllowsAutomaticPause(t *testing.T) {
+	now := time.Date(2026, 9, 8, 18, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	cfg := config.DefaultConfig()
+	cfg.Automation.ManualOverrideMinutes = 30
+	mgr := NewPersistentManager(clock, cfg, nil, nil, nil, nil)
+	if err := mgr.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ApplyAutomationIntent(AutomationIntent{Transition: AutomationPause, Reason: PauseReasonLocked}); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.GetStatus(); got.UserMode != UserModeBreak || got.ModeOrigin != ModeOriginAutomation || !got.AutoResumeEligible {
+		t.Fatalf("manual study was not auto-paused: %+v", got)
+	}
+}

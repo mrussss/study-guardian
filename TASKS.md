@@ -188,4 +188,4 @@
 - [x] 133. 文本、视觉与 Daily Review 共享有序模型链；仅明确模型级失败或无效输出触发 fallback，传输/账号失败停止链
 - [x] 134. 保留单模型配置兼容；备用模型默认空、最多三个，并在 UI 标明潜在计费
 - [x] 136. AI 全局代理 transport、网络诊断 API/UI、错误 scope 分类与旧配置兼容
-- [~] 135. 后端 AIHubMix Text/Vision/Review API E2E 已通过；Control Center Review 展示、fallback null 兼容和主动刷新仍待完整 UI E2E 验证
+- [~] 135. 后端 AIHubMix Text/Vision/Review API E2E 部分通过；2026-09-08 Text `coding-glm-5.3-flash-free` 受 `account_rate_limited` 阻断，Vision `minimax-m3-free` 通过，Daily Review 已生成 `READY/FALLBACK` 本地总结（revision 6）；Text 成功和 Control Center 完整 UI E2E 仍待验证

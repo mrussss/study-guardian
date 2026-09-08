@@ -54,7 +54,7 @@ func TestFallbackV2LowEvidenceHeadline(t *testing.T) {
 
 func TestFallbackUsesCompletedMissionAsAccomplishment(t *testing.T) {
 	doc := BuildFallback(evidence.DailyEvidenceBundle{
-		Date: "2026-09-05",
+		Date:     "2026-09-05",
 		Missions: []evidence.CompletedMissionSummary{{Ref: "mission:m-1", Title: "完成 Context 超时练习", CompletedAt: time.Date(2026, 9, 5, 10, 0, 0, 0, time.Local)}},
 	})
 	if len(doc.Accomplishments) != 1 || !strings.Contains(doc.Accomplishments[0].Text, "Context 超时练习") {
@@ -62,5 +62,25 @@ func TestFallbackUsesCompletedMissionAsAccomplishment(t *testing.T) {
 	}
 	if !strings.Contains(RenderMarkdown(doc, evidence.DailyEvidenceBundle{Date: "2026-09-05", Missions: []evidence.CompletedMissionSummary{{Title: "完成 Context 超时练习"}}}), "已完成任务：完成 Context 超时练习") {
 		t.Fatal("markdown omitted completed mission")
+	}
+}
+
+func TestFallbackSeparatesFocusedTopicsFromDistractionAndUnknownSemantic(t *testing.T) {
+	doc := BuildFallback(evidence.DailyEvidenceBundle{
+		Date: "2026-09-08",
+		Semantic: []evidence.SemanticSummary{
+			{Ref: "semantic:focused", Relation: "FOCUSED", Privacy: "NORMAL", Confidence: .9, Activity: "CODING", Topic: "Go 并发"},
+			{Ref: "semantic:wechat", Relation: "DISTRACTED", Privacy: "NORMAL", Confidence: .95, Activity: "MESSAGING", Topic: "微信聊天"},
+			{Ref: "semantic:game", Relation: "FOCUSED", Privacy: "NORMAL", Confidence: .95, Activity: "GAMING", Topic: "游戏"},
+			{Ref: "semantic:unknown", Relation: "UNKNOWN", Privacy: "NORMAL", Confidence: .9, Activity: "READING", Topic: "不确定主题"},
+		},
+	})
+	for _, topic := range doc.Topics {
+		if topic.Name == "微信聊天" || topic.Name == "游戏" || topic.Name == "不确定主题" {
+			t.Fatalf("non-learning semantic entered topics: %+v", doc.Topics)
+		}
+	}
+	if len(doc.Topics) != 1 || doc.Topics[0].Name != "Go 并发" {
+		t.Fatalf("topics=%+v", doc.Topics)
 	}
 }

@@ -47,6 +47,7 @@ type Server struct {
 	reminderSettings   ReminderSettingsManager
 	aiSettings         AISettingsManager
 	automationSettings AutomationSettingsManager
+	automationIntent   AutomationIntentManager
 }
 
 type MotivationManager interface {
@@ -86,6 +87,9 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/settings/ai/test", s.withAuth(s.handleAITest))
 	mux.HandleFunc("/v1/settings/ai/proxy/test", s.withAuth(s.handleAIProxyTest))
 	mux.HandleFunc("/v1/settings/automation", s.withAuth(s.handleAutomationSettings))
+	mux.HandleFunc("/v1/automation/pending", s.withAuth(s.handleAutomationPending))
+	mux.HandleFunc("/v1/automation/pending/accept", s.withAuth(s.handleAutomationAccept))
+	mux.HandleFunc("/v1/automation/pending/reject", s.withAuth(s.handleAutomationReject))
 	mux.HandleFunc("/v1/feedback", s.withAuth(s.handleFeedback))
 	mux.HandleFunc("/v1/motivation/status", s.withAuth(s.handleMotivationStatus))
 	mux.HandleFunc("/v1/motivation/settings", s.withAuth(s.handleMotivationSettings))
@@ -153,6 +157,9 @@ func (s *Server) SetReview(service *review.Service) {
 }
 func (s *Server) ReviewCoordinator() *review.Coordinator { return s.reviewCoordinator }
 func (s *Server) SetSemantic(service *semantic.Service)  { s.semantic = service }
+func (s *Server) SetAutomationIntentManager(manager AutomationIntentManager) {
+	s.automationIntent = manager
+}
 
 func (s *Server) Start() error {
 	addr := s.httpServer.Addr

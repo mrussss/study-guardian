@@ -70,6 +70,16 @@ export class NativeSupervisorAdapter implements SupervisorAdapter {
   }
 }
 
+export interface NativeAutomationIntent {
+  intent_id: string;
+  transition: "AUTO_START" | "AUTO_PAUSE" | "AUTO_RESUME";
+  reason: "NONE" | "IDLE" | "LOCKED" | "SLEEP" | "SENSOR_UNAVAILABLE";
+  task: string;
+  created_at: string;
+  expires_at: string;
+  requires_confirmation: boolean;
+}
+
 export interface NativeSupervisorStatus {
   user_mode: "STANDBY" | "STUDY" | "BREAK" | "OFF";
   interaction_state: "ACTIVE" | "IDLE_STATIC" | "IDLE_DYNAMIC" | "UNKNOWN";
@@ -86,6 +96,7 @@ export interface NativeSupervisorStatus {
   mode_origin?: "MANUAL" | "AUTOMATION";
   pause_reason?: "NONE" | "IDLE" | "LOCKED" | "SLEEP" | "SENSOR_UNAVAILABLE";
   auto_resume_eligible?: boolean;
+  pending_automation_intent?: NativeAutomationIntent;
 }
 
 export interface NativeMotivationStatus {
@@ -303,7 +314,13 @@ function validStatus(value: unknown): value is NativeSupervisorStatus {
     (value.last_activity_at === undefined || boundedText(value.last_activity_at, 128)) &&
     (value.mode_origin === undefined || ["MANUAL", "AUTOMATION"].includes(value.mode_origin as string)) &&
     (value.pause_reason === undefined || ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"].includes(value.pause_reason as string)) &&
-    (value.auto_resume_eligible === undefined || typeof value.auto_resume_eligible === "boolean");
+    (value.auto_resume_eligible === undefined || typeof value.auto_resume_eligible === "boolean") &&
+    (value.pending_automation_intent === undefined || (record(value.pending_automation_intent) &&
+      boundedText(value.pending_automation_intent.intent_id, 128) &&
+      ["AUTO_START", "AUTO_PAUSE", "AUTO_RESUME"].includes(value.pending_automation_intent.transition as string) &&
+      ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"].includes(value.pending_automation_intent.reason as string) &&
+      boundedText(value.pending_automation_intent.task, 256) && boundedText(value.pending_automation_intent.created_at, 128) &&
+      boundedText(value.pending_automation_intent.expires_at, 128) && typeof value.pending_automation_intent.requires_confirmation === "boolean"));
 }
 
 function validMotivation(value: unknown): value is NativeMotivationStatus {
@@ -595,6 +612,8 @@ export interface SupervisorControlAdapter {
   deleteTaskPreset(id: string): Promise<ControlResult>;
   setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult>;
   saveAutomationSettings?: (settings: NativeAutomationSettings) => Promise<ControlResult>;
+  acceptAutomationIntent?: (intentId: string) => Promise<ControlResult>;
+  rejectAutomationIntent?: (intentId: string) => Promise<ControlResult>;
   saveAISettings(settings: NativeAISettings): Promise<ControlResult>;
   putAISecret(target: "text" | "vision", apiKey: string): Promise<ControlResult>;
   deleteAISecret(target: "text" | "vision"): Promise<ControlResult>;
@@ -681,6 +700,14 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
 
   saveAutomationSettings(settings: NativeAutomationSettings): Promise<ControlResult> {
     return this.invokeControl("supervisor_save_automation_settings", { settings });
+  }
+
+  acceptAutomationIntent(intentId: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_accept_automation_intent", { intentId });
+  }
+
+  rejectAutomationIntent(intentId: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_reject_automation_intent", { intentId });
   }
 
   saveAISettings(settings: NativeAISettings): Promise<ControlResult> {

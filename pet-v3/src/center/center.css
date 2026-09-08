@@ -178,6 +178,10 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .settings-stack { display: grid; width: 100%; max-width: 700px; gap: 18px; }
 .settings-stack > .surface-section { width: 100%; max-width: none; }
 .automation-settings-card { min-height: 0; }
+.automation-pending-intent { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 13px 14px; color: var(--sg-text); background: var(--sg-accent-soft); border: 1px solid color-mix(in srgb, var(--sg-accent) 38%, var(--sg-border)); border-radius: 10px; }
+.automation-pending-intent > div:first-child { display: grid; gap: 4px; }
+.automation-pending-intent span { color: var(--sg-text-secondary); font-size: 12px; }
+.automation-pending-intent .setting-actions { margin-top: 0; }
 .automation-setting-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
 .automation-setting-grid label { display: grid; min-height: 62px; align-content: center; gap: 8px; padding: 11px 12px; color: var(--sg-text-secondary); background: var(--sg-surface-muted); border: 1px solid var(--sg-border); border-radius: 9px; font-size: 12px; }
 .automation-setting-grid input[type="number"] { width: 100%; min-height: 31px; padding: 0 8px; color: var(--sg-text); background: var(--sg-surface-raised); border: 1px solid var(--sg-border-strong); border-radius: 7px; font: inherit; font-variant-numeric: tabular-nums; }

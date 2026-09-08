@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"study-guardian/internal/evidence"
+	"study-guardian/internal/state"
 )
 
 type taskInvestment struct {
@@ -15,6 +16,39 @@ type taskInvestment struct {
 	Sessions   int
 	LastAt     time.Time
 	References []string
+}
+
+func isLearningSemantic(item evidence.SemanticSummary) bool {
+	if strings.ToUpper(strings.TrimSpace(item.Relation)) != string(state.RelationFocused) || item.Confidence < 0.6 || (item.Privacy != "" && strings.ToUpper(strings.TrimSpace(item.Privacy)) != string(state.PrivacyNormal)) {
+		return false
+	}
+	activity, _ := state.NormalizeActivity(item.Activity)
+	switch activity {
+	case state.ActivityUnknown, state.ActivityOther, state.ActivityMessaging, state.ActivityGaming:
+		return false
+	default:
+		return true
+	}
+}
+
+func learningSemanticCount(bundle evidence.DailyEvidenceBundle) int {
+	count := 0
+	for _, item := range bundle.Semantic {
+		if isLearningSemantic(item) {
+			count++
+		}
+	}
+	return count
+}
+
+func distractedSemanticCount(bundle evidence.DailyEvidenceBundle) int {
+	count := 0
+	for _, item := range bundle.Semantic {
+		if strings.ToUpper(strings.TrimSpace(item.Relation)) == string(state.RelationDistracted) {
+			count++
+		}
+	}
+	return count
 }
 
 func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
@@ -41,7 +75,7 @@ func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
 		addTopic(task.Name, fmt.Sprintf("今天记录到 %s 的相关学习投入；时长不能证明已经完成或掌握。", formatDuration(task.Seconds)), task.References[0], .9)
 	}
 	for _, semantic := range bundle.Semantic {
-		if semantic.Confidence < .6 {
+		if !isLearningSemantic(semantic) {
 			continue
 		}
 		name := semantic.Topic
@@ -179,6 +213,9 @@ func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 	// session row is temporarily missing. Never add semantic duration on top of
 	// an existing session task, because that would double-count focus time.
 	for _, semantic := range bundle.Semantic {
+		if !isLearningSemantic(semantic) {
+			continue
+		}
 		name := cleanTopic(semantic.Task)
 		if name == "" {
 			continue
@@ -257,7 +294,7 @@ func RenderMarkdown(doc Document, bundle evidence.DailyEvidenceBundle) string {
 	fmt.Fprintf(&b, "# %s 学习复盘\n\n", doc.Date)
 	fmt.Fprintf(&b, "%s\n\n", safeLine(doc.Headline))
 	b.WriteString("## 今日记录\n")
-	fmt.Fprintf(&b, "- STUDY：%s\n- 有效专注：%s\n- 学习会话：%d 次\n- ChatGPT 学习 Turn：%d\n- 语义记录：%d 条\n- 跑偏：%d 次\n- 最大跑偏：%s\n\n", formatDuration(bundle.DailyState.StudySeconds), formatDuration(bundle.Motivation.CreditedFocusSeconds), studySessionCount(bundle), len(bundle.ChatTurns), len(bundle.Semantic), len(bundle.Distractions), formatDuration(doc.Behavior.LargestDistractionSec))
+	fmt.Fprintf(&b, "- STUDY：%s\n- 有效专注：%s\n- 学习会话：%d 次\n- ChatGPT 学习 Turn：%d\n- 有效学习语义：%d 条\n- 分心语义：%d 条\n- 跑偏：%d 次\n- 最大跑偏：%s\n\n", formatDuration(bundle.DailyState.StudySeconds), formatDuration(bundle.Motivation.CreditedFocusSeconds), studySessionCount(bundle), len(bundle.ChatTurns), learningSemanticCount(bundle), distractedSemanticCount(bundle), len(bundle.Distractions), formatDuration(doc.Behavior.LargestDistractionSec))
 	tasks := rankTasks(bundle)
 	b.WriteString("## 主要任务\n")
 	if len(tasks) == 0 {

@@ -43,7 +43,10 @@ export const activityLabels: Record<Activity, string> = {
   WATCHING: "视频学习",
   AI_ASSISTED: "AI 辅助学习",
   BROWSING: "资料浏览",
+  MESSAGING: "即时通讯",
+  GAMING: "游戏娱乐",
   GENERAL_STUDY: "学习",
+  OTHER: "其他活动",
   UNKNOWN: "其他活动",
 };
 

@@ -89,3 +89,8 @@ AI 的 `ai.proxy` 是文字、视觉和 Daily Review 共享的 transport 策略�
 - 本地规则、文字 AI 和视觉 AI 共用结构化分类结果；只保存经过白名单、长度和隐私校验的 activity/topic/subtopic/action/progress/source 字段，不保存原始截图或原始 Provider 响应。
 - 自动学习计时默认关闭。启用后由独立 `AutomationController` 在 Supervisor 主循环外生成转场意图，Manager 在锁外应用；手动 BREAK/OFF 保留人工优先级，主动分心不会自动结束学习会话。
 - 自动化检查依次使用 `go test ./...`、`./scripts/pet-v3.sh check`、Windows `cargo test`、`./scripts/pet-v3.sh native` 和 `./scripts/pet-v3.sh candidate`。真实游戏/锁屏/静态离开、Windows Toast 和 Vision JPEG 仍必须在目标机器按 Windows E2E Gate 单独验收，不能用单元测试替代。
+- 第二轮修复增加了重启时长迁移标记 `session_duration_repairs`；只对可确定继承旧时长的相邻 `RESTART_RECOVERY` 会话做事务修正，重复启动幂等，无法确定的历史行不猜测修改。
+- Daily Review 以 `evidence_revisions` 和 `generated_evidence_revision` 判断新证据；生成期间发生新记录时结果保留但状态为 `STALE`。学习主题只接受正常隐私、FOCUSED、置信度达标且稳定的枚举 Activity，MESSAGING/GAMING/UNKNOWN 不进入学习主题。
+- 自动化确认意图通过 `/v1/automation/pending`、`/accept`、`/reject` 暴露给 Control Center；确认队列 15 秒过期。`auto_pause.confirm` 的界面文案为“暂停前提醒”，手动 STUDY 仍允许锁屏/静止自动暂停，手动 BREAK/OFF 不会自动恢复。
+- 提醒的 `current_reminder` 仅表示当前有效提醒；历史行保留，恢复稳定专注 20 秒、模式切换或有效期到达会标记 inactive 并从 `/v1/status` 清除。
+- 本轮验证：`go test ./...`、Pet 84 项测试、TypeScript/Vite build、Windows Rust 17/17、native/candidate、完整 Windows release build/deploy 均通过。部署后代理测试 `manual` 1239ms；Text provider `aihubmix` / model `coding-glm-5.3-flash-free` 896ms，`account_rate_limited`，按规则停止同 provider fallback；Vision provider `aihubmix` / model `minimax-m3-free` 7962ms 通过；Daily Review 接口生成曾返回 `READY` / `FALLBACK`、revision 6、`error_kind=account_rate_limited`，生成本地总结成功，随后因新证据按设计变为 `STALE`。实机锁屏/游戏/微信/Toast 和完整 UI E2E 仍按目标机 Gate 单独验收。

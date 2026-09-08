@@ -11,15 +11,18 @@ const SchemaVersion = 1
 type Activity string
 
 const (
-	ActivityCoding       Activity = "CODING"
-	ActivityAlgorithm    Activity = "ALGORITHM"
-	ActivityReading      Activity = "READING"
-	ActivityWriting      Activity = "WRITING"
-	ActivityWatching     Activity = "WATCHING"
-	ActivityAIAssisted   Activity = "AI_ASSISTED"
-	ActivityBrowsing     Activity = "BROWSING"
-	ActivityGeneralStudy Activity = "GENERAL_STUDY"
-	ActivityUnknown      Activity = "UNKNOWN"
+	ActivityCoding       Activity = state.ActivityCoding
+	ActivityAlgorithm    Activity = state.ActivityAlgorithm
+	ActivityReading      Activity = state.ActivityReading
+	ActivityWriting      Activity = state.ActivityWriting
+	ActivityWatching     Activity = state.ActivityWatching
+	ActivityAIAssisted   Activity = state.ActivityAIAssisted
+	ActivityBrowsing     Activity = state.ActivityBrowsing
+	ActivityMessaging    Activity = state.ActivityMessaging
+	ActivityGaming       Activity = state.ActivityGaming
+	ActivityGeneralStudy Activity = state.ActivityGeneralStudy
+	ActivityOther        Activity = state.ActivityOther
+	ActivityUnknown      Activity = state.ActivityUnknown
 )
 
 // Timing makes the throttle policy explicit and allows deterministic tests to

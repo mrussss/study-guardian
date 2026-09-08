@@ -31,6 +31,12 @@ func Classify(c Candidate) (Activity, float64, string) {
 	if c.Relation == state.RelationFocused && containsAny(values, "chatgpt", "chat.openai", "openai", "claude", "anthropic", "qwen", "通义", "deepseek", "kimi", "moonshot", "gemini", "copilot", "perplexity") {
 		return ActivityAIAssisted, 0.94, "local rule: focused AI-assisted study signal"
 	}
+	if containsAny(values, "wechat", "weixin", "微信", "discord", "telegram", "slack", "messaging", "chat") {
+		return ActivityMessaging, 0.96, "local rule: messaging signal"
+	}
+	if containsAny(values, "steam", "epicgames", "genshin", "league", "valorant", "minecraft", "game", "gaming", "游戏") {
+		return ActivityGaming, 0.96, "local rule: gaming signal"
+	}
 	if containsAny(values, "code.exe", "code-insiders", "visual studio", "goland", "pycharm", "intellij", "android studio", "xcode", "vim", "neovim", "emacs", "编程", "源代码") {
 		return ActivityCoding, 0.95, "local rule: coding tool signal"
 	}

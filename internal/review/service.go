@@ -91,6 +91,19 @@ func (s *Service) MarkStaleIfChanged(ctx context.Context, date string) (bool, er
 		}
 		return false, err
 	}
+	currentRevision, revisionErr := s.store.GetEvidenceRevision(ctx, date)
+	if revisionErr != nil {
+		return false, revisionErr
+	}
+	if previous.Status != StatusReady || (previous.GeneratedEvidenceRevision > 0 && previous.GeneratedEvidenceRevision >= currentRevision && previous.InputHash == hash) {
+		return false, nil
+	}
+	if previous.Status == StatusReady && previous.GeneratedEvidenceRevision > 0 && currentRevision > previous.GeneratedEvidenceRevision {
+		if err := s.store.MarkDailyReviewStale(ctx, date, time.Now()); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	if previous.Status != StatusReady || previous.InputHash == hash {
 		return false, nil
 	}
@@ -248,6 +261,12 @@ func (s *Service) persistLocked(ctx context.Context, bundle evidence.DailyEviden
 		}
 	}
 	now := time.Now()
+	generatedEvidenceRevision := bundle.EvidenceRevision
+	if generatedEvidenceRevision == 0 {
+		if current, revisionErr := s.store.GetEvidenceRevision(ctx, bundle.Date); revisionErr == nil {
+			generatedEvidenceRevision = current
+		}
+	}
 	revision := 1
 	attemptCount := 1
 	if previous, loadErr := s.store.LoadDailyReview(ctx, bundle.Date); loadErr == nil {
@@ -257,7 +276,7 @@ func (s *Service) persistLocked(ctx context.Context, bundle evidence.DailyEviden
 	markdown := RenderMarkdown(doc, bundle)
 	record := storage.DailyReviewRecord{
 		Date: bundle.Date, Status: StatusPending, GenerationMode: generationMode, Revision: revision,
-		InputHash: inputHash, SchemaVersion: 1, PromptVersion: promptVersion,
+		GeneratedEvidenceRevision: generatedEvidenceRevision, InputHash: inputHash, SchemaVersion: 1, PromptVersion: promptVersion,
 		Provider: providerName, Model: model,
 		ReviewJSON: string(reviewJSON), Markdown: markdown, AttemptCount: attemptCount,
 		StartedAt: &now, UpdatedAt: now, ErrorCode: errorCode,
@@ -275,6 +294,12 @@ func (s *Service) persistLocked(ctx context.Context, bundle evidence.DailyEviden
 	}
 	record.Status = StatusReady
 	record.GeneratedAt = &now
+	if currentRevision, revisionErr := s.store.GetEvidenceRevision(ctx, bundle.Date); revisionErr == nil && currentRevision > generatedEvidenceRevision {
+		if staleErr := s.store.MarkDailyReviewStale(ctx, bundle.Date, now); staleErr != nil {
+			return storage.DailyReviewRecord{}, staleErr
+		}
+		record.Status = StatusStale
+	}
 	if _, _, err := s.store.RecordDailyReviewReady(ctx, bundle.Date, record.Revision, generationMode, now); err != nil {
 		return storage.DailyReviewRecord{}, err
 	}
@@ -344,6 +369,9 @@ func appendReviewWarnings(groups ...[]string) []string {
 }
 
 func (s *Service) Get(ctx context.Context, date string) (storage.DailyReviewRecord, error) {
+	if _, err := s.store.MarkDailyReviewStaleIfRevisionChanged(ctx, date, time.Now()); err != nil {
+		return storage.DailyReviewRecord{}, err
+	}
 	return s.store.LoadDailyReview(ctx, date)
 }
 

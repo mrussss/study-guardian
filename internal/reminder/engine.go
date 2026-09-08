@@ -242,11 +242,17 @@ func (e *Engine) setCooldown(category string, now time.Time, duration time.Durat
 
 func (e *Engine) createEvent(level state.ReminderLevel, message, reason string, now time.Time) *state.ReminderEvent {
 	e.lastEventID++
+	cooldown := time.Duration(e.cfg.Reminder.CooldownMinutes) * time.Minute
+	if cooldown <= 0 {
+		cooldown = 10 * time.Minute
+	}
 	return &state.ReminderEvent{
 		ID:        fmt.Sprintf("rem-%d-%d", now.Unix(), e.lastEventID),
 		Level:     level,
 		Message:   message,
 		Reason:    reason,
 		CreatedAt: now,
+		ExpiresAt: now.Add(cooldown),
+		Active:    true,
 	}
 }

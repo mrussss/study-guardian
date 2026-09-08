@@ -68,7 +68,8 @@ func (s *Service) Observe(ctx context.Context, candidate Candidate) error {
 	if classification.SourceKind == "" {
 		classification.SourceKind = state.SourceKindLocalRule
 	}
-	activity := Activity(classification.Activity)
+	normalizedActivity, _ := state.NormalizeActivity(classification.Activity)
+	activity := Activity(normalizedActivity)
 	confidence := classification.Confidence
 	if !candidate.Fresh || candidate.Privacy == state.PrivacySensitive {
 		activity = ActivityUnknown
@@ -139,7 +140,7 @@ func (s *Service) Current(now time.Time) CurrentActivityView {
 }
 
 func (s *Service) persistIfEligibleLocked(ctx context.Context, c Candidate, classification state.ClassificationResult, activity Activity, confidence float64, localReason string) error {
-	if c.UserMode != state.UserModeStudy || !c.Fresh || c.Privacy != state.PrivacyNormal || activity == ActivityUnknown || c.ObservedAt.IsZero() {
+	if c.UserMode != state.UserModeStudy || !c.Fresh || c.Privacy != state.PrivacyNormal || classification.Relation != state.RelationFocused || confidence < 0.6 || activity == ActivityUnknown || activity == ActivityOther || c.ObservedAt.IsZero() {
 		s.resetPendingLocked()
 		return nil
 	}
@@ -190,6 +191,7 @@ func (s *Service) persistIfEligibleLocked(ctx context.Context, c Candidate, clas
 		Title:                 c.Title,
 		Domain:                c.Domain,
 		Relation:              string(c.Relation),
+		Privacy:               string(c.Privacy),
 		Confidence:            confidence,
 		Activity:              string(activity),
 		Topic:                 classification.Topic,

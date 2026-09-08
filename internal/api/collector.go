@@ -145,6 +145,12 @@ func (s *Server) ingestCollectorTurn(ctx context.Context, req CollectorTurnReque
 			FinalizedAt: finalizedAt, IsFinal: message.IsFinal, IsActive: message.IsActive, MetadataJSON: message.MetadataJSON,
 		})
 	}
+	wasFinalized := false
+	if req.TurnKey != "" {
+		if previous, previousErr := s.store.LoadChatTurn(ctx, req.TurnKey); previousErr == nil {
+			wasFinalized = previous.Finalized
+		}
+	}
 	turn := storage.ChatTurnRecord{
 		ExternalTurnID: req.ExternalTurnID, TurnKey: req.TurnKey, ObservedAt: observedAt,
 		LocalDate: observedAt.In(time.Local).Format("2006-01-02"), ModeAtStart: mode, TaskAtStart: req.TaskAtStart,
@@ -154,6 +160,11 @@ func (s *Server) ingestCollectorTurn(ctx context.Context, req CollectorTurnReque
 		Platform: req.Platform, ExternalConversationID: req.ExternalConversationID, Title: req.Title, URL: req.URL,
 		CapturePolicy: req.CapturePolicy, ObservedAt: observedAt,
 	}, turn, messages, time.Now())
+	if err == nil && turn.Finalized && !wasFinalized && turn.EligibleForReview && strings.EqualFold(mode, "STUDY") {
+		if _, revisionErr := s.store.BumpEvidenceRevision(ctx, turn.LocalDate, observedAt); revisionErr != nil {
+			return revisionErr
+		}
+	}
 	if err == nil && s.review != nil && turn.EligibleForReview && strings.EqualFold(mode, "STUDY") {
 		if _, staleErr := s.review.MarkStaleIfChanged(ctx, turn.LocalDate); staleErr != nil {
 			return staleErr

@@ -13,6 +13,7 @@ type Controller struct {
 	mu             sync.Mutex
 	cfg            config.AutomationConfig
 	focusedSince   time.Time
+	focusedKind    string
 	lockedSince    time.Time
 	staticSince    time.Time
 	lastTransition time.Time
@@ -50,6 +51,11 @@ func (c *Controller) UpdateConfig(cfg config.AutomationConfig) {
 	next := New(cfg)
 	c.mu.Lock()
 	c.cfg = next.cfg
+	c.focusedSince = time.Time{}
+	c.lockedSince = time.Time{}
+	c.staticSince = time.Time{}
+	c.lastTransition = time.Time{}
+	c.focusedKind = ""
 	c.mu.Unlock()
 }
 
@@ -62,26 +68,44 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if status.PendingAutomationIntent != nil {
+		return nil
+	}
 	if !c.lastTransition.IsZero() && now.Sub(c.lastTransition) < time.Duration(c.cfg.TransitionCooldownSeconds)*time.Second {
 		return nil
 	}
-	if status.ManualOverrideUntil != nil && now.Before(*status.ManualOverrideUntil) {
-		return nil
-	}
 
+	focusKind := ""
+	stableSeconds := c.cfg.AutoStart.FocusedStableSeconds
 	focused := outcome.Relation == state.RelationFocused && outcome.Interaction == state.InteractionActive && outcome.ActivityValid && status.PrivacyState == state.PrivacyNormal && outcome.Classification.Confidence >= c.cfg.AutoStart.MinConfidence
 	if focused {
-		if c.focusedSince.IsZero() {
+		focusKind = "FOCUSED"
+	} else if c.cfg.AutoStart.AllowUnclassified &&
+		outcome.Relation == state.RelationUnknown &&
+		outcome.Interaction == state.InteractionActive &&
+		outcome.ActivityValid &&
+		status.PrivacyState == state.PrivacyNormal &&
+		strings.TrimSpace(status.Task) != "" &&
+		state.IsExplicitStudyActivity(outcome.Classification.Activity) {
+		focusKind = "UNCLASSIFIED_STUDY"
+		if stableSeconds < 180 {
+			stableSeconds = 180
+		}
+	}
+	if focusKind != "" {
+		if c.focusedSince.IsZero() || c.focusedKind != focusKind {
 			c.focusedSince = now
+			c.focusedKind = focusKind
 		}
 	} else {
 		c.focusedSince = time.Time{}
+		c.focusedKind = ""
 	}
 
-	if status.UserMode == state.UserModeStandby && c.cfg.AutoStart.Enabled && focused {
-		if now.Sub(c.focusedSince) >= time.Duration(c.cfg.AutoStart.FocusedStableSeconds)*time.Second {
+	if status.UserMode == state.UserModeStandby && c.cfg.AutoStart.Enabled && focusKind != "" && strings.TrimSpace(status.Task) != "" {
+		if now.Sub(c.focusedSince) >= time.Duration(stableSeconds)*time.Second {
 			c.lastTransition = now
-			return &state.AutomationIntent{Transition: state.AutomationStart, Task: strings.TrimSpace(status.Task)}
+			return &state.AutomationIntent{Transition: state.AutomationStart, Task: strings.TrimSpace(status.Task), Reason: state.PauseReasonNone, RequiresConfirmation: c.cfg.AutoStart.Confirm}
 		}
 	}
 
@@ -92,7 +116,7 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 			}
 			if now.Sub(c.lockedSince) >= time.Duration(c.cfg.AutoPause.LockedSeconds)*time.Second {
 				c.lastTransition = now
-				return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonLocked}
+				return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonLocked, RequiresConfirmation: c.cfg.AutoPause.Confirm}
 			}
 		} else {
 			c.lockedSince = time.Time{}
@@ -103,7 +127,7 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 			}
 			if now.Sub(c.staticSince) >= time.Duration(c.cfg.AutoPause.IdleStaticSeconds)*time.Second {
 				c.lastTransition = now
-				return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonIdle}
+				return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonIdle, RequiresConfirmation: c.cfg.AutoPause.Confirm}
 			}
 		} else {
 			c.staticSince = time.Time{}
@@ -113,7 +137,7 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 	if status.UserMode == state.UserModeBreak && status.ModeOrigin == state.ModeOriginAutomation && status.AutoResumeEligible && c.cfg.AutoResume.Enabled && focused {
 		if now.Sub(c.focusedSince) >= time.Duration(c.cfg.AutoResume.FocusedStableSeconds)*time.Second {
 			c.lastTransition = now
-			return &state.AutomationIntent{Transition: state.AutomationResume}
+			return &state.AutomationIntent{Transition: state.AutomationResume, Reason: state.PauseReasonNone}
 		}
 	}
 	return nil

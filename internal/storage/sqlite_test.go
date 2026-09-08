@@ -138,3 +138,48 @@ func TestIngestChatTurnIsIdempotentAndKeepsEligibilityFrozen(t *testing.T) {
 		t.Fatalf("observed_at=%v location=%v, want UTC representation of %v", loaded.ObservedAt, loaded.ObservedAt.Location(), observed)
 	}
 }
+
+func TestRestartDurationRepairIsIdempotent(t *testing.T) {
+	path := t.TempDir() + "/repair.db"
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 9, 8, 10, 0, 0, 0, time.Local)
+	ended := started.Add(2 * time.Minute)
+	if err := store.SaveSession(context.Background(), SessionRecord{ID: "old", Mode: "STUDY", Task: "Go", StartedAt: started, EndedAt: &ended, DurationSeconds: 120, EndReason: "RESTART_RECOVERY"}); err != nil {
+		t.Fatal(err)
+	}
+	current := ended.Add(2 * time.Second)
+	if err := store.SaveSession(context.Background(), SessionRecord{ID: "new", Mode: "STUDY", Task: "Go", StartedAt: current, DurationSeconds: 120}); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := store.db.QueryRow(`SELECT duration_seconds FROM sessions WHERE id = 'new'`)
+	var duration int64
+	if err := row.Scan(&duration); err != nil {
+		t.Fatal(err)
+	}
+	if duration != 0 {
+		t.Fatalf("repaired duration=%d, want 0", duration)
+	}
+	_ = store.Close()
+
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	row = store.db.QueryRow(`SELECT duration_seconds FROM sessions WHERE id = 'new'`)
+	if err := row.Scan(&duration); err != nil {
+		t.Fatal(err)
+	}
+	if duration != 0 {
+		t.Fatalf("second migration changed repaired duration=%d", duration)
+	}
+}

@@ -6,7 +6,7 @@ export const VALID_RELATIONS = ["FOCUSED", "DISTRACTED", "UNKNOWN"] as const;
 export const VALID_PRIVACY = ["NORMAL", "SENSITIVE"] as const;
 export const VALID_ACTIVITIES = [
   "CODING", "ALGORITHM", "READING", "WRITING", "WATCHING", "AI_ASSISTED",
-  "BROWSING", "GENERAL_STUDY", "UNKNOWN",
+  "BROWSING", "MESSAGING", "GAMING", "GENERAL_STUDY", "OTHER", "UNKNOWN",
 ] as const;
 export const VALID_PROGRESS_SIGNALS = ["OBSERVING", "READING", "PRACTICING", "CODING", "WRITING", "DEBUGGING", "REVIEWING", "UNKNOWN"] as const;
 export const VALID_SOURCE_KINDS = ["LOCAL_RULE", "TEXT_AI", "VISION_AI"] as const;
@@ -23,7 +23,10 @@ export type Activity =
   | "WATCHING"
   | "AI_ASSISTED"
   | "BROWSING"
+  | "MESSAGING"
+  | "GAMING"
   | "GENERAL_STUDY"
+  | "OTHER"
   | "UNKNOWN";
 export type ProgressSignal = typeof VALID_PROGRESS_SIGNALS[number];
 export type SourceKind = typeof VALID_SOURCE_KINDS[number];

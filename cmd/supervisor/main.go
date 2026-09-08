@@ -159,6 +159,7 @@ func main() {
 
 	server := api.NewServer(cfg, stateMgr)
 	server.SetAutomationSettings(automationSettings)
+	server.SetAutomationIntentManager(stateMgr)
 	server.SetStorage(store)
 	server.SetReminderSettings(reminderEng)
 	reviewService := review.NewService(store, time.Local, filepath.Join(filepath.Dir(targetDB), "reviews"))

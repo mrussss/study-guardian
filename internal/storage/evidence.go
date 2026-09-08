@@ -115,7 +115,7 @@ func (s *Storage) ListChatTurnsForDate(ctx context.Context, date string) ([]Chat
 }
 
 func (s *Storage) ListSemanticSnapshotsForDate(ctx context.Context, date string) ([]SemanticSnapshotRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, observed_at, local_date, task, app, title, domain, relation, confidence, activity, topic, subtopic, action, progress_signal, reason, source_kind, window_fingerprint, screen_hash, first_observed_at, last_observed_at, duration_seconds, stable_interval_seconds, metadata_json FROM semantic_snapshots WHERE local_date = ? ORDER BY observed_at, id`, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, observed_at, local_date, task, app, title, domain, relation, privacy, confidence, activity, topic, subtopic, action, progress_signal, reason, source_kind, window_fingerprint, screen_hash, first_observed_at, last_observed_at, duration_seconds, stable_interval_seconds, metadata_json FROM semantic_snapshots WHERE local_date = ? ORDER BY observed_at, id`, date)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +123,7 @@ func (s *Storage) ListSemanticSnapshotsForDate(ctx context.Context, date string)
 	var out []SemanticSnapshotRecord
 	for rows.Next() {
 		var record SemanticSnapshotRecord
-		if err := rows.Scan(&record.ID, &record.ObservedAt, &record.LocalDate, &record.Task, &record.App, &record.Title, &record.Domain, &record.Relation, &record.Confidence, &record.Activity, &record.Topic, &record.Subtopic, &record.Action, &record.ProgressSignal, &record.Reason, &record.SourceKind, &record.WindowFingerprint, &record.ScreenHash, &record.FirstObservedAt, &record.LastObservedAt, &record.DurationSeconds, &record.StableIntervalSeconds, &record.MetadataJSON); err != nil {
+		if err := rows.Scan(&record.ID, &record.ObservedAt, &record.LocalDate, &record.Task, &record.App, &record.Title, &record.Domain, &record.Relation, &record.Privacy, &record.Confidence, &record.Activity, &record.Topic, &record.Subtopic, &record.Action, &record.ProgressSignal, &record.Reason, &record.SourceKind, &record.WindowFingerprint, &record.ScreenHash, &record.FirstObservedAt, &record.LastObservedAt, &record.DurationSeconds, &record.StableIntervalSeconds, &record.MetadataJSON); err != nil {
 			return nil, err
 		}
 		out = append(out, record)

@@ -42,14 +42,17 @@ type ObservationRecord struct {
 }
 
 type ReminderRecord struct {
-	ID            string
-	CreatedAt     time.Time
-	LocalDate     string
-	Mode          string
-	Level         string
-	Message       string
-	Reason        string
-	CooldownUntil time.Time
+	ID                   string
+	CreatedAt            time.Time
+	LocalDate            string
+	Mode                 string
+	Level                string
+	Message              string
+	Reason               string
+	CooldownUntil        time.Time
+	ExpiresAt            time.Time
+	RelatedDistractionID string
+	Active               bool
 }
 
 func OpenSQLite(dbPath string) (*Storage, error) {
@@ -156,7 +159,10 @@ func (s *Storage) migrate() error {
 			level TEXT NOT NULL,
 			message TEXT NOT NULL,
 			reason TEXT NOT NULL,
-			cooldown_until TIMESTAMP NOT NULL
+			cooldown_until TIMESTAMP NOT NULL,
+			expires_at TIMESTAMP,
+			related_distraction_id TEXT NOT NULL DEFAULT '',
+			active BOOLEAN NOT NULL DEFAULT 1
 		);`,
 		`CREATE TABLE IF NOT EXISTS feedback (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,6 +315,7 @@ func (s *Storage) migrate() error {
 			title TEXT NOT NULL DEFAULT '',
 			domain TEXT NOT NULL DEFAULT '',
 			relation TEXT NOT NULL,
+			privacy TEXT NOT NULL DEFAULT 'NORMAL',
 			confidence REAL NOT NULL,
 			activity TEXT NOT NULL DEFAULT '',
 			topic TEXT NOT NULL DEFAULT '',
@@ -387,13 +394,123 @@ func (s *Storage) migrate() error {
 	if err := s.ensureSessionColumns(); err != nil {
 		return err
 	}
+	if err := s.repairRestartInheritedDurations(); err != nil {
+		return err
+	}
 	if err := s.ensureDistractionEventColumns(); err != nil {
 		return err
 	}
 	if err := s.ensureClassificationCacheColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureDailyReviewColumns(); err != nil {
+		return err
+	}
+	if err := s.ensureReminderColumns(); err != nil {
+		return err
+	}
 	return s.ensureDailyEvidenceDateColumns()
+}
+
+func (s *Storage) repairRestartInheritedDurations() error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS session_duration_repairs (
+		session_id TEXT PRIMARY KEY,
+		previous_session_id TEXT NOT NULL,
+		repaired_at TIMESTAMP NOT NULL
+	);`); err != nil {
+		return err
+	}
+
+	type row struct {
+		id, mode, task, endReason string
+		startedAt                 time.Time
+		endedAt                   *time.Time
+		duration                  int64
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT id, mode, task, started_at, ended_at, duration_seconds, end_reason FROM sessions ORDER BY started_at, id`)
+	if err != nil {
+		return err
+	}
+	var records []row
+	for rows.Next() {
+		var item row
+		if err := rows.Scan(&item.id, &item.mode, &item.task, &item.startedAt, &item.endedAt, &item.duration, &item.endReason); err != nil {
+			rows.Close()
+			return err
+		}
+		records = append(records, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for index := range records {
+		current := records[index]
+		previousIndex := -1
+		for candidate := index - 1; candidate >= 0; candidate-- {
+			previous := records[candidate]
+			if previous.endReason != "RESTART_RECOVERY" || previous.endedAt == nil ||
+				previous.mode != current.mode || previous.task != current.task ||
+				current.startedAt.Before(*previous.endedAt) ||
+				current.startedAt.Sub(*previous.endedAt) > 10*time.Minute {
+				continue
+			}
+			previousIndex = candidate
+			break
+		}
+		if previousIndex < 0 || current.duration <= 0 || records[previousIndex].duration <= 0 ||
+			current.duration < records[previousIndex].duration {
+			continue
+		}
+		var exists int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM session_duration_repairs WHERE session_id = ?`, current.id).Scan(&exists); err != nil {
+			return err
+		}
+		if exists != 0 {
+			continue
+		}
+		corrected := current.duration - records[previousIndex].duration
+		if _, err := tx.Exec(`UPDATE sessions SET duration_seconds = ? WHERE id = ?`, corrected, current.id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO session_duration_repairs(session_id, previous_session_id, repaired_at) VALUES(?,?,?)`, current.id, records[previousIndex].id, canonicalDBTime(time.Now())); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Storage) ensureReminderColumns() error {
+	columns := []struct{ name, definition string }{
+		{"expires_at", "TIMESTAMP"},
+		{"related_distraction_id", "TEXT NOT NULL DEFAULT ''"},
+		{"active", "BOOLEAN NOT NULL DEFAULT 1"},
+	}
+	for _, column := range columns {
+		if err := s.ensureColumn("reminders", column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Storage) ensureDailyReviewColumns() error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS evidence_revisions (
+		date TEXT PRIMARY KEY,
+		revision INTEGER NOT NULL DEFAULT 0,
+		updated_at TIMESTAMP NOT NULL
+	);`); err != nil {
+		return err
+	}
+	return s.ensureColumn(`daily_reviews`, `generated_evidence_revision`, `INTEGER NOT NULL DEFAULT 0`)
 }
 
 func (s *Storage) ensureSessionColumns() error {
@@ -412,6 +529,7 @@ func (s *Storage) ensureSessionColumns() error {
 
 func (s *Storage) ensureSemanticSnapshotColumns() error {
 	columns := []struct{ name, definition string }{
+		{"privacy", "TEXT NOT NULL DEFAULT 'NORMAL'"},
 		{"topic", "TEXT NOT NULL DEFAULT ''"},
 		{"subtopic", "TEXT NOT NULL DEFAULT ''"},
 		{"action", "TEXT NOT NULL DEFAULT ''"},
@@ -677,9 +795,24 @@ func (s *Storage) RecordReminder(ctx context.Context, rem ReminderRecord) error 
 	if rem.LocalDate == "" {
 		rem.LocalDate = LocalDate(rem.CreatedAt)
 	}
-	query := `INSERT INTO reminders (id, created_at, local_date, mode, level, message, reason, cooldown_until)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?);`
-	_, err := s.db.ExecContext(ctx, query, rem.ID, canonicalDBTime(rem.CreatedAt), rem.LocalDate, rem.Mode, rem.Level, rem.Message, rem.Reason, canonicalDBTime(rem.CooldownUntil))
+	if !rem.Active {
+		rem.Active = true
+	}
+	query := `INSERT INTO reminders (id, created_at, local_date, mode, level, message, reason, cooldown_until, expires_at, related_distraction_id, active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
+	var expires any
+	if !rem.ExpiresAt.IsZero() {
+		expires = canonicalDBTime(rem.ExpiresAt)
+	}
+	_, err := s.db.ExecContext(ctx, query, rem.ID, canonicalDBTime(rem.CreatedAt), rem.LocalDate, rem.Mode, rem.Level, rem.Message, rem.Reason, canonicalDBTime(rem.CooldownUntil), expires, rem.RelatedDistractionID, rem.Active)
+	return err
+}
+
+func (s *Storage) MarkReminderInactive(ctx context.Context, id string) error {
+	if id == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE reminders SET active = 0 WHERE id = ?`, id)
 	return err
 }
 
@@ -792,6 +925,7 @@ func (s *Storage) LoadOpenSession(ctx context.Context) (SessionRecord, error) {
 // could leave more than one open row after repeated restarts, so recovery must
 // clean up the full set rather than just the newest row.
 func (s *Storage) CloseOpenSessions(ctx context.Context, endedAt time.Time, reason string) error {
+	endedAt = canonicalDBTime(endedAt)
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE sessions SET ended_at = ?, end_reason = ? WHERE ended_at IS NULL`, endedAt, reason)
 	return err

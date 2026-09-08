@@ -222,6 +222,9 @@ func (t *Tracker) closeLocked(ctx context.Context, now time.Time, reason string)
 		if err := t.store.UpdateDistractionEvent(ctx, event); err != nil {
 			return err
 		}
+		if _, err := t.store.BumpEvidenceRevision(ctx, event.LocalDate, now); err != nil {
+			return err
+		}
 	}
 	t.current = nil
 	return nil

@@ -69,10 +69,12 @@ type Manager struct {
 	lastTickTime   time.Time
 	lastActivityAt *time.Time
 
-	activityWatchOK bool
-	screenSensorOK  bool
-	currentReminder *ReminderEvent
-	feedbacks       []FeedbackRecord
+	activityWatchOK         bool
+	screenSensorOK          bool
+	currentReminder         *ReminderEvent
+	reminderRecoverySince   time.Time
+	pendingAutomationIntent *AutomationIntent
+	feedbacks               []FeedbackRecord
 
 	toastNotifier func(title, msg string) error
 }
@@ -133,7 +135,10 @@ func NewPersistentManager(
 				case UserModeStandby, UserModeStudy, UserModeBreak, UserModeOff:
 					m.userMode = UserMode(openSess.Mode)
 					m.task = openSess.Task
-					m.currentModeSeconds = openSess.DurationSeconds
+					// The interrupted row owns the last persisted duration. A
+					// new post-restart session starts at zero; inheriting this
+					// value would double-count every restart in review aggregates.
+					m.currentModeSeconds = 0
 					if openSess.ModeOrigin != "" {
 						m.modeOrigin = ModeOrigin(openSess.ModeOrigin)
 					}
@@ -155,7 +160,7 @@ func NewPersistentManager(
 			Mode:               string(m.userMode),
 			Task:               m.task,
 			StartedAt:          now,
-			DurationSeconds:    m.currentModeSeconds,
+			DurationSeconds:    0,
 			ModeOrigin:         string(m.modeOrigin),
 			PauseReason:        string(m.pauseReason),
 			AutoResumeEligible: m.autoResumeEligible,
@@ -188,28 +193,70 @@ func (m *Manager) SetToastNotifier(fn func(title, msg string) error) {
 	m.toastNotifier = fn
 }
 
-func (m *Manager) GetStatus() SystemStatus {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+const reminderRecoveryStableFor = 20 * time.Second
 
+func (m *Manager) clearCurrentReminderLocked() {
+	if m.currentReminder != nil && m.storage != nil {
+		_ = m.storage.MarkReminderInactive(context.Background(), m.currentReminder.ID)
+	}
+	m.currentReminder = nil
+	m.reminderRecoverySince = time.Time{}
+}
+
+func (m *Manager) clearExpiredReminderLocked(now time.Time) {
+	if m.currentReminder == nil {
+		return
+	}
+	if !m.currentReminder.ExpiresAt.IsZero() && !now.Before(m.currentReminder.ExpiresAt) {
+		m.clearCurrentReminderLocked()
+	}
+}
+
+func (m *Manager) clearRecoveredReminderLocked(now time.Time) {
+	m.clearExpiredReminderLocked(now)
+	if m.currentReminder == nil {
+		return
+	}
+	recovered := m.userMode == UserModeStudy && m.activityWatchOK && m.privacy == PrivacyNormal && m.interaction == InteractionActive && m.relation == RelationFocused && m.confidence >= 0.6
+	if !recovered {
+		m.reminderRecoverySince = time.Time{}
+		return
+	}
+	if m.reminderRecoverySince.IsZero() {
+		m.reminderRecoverySince = now
+		return
+	}
+	if now.Sub(m.reminderRecoverySince) >= reminderRecoveryStableFor {
+		m.clearCurrentReminderLocked()
+	}
+}
+
+func (m *Manager) GetStatus() SystemStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.clock.Now()
+	m.clearExpiredAutomationIntentLocked(now)
+	m.clearExpiredReminderLocked(now)
+	pending := cloneAutomationIntent(m.pendingAutomationIntent)
 	return SystemStatus{
-		UserMode:            m.userMode,
-		InteractionState:    m.interaction,
-		TaskRelation:        m.relation,
-		PrivacyState:        m.privacy,
-		Confidence:          m.confidence,
-		Task:                m.task,
-		StudySeconds:        m.studySeconds,
-		BreakSeconds:        m.breakSeconds,
-		ActiveSeconds:       m.activeSeconds,
-		LastActivityAt:      m.lastActivityAt,
-		ActivityWatchOK:     m.activityWatchOK,
-		ScreenSensorOK:      m.screenSensorOK,
-		CurrentReminder:     m.currentReminder,
-		ModeOrigin:          m.modeOrigin,
-		PauseReason:         m.pauseReason,
-		AutoResumeEligible:  m.autoResumeEligible,
-		ManualOverrideUntil: m.manualOverrideUntil,
+		UserMode:                m.userMode,
+		InteractionState:        m.interaction,
+		TaskRelation:            m.relation,
+		PrivacyState:            m.privacy,
+		Confidence:              m.confidence,
+		Task:                    m.task,
+		StudySeconds:            m.studySeconds,
+		BreakSeconds:            m.breakSeconds,
+		ActiveSeconds:           m.activeSeconds,
+		LastActivityAt:          m.lastActivityAt,
+		ActivityWatchOK:         m.activityWatchOK,
+		ScreenSensorOK:          m.screenSensorOK,
+		CurrentReminder:         m.currentReminder,
+		ModeOrigin:              m.modeOrigin,
+		PauseReason:             m.pauseReason,
+		AutoResumeEligible:      m.autoResumeEligible,
+		ManualOverrideUntil:     m.manualOverrideUntil,
+		PendingAutomationIntent: pending,
 	}
 }
 
@@ -240,7 +287,8 @@ func (m *Manager) SetModeStudy(task string) error {
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
 	m.currentModeSeconds = 0
-	m.currentReminder = nil
+	m.clearCurrentReminderLocked()
+	m.pendingAutomationIntent = nil
 	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
@@ -279,7 +327,8 @@ func (m *Manager) SetModeBreak() error {
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
 	m.currentModeSeconds = 0
-	m.currentReminder = nil
+	m.clearCurrentReminderLocked()
+	m.pendingAutomationIntent = nil
 	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
@@ -314,7 +363,8 @@ func (m *Manager) SetModeOff() error {
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
 	m.currentModeSeconds = 0
-	m.currentReminder = nil
+	m.clearCurrentReminderLocked()
+	m.pendingAutomationIntent = nil
 	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
@@ -333,8 +383,12 @@ func (m *Manager) SetModeOff() error {
 
 func (m *Manager) setManualOverrideLocked(now time.Time) {
 	minutes := 30
-	if m.cfg != nil && m.cfg.Automation.ManualOverrideMinutes > 0 {
+	if m.cfg != nil {
 		minutes = m.cfg.Automation.ManualOverrideMinutes
+	}
+	if minutes <= 0 {
+		m.manualOverrideUntil = nil
+		return
 	}
 	deadline := now.Add(time.Duration(minutes) * time.Minute)
 	m.manualOverrideUntil = &deadline
@@ -344,12 +398,93 @@ func (m *Manager) setManualOverrideLocked(now time.Time) {
 // controller changes mode. It runs after TickWithClassification has released
 // the manager mutex, so classification and time accounting never recurse into
 // a mode transition while the manager is locked.
+func cloneAutomationIntent(intent *AutomationIntent) *AutomationIntent {
+	if intent == nil {
+		return nil
+	}
+	copy := *intent
+	return &copy
+}
+
+func (m *Manager) clearExpiredAutomationIntentLocked(now time.Time) {
+	if m.pendingAutomationIntent != nil && !m.pendingAutomationIntent.ExpiresAt.IsZero() && !now.Before(m.pendingAutomationIntent.ExpiresAt) {
+		m.pendingAutomationIntent = nil
+	}
+}
+
+func (m *Manager) PendingAutomationIntent() *AutomationIntent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearExpiredAutomationIntentLocked(m.clock.Now())
+	return cloneAutomationIntent(m.pendingAutomationIntent)
+}
+
+func (m *Manager) AcceptAutomationIntent(id string) error {
+	m.mu.Lock()
+	m.clearExpiredAutomationIntentLocked(m.clock.Now())
+	if m.pendingAutomationIntent == nil || (id != "" && m.pendingAutomationIntent.ID != id) {
+		m.mu.Unlock()
+		return errors.New("automation intent is not pending")
+	}
+	intent := *m.pendingAutomationIntent
+	m.pendingAutomationIntent = nil
+	intent.RequiresConfirmation = false
+	m.mu.Unlock()
+	return m.applyAutomationIntentNow(intent)
+}
+
+func (m *Manager) RejectAutomationIntent(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearExpiredAutomationIntentLocked(m.clock.Now())
+	if m.pendingAutomationIntent == nil || (id != "" && m.pendingAutomationIntent.ID != id) {
+		return errors.New("automation intent is not pending")
+	}
+	m.pendingAutomationIntent = nil
+	return nil
+}
+
+// ApplyAutomationIntent either applies an intent immediately or records a
+// short-lived pending intent when the configured UI confirmation is required.
 func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
+	if intent.RequiresConfirmation {
+		m.mu.Lock()
+		now := m.clock.Now()
+		m.clearExpiredAutomationIntentLocked(now)
+		if m.pendingAutomationIntent != nil {
+			m.mu.Unlock()
+			return nil
+		}
+		if intent.ID == "" {
+			intent.ID = fmt.Sprintf("intent-%d", now.UnixNano())
+		}
+		if intent.CreatedAt.IsZero() {
+			intent.CreatedAt = now
+		}
+		if intent.ExpiresAt.IsZero() {
+			intent.ExpiresAt = now.Add(15 * time.Second)
+		}
+		m.pendingAutomationIntent = &intent
+		notifier := m.toastNotifier
+		m.mu.Unlock()
+		if notifier != nil {
+			message := "检测到持续学习，是否开始计时？"
+			if intent.Transition == AutomationPause {
+				message = "检测到你可能已离开，是否暂停计时？"
+			}
+			_ = notifier("StudyGuardian", message)
+		}
+		return nil
+	}
+	return m.applyAutomationIntentNow(intent)
+}
+
+func (m *Manager) applyAutomationIntentNow(intent AutomationIntent) error {
 	m.mu.Lock()
 	now := m.clock.Now()
-	if m.manualOverrideUntil != nil && now.Before(*m.manualOverrideUntil) {
+	if intent.Transition == AutomationStart && m.manualOverrideUntil != nil && now.Before(*m.manualOverrideUntil) {
 		m.mu.Unlock()
-		return errors.New("manual override is active")
+		return errors.New("manual override is active for automatic start")
 	}
 	m.checkMidnightResetLocked(now)
 	notice := ""
@@ -359,11 +494,13 @@ func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
 			m.mu.Unlock()
 			return errors.New("automatic start requires STANDBY")
 		}
+		if strings.TrimSpace(intent.Task) == "" {
+			m.mu.Unlock()
+			return errors.New("automatic start requires a task")
+		}
 		m.closeCurrentSessionLocked(now, "AUTOMATION_START")
 		m.userMode = UserModeStudy
-		if strings.TrimSpace(intent.Task) != "" {
-			m.task = strings.Join(strings.Fields(intent.Task), " ")
-		}
+		m.task = strings.Join(strings.Fields(intent.Task), " ")
 		m.modeOrigin, m.pauseReason, m.autoResumeEligible = ModeOriginAutomation, PauseReasonNone, false
 		notice = "检测到持续学习，已开始计时"
 	case AutomationPause:
@@ -374,6 +511,7 @@ func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
 		m.closeCurrentSessionLocked(now, "AUTOMATION_PAUSE")
 		m.userMode = UserModeBreak
 		m.modeOrigin, m.pauseReason, m.autoResumeEligible = ModeOriginAutomation, intent.Reason, true
+		m.manualOverrideUntil = nil
 		notice = "已离开学习，计时已自动暂停。"
 	case AutomationResume:
 		if m.userMode != UserModeBreak || m.modeOrigin != ModeOriginAutomation || !m.autoResumeEligible {
@@ -392,7 +530,7 @@ func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
 	m.currentModeSeconds = 0
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
-	m.currentReminder = nil
+	m.clearCurrentReminderLocked()
 	m.currentSessID = newSessionID(now)
 	var saveErr error
 	if m.storage != nil {
@@ -564,6 +702,11 @@ func (m *Manager) TickWithClassification(
 		m.distractedSeconds = 0
 	}
 
+	// 8. A reminder remains visible only until it expires or the user has
+	// recovered a stable focused/healthy state. Recovery uses the same state
+	// semantics as supervision and does not depend on a second wall clock.
+	m.clearRecoveredReminderLocked(now)
+
 	// 8. Reminder Engine Evaluation
 	if m.reminderEng != nil {
 		rem := m.reminderEng.Evaluate(ReminderDecisionInput{
@@ -581,16 +724,32 @@ func (m *Manager) TickWithClassification(
 			IdleStaticSeconds: m.idleStaticSeconds,
 		})
 		if rem != nil {
+			if rem.ExpiresAt.IsZero() {
+				cooldown := 10 * time.Minute
+				if m.cfg != nil && m.cfg.Reminder.CooldownMinutes > 0 {
+					cooldown = time.Duration(m.cfg.Reminder.CooldownMinutes) * time.Minute
+				}
+				rem.ExpiresAt = now.Add(cooldown)
+			}
+			rem.Active = true
 			m.currentReminder = rem
+			m.reminderRecoverySince = time.Time{}
 			if m.storage != nil {
+				cooldown := 10 * time.Minute
+				if m.cfg != nil && m.cfg.Reminder.CooldownMinutes > 0 {
+					cooldown = time.Duration(m.cfg.Reminder.CooldownMinutes) * time.Minute
+				}
 				_ = m.storage.RecordReminder(context.Background(), storage.ReminderRecord{
-					ID:            rem.ID,
-					CreatedAt:     rem.CreatedAt,
-					Mode:          string(m.userMode),
-					Level:         string(rem.Level),
-					Message:       rem.Message,
-					Reason:        rem.Reason,
-					CooldownUntil: now.Add(time.Duration(m.cfg.Reminder.CooldownMinutes) * time.Minute),
+					ID:                   rem.ID,
+					CreatedAt:            rem.CreatedAt,
+					Mode:                 string(m.userMode),
+					Level:                string(rem.Level),
+					Message:              rem.Message,
+					Reason:               rem.Reason,
+					CooldownUntil:        now.Add(cooldown),
+					ExpiresAt:            rem.ExpiresAt,
+					RelatedDistractionID: rem.RelatedDistractionID,
+					Active:               true,
 				})
 			}
 			if m.toastNotifier != nil {
@@ -656,7 +815,7 @@ func (m *Manager) checkMidnightResetLocked(now time.Time) {
 		m.distractedSeconds = 0
 		m.idleStaticSeconds = 0
 		m.currentModeSeconds = 0
-		m.currentReminder = nil
+		m.clearCurrentReminderLocked()
 		m.modeOrigin = ModeOriginManual
 		m.pauseReason = PauseReasonNone
 		m.autoResumeEligible = false
@@ -679,7 +838,7 @@ func (m *Manager) checkMidnightResetLocked(now time.Time) {
 
 func (m *Manager) closeCurrentSessionLocked(now time.Time, reason string) {
 	if m.currentSessID != "" && m.storage != nil {
-		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
+		if err := m.storage.SaveSession(context.Background(), storage.SessionRecord{
 			ID:                 m.currentSessID,
 			Mode:               string(m.userMode),
 			Task:               m.task,
@@ -690,6 +849,8 @@ func (m *Manager) closeCurrentSessionLocked(now time.Time, reason string) {
 			ModeOrigin:         string(m.modeOrigin),
 			PauseReason:        string(m.pauseReason),
 			AutoResumeEligible: m.autoResumeEligible,
-		})
+		}); err == nil && m.userMode == UserModeStudy {
+			_, _ = m.storage.BumpEvidenceRevision(context.Background(), storage.LocalDate(m.modeStartTime), now)
+		}
 	}
 }

@@ -1,6 +1,9 @@
 package state
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type UserMode string
 
@@ -37,9 +40,13 @@ const (
 )
 
 type AutomationIntent struct {
-	Transition AutomationTransition
-	Task       string
-	Reason     PauseReason
+	ID                   string               `json:"intent_id"`
+	Transition           AutomationTransition `json:"transition"`
+	Task                 string               `json:"task,omitempty"`
+	Reason               PauseReason          `json:"reason"`
+	CreatedAt            time.Time            `json:"created_at"`
+	ExpiresAt            time.Time            `json:"expires_at"`
+	RequiresConfirmation bool                 `json:"requires_confirmation"`
 }
 
 type InteractionState string
@@ -74,6 +81,19 @@ const (
 	SourceKindTextAI    = "TEXT_AI"
 	SourceKindVisionAI  = "VISION_AI"
 
+	ActivityCoding       = "CODING"
+	ActivityAlgorithm    = "ALGORITHM"
+	ActivityReading      = "READING"
+	ActivityWriting      = "WRITING"
+	ActivityWatching     = "WATCHING"
+	ActivityAIAssisted   = "AI_ASSISTED"
+	ActivityBrowsing     = "BROWSING"
+	ActivityMessaging    = "MESSAGING"
+	ActivityGaming       = "GAMING"
+	ActivityGeneralStudy = "GENERAL_STUDY"
+	ActivityOther        = "OTHER"
+	ActivityUnknown      = "UNKNOWN"
+
 	ProgressObserving  = "OBSERVING"
 	ProgressReading    = "READING"
 	ProgressPracticing = "PRACTICING"
@@ -83,6 +103,66 @@ const (
 	ProgressReviewing  = "REVIEWING"
 	ProgressUnknown    = "UNKNOWN"
 )
+
+// NormalizeActivity is the single boundary for provider and local-rule
+// activity values. Free-form provider text is reduced to a bounded enum
+// before it can enter cache, semantic evidence, or the UI.
+func NormalizeActivity(raw string) (string, bool) {
+	value := strings.ToUpper(strings.TrimSpace(raw))
+	value = strings.NewReplacer("-", "_", " ", "_", "/", "_").Replace(value)
+	switch value {
+	case ActivityCoding, "PROGRAMMING", "DEVELOPMENT":
+		return ActivityCoding, true
+	case ActivityAlgorithm, "PROBLEM_SOLVING", "PROBLEM_SOLVING_ALGORITHM":
+		return ActivityAlgorithm, true
+	case ActivityReading, "READ", "READING_DOCUMENTATION":
+		return ActivityReading, true
+	case ActivityWriting, "WRITE", "DOCUMENTATION_WRITING":
+		return ActivityWriting, true
+	case ActivityWatching, "VIDEO", "WATCHING_VIDEO":
+		return ActivityWatching, true
+	case ActivityAIAssisted, "AI", "AI_ASSIST":
+		return ActivityAIAssisted, true
+	case ActivityBrowsing, "BROWSER", "WEB_BROWSING":
+		return ActivityBrowsing, true
+	case ActivityMessaging, "MESSAGING_CHAT", "CHAT", "SOCIAL_CHAT":
+		return ActivityMessaging, true
+	case ActivityGaming, "GAME", "ENTERTAINMENT", "PLAYING":
+		return ActivityGaming, true
+	case ActivityGeneralStudy, "STUDY", "LEARNING", "STUDYING":
+		return ActivityGeneralStudy, true
+	case ActivityUnknown, "UNCLASSIFIED", "UNKNOWABLE":
+		return ActivityUnknown, true
+	case ActivityOther, "MISC", "MISCELLANEOUS":
+		return ActivityOther, true
+	}
+	lower := strings.ToLower(strings.TrimSpace(raw))
+	switch {
+	case strings.Contains(lower, "brows"), strings.Contains(lower, "浏览"):
+		return ActivityBrowsing, false
+	case strings.Contains(lower, "wechat"), strings.Contains(lower, "微信"), strings.Contains(lower, "messag"), strings.Contains(lower, "chat"):
+		return ActivityMessaging, false
+	case strings.Contains(lower, "steam"), strings.Contains(lower, "game"), strings.Contains(lower, "gaming"), strings.Contains(lower, "游戏"):
+		return ActivityGaming, false
+	case strings.Contains(lower, "code"), strings.Contains(lower, "编程"):
+		return ActivityCoding, false
+	case strings.Contains(lower, "read"), strings.Contains(lower, "阅读"):
+		return ActivityReading, false
+	case strings.Contains(lower, "writ"), strings.Contains(lower, "写作"):
+		return ActivityWriting, false
+	}
+	return ActivityOther, false
+}
+
+func IsExplicitStudyActivity(activity string) bool {
+	normalized, _ := NormalizeActivity(activity)
+	switch normalized {
+	case ActivityCoding, ActivityAlgorithm, ActivityReading, ActivityWriting, ActivityAIAssisted, ActivityGeneralStudy:
+		return true
+	default:
+		return false
+	}
+}
 
 type Observation struct {
 	Interaction InteractionState `json:"interaction"`
@@ -103,11 +183,14 @@ const (
 )
 
 type ReminderEvent struct {
-	ID        string        `json:"id"`
-	Level     ReminderLevel `json:"level"`
-	Message   string        `json:"message"`
-	Reason    string        `json:"reason"`
-	CreatedAt time.Time     `json:"created_at"`
+	ID                   string        `json:"id"`
+	Level                ReminderLevel `json:"level"`
+	Message              string        `json:"message"`
+	Reason               string        `json:"reason"`
+	CreatedAt            time.Time     `json:"created_at"`
+	ExpiresAt            time.Time     `json:"expires_at,omitempty"`
+	RelatedDistractionID string        `json:"related_distraction_id,omitempty"`
+	Active               bool          `json:"active"`
 }
 
 type FeedbackRecord struct {
@@ -160,21 +243,22 @@ type TickOutcome struct {
 }
 
 type SystemStatus struct {
-	UserMode            UserMode         `json:"user_mode"`
-	InteractionState    InteractionState `json:"interaction_state"`
-	TaskRelation        TaskRelation     `json:"task_relation"`
-	PrivacyState        PrivacyState     `json:"privacy_state"`
-	Confidence          float64          `json:"confidence"`
-	Task                string           `json:"task"`
-	StudySeconds        int64            `json:"study_seconds"`
-	BreakSeconds        int64            `json:"break_seconds"`
-	ActiveSeconds       int64            `json:"active_seconds"`
-	LastActivityAt      *time.Time       `json:"last_activity_at,omitempty"`
-	ActivityWatchOK     bool             `json:"activitywatch_ok"`
-	ScreenSensorOK      bool             `json:"screen_sensor_ok"`
-	CurrentReminder     *ReminderEvent   `json:"current_reminder,omitempty"`
-	ModeOrigin          ModeOrigin       `json:"mode_origin"`
-	PauseReason         PauseReason      `json:"pause_reason"`
-	AutoResumeEligible  bool             `json:"auto_resume_eligible"`
-	ManualOverrideUntil *time.Time       `json:"manual_override_until,omitempty"`
+	UserMode                UserMode          `json:"user_mode"`
+	InteractionState        InteractionState  `json:"interaction_state"`
+	TaskRelation            TaskRelation      `json:"task_relation"`
+	PrivacyState            PrivacyState      `json:"privacy_state"`
+	Confidence              float64           `json:"confidence"`
+	Task                    string            `json:"task"`
+	StudySeconds            int64             `json:"study_seconds"`
+	BreakSeconds            int64             `json:"break_seconds"`
+	ActiveSeconds           int64             `json:"active_seconds"`
+	LastActivityAt          *time.Time        `json:"last_activity_at,omitempty"`
+	ActivityWatchOK         bool              `json:"activitywatch_ok"`
+	ScreenSensorOK          bool              `json:"screen_sensor_ok"`
+	CurrentReminder         *ReminderEvent    `json:"current_reminder,omitempty"`
+	ModeOrigin              ModeOrigin        `json:"mode_origin"`
+	PauseReason             PauseReason       `json:"pause_reason"`
+	AutoResumeEligible      bool              `json:"auto_resume_eligible"`
+	ManualOverrideUntil     *time.Time        `json:"manual_override_until,omitempty"`
+	PendingAutomationIntent *AutomationIntent `json:"pending_automation_intent,omitempty"`
 }

@@ -862,6 +862,24 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
     if let Some(auto_resume_eligible) = object.get("auto_resume_eligible").and_then(Value::as_bool) {
         output["auto_resume_eligible"] = json!(auto_resume_eligible);
     }
+    if let Some(intent) = object.get("pending_automation_intent").and_then(Value::as_object) {
+        let transition = enum_field(intent, "transition", &["AUTO_START", "AUTO_PAUSE", "AUTO_RESUME"])?;
+        let reason = enum_field(intent, "reason", &["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"])?;
+        let intent_id = text_field(intent, "intent_id", 128)?;
+        let created_at = text_field(intent, "created_at", 128)?;
+        let expires_at = text_field(intent, "expires_at", 128)?;
+        let task = optional_text_field(intent, "task", 256)?.unwrap_or_default();
+        let requires_confirmation = bool_field(intent, "requires_confirmation")?;
+        output["pending_automation_intent"] = json!({
+            "intent_id": intent_id,
+            "transition": transition,
+            "reason": reason,
+            "task": task,
+            "created_at": created_at,
+            "expires_at": expires_at,
+            "requires_confirmation": requires_confirmation,
+        });
+    }
     Ok(output)
 }
 
@@ -1537,7 +1555,7 @@ struct AutomationResumeInput { enabled: bool, focused_stable_seconds: i64 }
 struct AutomationSettingsInput { enabled: bool, auto_start: AutomationStartInput, auto_pause: AutomationPauseInput, auto_resume: AutomationResumeInput, transition_cooldown_seconds: i64, manual_override_minutes: i64 }
 
 fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value, NativeErrorKind> {
-    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("PUT", "/v1/settings/automation") | ("POST", "/v1/settings/ai/test") | ("POST", "/v1/settings/ai/proxy/test") | ("POST", "/v1/review/generate"));
+    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("PUT", "/v1/settings/automation") | ("POST", "/v1/settings/ai/test") | ("POST", "/v1/settings/ai/proxy/test") | ("POST", "/v1/review/generate") | ("POST", "/v1/automation/pending/accept") | ("POST", "/v1/automation/pending/reject"));
     if !allowed { return Err(NativeErrorKind::Rejected); }
     let (host, port, token) = supervisor_credentials()?;
     if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
@@ -1556,6 +1574,31 @@ fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value,
         if status != 200 && status != 502 { classify_control_status(status)?; }
     } else { classify_control_status(status)?; }
     serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
+}
+
+fn automation_decision_request(path: &'static str, intent_id: String) -> SupervisorControlResult {
+    if intent_id.len() > 128 || intent_id.chars().any(|ch| ch == '\r' || ch == '\n') {
+        return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
+    }
+    let body = serde_json::to_vec(&json!({ "intent_id": intent_id })).unwrap_or_default();
+    match ai_supervisor_request("POST", path, &body) {
+        Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
+        Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+    }
+}
+
+#[tauri::command]
+async fn supervisor_accept_automation_intent(intent_id: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || automation_decision_request("/v1/automation/pending/accept", intent_id))
+        .await
+        .unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+}
+
+#[tauri::command]
+async fn supervisor_reject_automation_intent(intent_id: String) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || automation_decision_request("/v1/automation/pending/reject", intent_id))
+        .await
+        .unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
 }
 
 #[tauri::command]
@@ -2019,6 +2062,8 @@ pub fn run() {
             supervisor_set_reminder_settings,
             supervisor_save_ai_settings,
             supervisor_save_automation_settings,
+            supervisor_accept_automation_intent,
+            supervisor_reject_automation_intent,
             supervisor_put_ai_secret,
             supervisor_delete_ai_secret,
             supervisor_test_ai_connection,
