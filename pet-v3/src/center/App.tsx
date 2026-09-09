@@ -38,6 +38,7 @@ import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
 import { HelpDrawer } from "../shared/HelpDrawer";
 import { AutomationIntentPrompt } from "../shared/AutomationIntentPrompt";
+import { automationDecisionNotice } from "../shared/automation-intent";
 import { FocusClock } from "./FocusClock";
 import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeAutomationIntent, NativeAutomationSettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
@@ -177,8 +178,8 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
     const result = accept
       ? await control.acceptAutomationIntent?.(pending.intent_id)
       : await control.rejectAutomationIntent?.(pending.intent_id);
-    setTaskNotice(result?.ok ? (accept ? "已接受自动转场" : "已拒绝自动转场") : "自动转场响应失败");
-    await onRefresh?.();
+    const refreshedSnapshot = await onRefresh?.();
+    setTaskNotice(automationDecisionNotice(pending, accept, result, refreshedSnapshot));
     setAutomationBusy(false);
   };
   return <div className="dashboard-page">
@@ -744,8 +745,8 @@ function AutomationSettingsCard({ settings: source, pending, onRefresh }: { sett
     setPendingBusy(true);
     const control = getSupervisorControlAdapter();
     const result = accept ? await control.acceptAutomationIntent?.(pending.intent_id) : await control.rejectAutomationIntent?.(pending.intent_id);
-    setNotice(result?.ok ? (accept ? "已接受自动转场" : "已拒绝自动转场") : "自动转场响应失败");
-    await onRefresh?.();
+    const refreshedSnapshot = await onRefresh?.();
+    setNotice(automationDecisionNotice(pending, accept, result, refreshedSnapshot));
     setPendingBusy(false);
   };
   const save = async (): Promise<void> => {

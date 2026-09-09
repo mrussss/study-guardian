@@ -563,9 +563,18 @@ func TestExpiredAutomationIntentIsExactlyOnceAcrossProcessAndAccept(t *testing.T
 	wg.Wait()
 	close(results)
 
-	for range results {
-		// One caller claims the intent; the other may observe the already
-		// consumed intent. The session count below proves the transition ran once.
+	knownConsumedError := 0
+	for err := range results {
+		if err == nil {
+			continue
+		}
+		if err.Error() != "automation intent is not pending" {
+			t.Fatalf("unexpected concurrent decision error: %v", err)
+		}
+		knownConsumedError++
+	}
+	if knownConsumedError > 1 {
+		t.Fatalf("both concurrent callers reported a consumed intent: %d", knownConsumedError)
 	}
 	if got := mgr.GetStatus(); got.UserMode != UserModeBreak || got.PendingAutomationIntent != nil {
 		t.Fatalf("race status=%+v", got)

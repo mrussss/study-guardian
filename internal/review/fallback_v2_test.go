@@ -117,9 +117,36 @@ func TestFallbackBoundsDurationsToCanonicalStudyState(t *testing.T) {
 			t.Fatalf("markdown missing %q:\n%s", want, markdown)
 		}
 	}
-	for _, forbidden := range []string{"有效专注：10m", "Go — 4m"} {
+	for _, forbidden := range []string{"有效专注：10m", "有效专注 10m", "Go — 4m"} {
 		if strings.Contains(markdown, forbidden) {
 			t.Fatalf("markdown violates duration invariant with %q:\n%s", forbidden, markdown)
 		}
+	}
+}
+
+func TestFallbackCapsCombinedTaskInvestmentToCanonicalStudyState(t *testing.T) {
+	bundle := evidence.DailyEvidenceBundle{
+		Date:       "2026-09-08",
+		DailyState: evidence.DailyStateSummary{StudySeconds: 120},
+		Quality:    evidence.EvidenceQuality{StudyStatePresent: true},
+		Sessions: []evidence.SessionSummary{
+			{Ref: "session:go", Mode: "STUDY", Task: "Go", StartedAt: time.Date(2026, 9, 8, 10, 0, 0, 0, time.Local), DurationSeconds: 100},
+			{Ref: "session:algo", Mode: "STUDY", Task: "算法", StartedAt: time.Date(2026, 9, 8, 11, 0, 0, 0, time.Local), DurationSeconds: 100},
+		},
+	}
+	tasks := rankTasks(bundle)
+	var total int64
+	for _, task := range tasks {
+		total += task.Seconds
+	}
+	if total != 120 || tasks[0].Seconds != 100 || tasks[1].Seconds != 20 {
+		t.Fatalf("bounded tasks=%+v total=%d, want 100+20=120", tasks, total)
+	}
+	markdown := RenderMarkdown(BuildFallback(bundle), bundle)
+	if !strings.Contains(markdown, "task_duration_mismatch") {
+		t.Fatalf("markdown missing task duration warning:\n%s", markdown)
+	}
+	if strings.Contains(markdown, "算法 — 2m") {
+		t.Fatalf("markdown contains uncapped secondary task:\n%s", markdown)
 	}
 }

@@ -52,8 +52,11 @@ func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
 		doc.TomorrowPriority = "先选择一个明确学习任务，再完成一个可验证的小步骤。"
 	}
 
-	if bundle.Quality.StudyStatePresent && bundle.Motivation.CreditedFocusSeconds > bundle.DailyState.StudySeconds {
-		doc.Warnings = append(doc.Warnings, "focus_duration_mismatch")
+	if focusDurationMismatch(bundle) {
+		doc.Warnings = appendWarning(doc.Warnings, "focus_duration_mismatch")
+	}
+	if taskDurationMismatch(bundle) {
+		doc.Warnings = appendWarning(doc.Warnings, "task_duration_mismatch")
 	}
 	seen := make(map[string]bool)
 	addTopic := func(name, summary, ref string, confidence float64) {
@@ -174,7 +177,7 @@ func fallbackHeadline(bundle evidence.DailyEvidenceBundle, tasks []taskInvestmen
 	return "今天尚无足够的学习记录"
 }
 
-func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
+func rankTasksUnbounded(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 	byKey := map[string]*taskInvestment{}
 	sessionKeys := map[string]bool{}
 	for _, session := range bundle.Sessions {
@@ -269,9 +272,6 @@ func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 	}
 	items := make([]taskInvestment, 0, len(byKey))
 	for _, item := range byKey {
-		if (bundle.Quality.StudyStatePresent || bundle.Quality.SessionDurationMismatch) && item.Seconds > bundle.DailyState.StudySeconds {
-			item.Seconds = max64(bundle.DailyState.StudySeconds, 0)
-		}
 		items = append(items, *item)
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -280,10 +280,60 @@ func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 		}
 		return items[i].LastAt.After(items[j].LastAt)
 	})
+	return items
+}
+
+func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
+	items := rankTasksUnbounded(bundle)
+	if limit, bounded := canonicalStudyLimit(bundle); bounded {
+		remaining := limit
+		for index := range items {
+			if items[index].Seconds < 0 {
+				items[index].Seconds = 0
+			}
+			if items[index].Seconds > remaining {
+				items[index].Seconds = remaining
+			}
+			remaining = max64(remaining-items[index].Seconds, 0)
+		}
+	}
 	if len(items) > 5 {
 		items = items[:5]
 	}
 	return items
+}
+
+func canonicalStudyLimit(bundle evidence.DailyEvidenceBundle) (int64, bool) {
+	if !bundle.Quality.StudyStatePresent && !bundle.Quality.SessionDurationMismatch {
+		return 0, false
+	}
+	return max64(bundle.DailyState.StudySeconds, 0), true
+}
+
+func focusDurationMismatch(bundle evidence.DailyEvidenceBundle) bool {
+	limit, bounded := canonicalStudyLimit(bundle)
+	return bounded && max64(bundle.Motivation.CreditedFocusSeconds, 0) > limit
+}
+
+func taskDurationMismatch(bundle evidence.DailyEvidenceBundle) bool {
+	limit, bounded := canonicalStudyLimit(bundle)
+	if !bounded {
+		return false
+	}
+	var total int64
+	for _, item := range rankTasksUnbounded(bundle) {
+		total += max64(item.Seconds, 0)
+	}
+	return total > limit
+}
+
+func appendWarning(warnings []string, warning string) []string {
+	for _, existing := range warnings {
+		if existing == warning {
+			return warnings
+		}
+	}
+	return append(warnings, warning)
 }
 
 func RenderMarkdown(doc Document, bundle evidence.DailyEvidenceBundle) string {
@@ -304,7 +354,7 @@ func RenderMarkdown(doc Document, bundle evidence.DailyEvidenceBundle) string {
 	if len(tasks) > 0 {
 		fmt.Fprintf(&b, "- %s 相关学习记录持续 %s\n", safeLine(tasks[0].Name), formatDuration(tasks[0].Seconds))
 	}
-	fmt.Fprintf(&b, "- 有效专注 %s\n", formatDuration(bundle.Motivation.CreditedFocusSeconds))
+	fmt.Fprintf(&b, "- 有效专注 %s\n", formatDuration(boundedFocusSeconds(bundle)))
 	if len(bundle.ChatTurns) > 0 {
 		fmt.Fprintf(&b, "- ChatGPT 记录到 %d 个学习 Turn\n", len(bundle.ChatTurns))
 	}
@@ -329,6 +379,12 @@ func RenderMarkdown(doc Document, bundle evidence.DailyEvidenceBundle) string {
 	b.WriteString("\n## 明日\n")
 	fmt.Fprintf(&b, "%s\n", safeLine(doc.TomorrowPriority))
 	warnings := append(append([]string(nil), bundle.Warnings...), doc.Warnings...)
+	if focusDurationMismatch(bundle) {
+		warnings = appendWarning(warnings, "focus_duration_mismatch")
+	}
+	if taskDurationMismatch(bundle) {
+		warnings = appendWarning(warnings, "task_duration_mismatch")
+	}
 	if len(warnings) > 0 {
 		b.WriteString("\n> 证据提示：")
 		b.WriteString(strings.Join(warnings, "；"))

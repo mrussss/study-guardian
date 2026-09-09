@@ -9,6 +9,7 @@ import type { ControlCenterRoute } from "../center/route";
 import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
 import { useTaskSelectionState } from "../shared/use-task-selection-state";
+import { automationDecisionNotice } from "../shared/automation-intent";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
 import "../shared/task-wheel/task-wheel.css";
@@ -54,6 +55,7 @@ function RuntimeQuickPanel(): ReactElement {
   const [notice, setNotice] = useState<string>();
   const [automationBusy, setAutomationBusy] = useState(false);
   const pollerRef = useRef<SupervisorDashboardPollLoop | undefined>(undefined);
+  const latestSnapshotRef = useRef<SupervisorDashboardSnapshot | undefined>(undefined);
   const taskMutationRevision = useRef(0);
 
   useEffect(() => {
@@ -61,7 +63,7 @@ function RuntimeQuickPanel(): ReactElement {
     const adapter = getSupervisorDashboardAdapter();
     const poller = new SupervisorDashboardPollLoop(adapter, 1800);
     pollerRef.current = poller;
-    poller.start(next => { if (!stopped) setSnapshot(next); });
+    poller.start(next => { latestSnapshotRef.current = next; if (!stopped) setSnapshot(next); });
     return () => {
       stopped = true;
       poller.stop();
@@ -100,10 +102,14 @@ function RuntimeQuickPanel(): ReactElement {
       : nextMode === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
     setNotice(result.ok ? "状态已更新" : controlNotice(result.error_kind));
   };
-  const refreshAutomation = async (): Promise<void> => {
+  const refreshAutomationSnapshot = async (): Promise<SupervisorDashboardSnapshot | undefined> => {
     setAutomationBusy(true);
     await pollerRef.current?.refresh();
     setAutomationBusy(false);
+    return latestSnapshotRef.current;
+  };
+  const refreshAutomation = async (): Promise<void> => {
+    await refreshAutomationSnapshot();
   };
   const resolveAutomation = async (accept: boolean): Promise<void> => {
     const pending = status?.pending_automation_intent;
@@ -113,8 +119,8 @@ function RuntimeQuickPanel(): ReactElement {
     const result = accept
       ? await control.acceptAutomationIntent?.(pending.intent_id)
       : await control.rejectAutomationIntent?.(pending.intent_id);
-    setNotice(result?.ok ? (accept ? "已接受自动转场" : "已拒绝自动转场") : "自动转场响应失败");
-    await pollerRef.current?.refresh();
+    const refreshedSnapshot = await refreshAutomationSnapshot();
+    setNotice(automationDecisionNotice(pending, accept, result, refreshedSnapshot));
     setAutomationBusy(false);
   };
 
