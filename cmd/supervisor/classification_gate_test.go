@@ -54,6 +54,22 @@ func TestBreakUsesLocalRulesWithoutRemoteAI(t *testing.T) {
 	}
 }
 
+func TestBreakLocalUnknownAndDistractedResultsReplacePreviousFocus(t *testing.T) {
+	results := []state.ClassificationResult{
+		{Relation: state.RelationFocused, Confidence: .9, SourceKind: state.SourceKindLocalRule, IsFromRule: true},
+		{Relation: state.RelationUnknown, Confidence: 1, SourceKind: state.SourceKindLocalRule, IsFromRule: true},
+		{Relation: state.RelationDistracted, Confidence: .9, SourceKind: state.SourceKindLocalRule, IsFromRule: true},
+		{Relation: state.RelationFocused, Confidence: .9, SourceKind: state.SourceKindLocalRule, IsFromRule: true},
+	}
+	for index, want := range results {
+		result := classifyObservation(state.UserModeBreak, false, false, true, state.PrivacyNormal,
+			func() state.ClassificationResult { return want }, nil)
+		if result.Relation != want.Relation {
+			t.Fatalf("step=%d got=%s want=%s", index, result.Relation, want.Relation)
+		}
+	}
+}
+
 func TestUnavailableObservationNeverCallsEitherClassifier(t *testing.T) {
 	for _, tc := range []struct {
 		name              string

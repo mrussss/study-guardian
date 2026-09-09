@@ -88,31 +88,12 @@ func main() {
 	if *configPath != "" {
 		configDir = filepath.Dir(*configPath)
 	}
-	if raw, ok, loadErr := store.GetSetting(context.Background(), aisettings.SettingKey); loadErr != nil {
-		log.Printf("[AI] settings load failed: %v", loadErr)
-	} else if ok {
-		loaded, decodeErr := aisettings.DecodePersisted(raw, cfg.AI)
-		if decodeErr != nil {
-			log.Printf("[AI] settings decode failed: %v", decodeErr)
-		} else {
-			cfg.AI = loaded.Config
-			config.NormalizeAIConfig(cfg, false)
-			if loaded.LegacyAPIKey != "" {
-				if secretPath, migrateErr := aisettings.MigrateLegacySecret(filepath.Join(configDir, "secrets"), "text", loaded.LegacyAPIKey); migrateErr != nil {
-					log.Printf("[AI] legacy secret migration failed; the key was not persisted")
-				} else {
-					cfg.AI.Text.APIKeyFile = secretPath
-					cfg.AI.Text.APIKeyEnv = ""
-				}
-			}
-			if loaded.NeedsRewrite {
-				if encoded, encodeErr := aisettings.EncodePersistedAIConfig(cfg.AI); encodeErr != nil {
-					log.Printf("[AI] settings migration encoding failed: %v", encodeErr)
-				} else if persistErr := store.SetSetting(context.Background(), aisettings.SettingKey, string(encoded), time.Now()); persistErr != nil {
-					log.Printf("[AI] settings migration persistence failed: %v", persistErr)
-				}
-			}
-		}
+	if migrated, migrateErr := aisettings.LoadAndMigratePersistedAI(context.Background(), store, filepath.Join(configDir, "secrets"), cfg.AI); migrateErr != nil {
+		log.Printf("[AI] settings migration failed; original settings retained (%v)", migrateErr)
+		cfg.AI.MigrationWarning = "persisted AI settings unavailable; using YAML/default configuration"
+	} else if migrated.Found {
+		cfg.AI = migrated.Config
+		config.NormalizeAIConfig(cfg, false)
 	}
 	if raw, ok, loadErr := store.GetSetting(context.Background(), "automation.config.v1"); loadErr != nil {
 		log.Printf("[Automation] settings load failed: %v", loadErr)
@@ -387,8 +368,22 @@ func main() {
 					}
 				} else if !activitySampleSuccess || !awStatus.StableOK || priv == state.PrivacySensitive || isLocked {
 					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "AI unavailable or skipped", SourceKind: state.SourceKindLocalRule, IsFromRule: true}
+				} else if sysStatus.UserMode == state.UserModeBreak {
+					// BREAK must fully replace the previous result on every
+					// poll. In particular, UNKNOWN must clear an earlier FOCUSED
+					// result instead of allowing stale evidence to resume study.
+					currentTask := stateMgr.GetCurrentTask()
+					lastClassRes = classifyObservation(sysStatus.UserMode, isAFK, isLocked, awStatus.StableOK, priv, func() state.ClassificationResult {
+						result := ruleEngine.Classify(app, title, domain, currentTask)
+						if result.Relation == state.RelationUnknown {
+							result.Reason = "BREAK mode; no local focus evidence"
+						}
+						return result
+					}, nil)
 				} else {
-					// Between samples, just run rule engine (very cheap) to keep reaction fast if window changes.
+					// Between samples, just run rule engine (very cheap) to keep
+					// reaction fast if the window changes. STUDY/STANDBY retain
+					// the existing result-lag behavior for UNKNOWN.
 					ruleRes := ruleEngine.Classify(app, title, domain, stateMgr.GetCurrentTask())
 					if ruleRes.Relation != state.RelationUnknown {
 						lastClassRes = ruleRes
