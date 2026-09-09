@@ -16,14 +16,14 @@ Object.defineProperty(globalThis, "MutationObserver", { value: dom.window.Mutati
 const { cleanup, render, screen } = await import("@testing-library/react");
 afterEach(() => cleanup());
 
-function intent(transition: NativeAutomationIntent["transition"]): NativeAutomationIntent {
+function intent(transition: NativeAutomationIntent["transition"], expiresAt = Date.now() + 5000): NativeAutomationIntent {
   return {
     intent_id: "intent-1",
     transition,
     reason: transition === "AUTO_PAUSE" ? "IDLE" : "NONE",
     task: "Go",
     created_at: new Date(Date.now() - 1000).toISOString(),
-    expires_at: new Date(Date.now() + 5000).toISOString(),
+    expires_at: new Date(expiresAt).toISOString(),
     requires_confirmation: true,
   };
 }
@@ -45,4 +45,13 @@ test("auto start expiry copy distinguishes start from pause", () => {
   assert.match(screen.getByRole("alert").textContent ?? "", /检测到你正在学习/);
   assert.match(screen.getByRole("alert").textContent ?? "", /保持待机/);
   assert.match(screen.getByRole("alert").textContent ?? "", /开始计时/);
+});
+test("expired prompt disables decisions and refreshes canonical automation status", async () => {
+  let expired = 0;
+  render(<AutomationIntentPrompt pending={intent("AUTO_PAUSE", Date.now() - 1000)} onExpired={() => { expired += 1; }} />);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.match(screen.getByRole("alert").textContent ?? "", /正在应用自动暂停/);
+  assert.equal(screen.getByRole("button", { name: "继续计时" }).hasAttribute("disabled"), true);
+  assert.equal(screen.getByRole("button", { name: "立即暂停" }).hasAttribute("disabled"), true);
+  assert.equal(expired, 1);
 });

@@ -420,10 +420,42 @@ func cloneAutomationIntent(intent *AutomationIntent) *AutomationIntent {
 	return &copy
 }
 
-func (m *Manager) clearExpiredAutomationIntentLocked(now time.Time) {
-	if m.pendingAutomationIntent != nil && !m.pendingAutomationIntent.ExpiresAt.IsZero() && !now.Before(m.pendingAutomationIntent.ExpiresAt) {
-		m.pendingAutomationIntent = nil
+type automationIntentResolution uint8
+
+const (
+	automationIntentNotExpired automationIntentResolution = iota
+	automationIntentApply
+	automationIntentDismiss
+)
+
+func defaultAutomationExpiryAction(intent AutomationIntent) AutomationExpiryAction {
+	if intent.ExpiryAction != "" {
+		return intent.ExpiryAction
 	}
+	if intent.Transition == AutomationPause || intent.Transition == AutomationResume {
+		return AutomationExpiryApply
+	}
+	return AutomationExpiryDismiss
+}
+
+// resolveExpiredAutomationIntentLocked is the single state transition for an
+// expired confirmation. It claims the intent while holding the manager lock;
+// callers must perform the actual mode transition after unlocking.
+func (m *Manager) resolveExpiredAutomationIntentLocked(now time.Time) (*AutomationIntent, automationIntentResolution) {
+	if now.IsZero() {
+		now = m.clock.Now()
+	}
+	pending := m.pendingAutomationIntent
+	if pending == nil || pending.ExpiresAt.IsZero() || now.Before(pending.ExpiresAt) {
+		return nil, automationIntentNotExpired
+	}
+	intent := *pending
+	m.pendingAutomationIntent = nil
+	intent.RequiresConfirmation = false
+	if defaultAutomationExpiryAction(intent) == AutomationExpiryApply {
+		return &intent, automationIntentApply
+	}
+	return &intent, automationIntentDismiss
 }
 
 func (m *Manager) PendingAutomationIntent() *AutomationIntent {
@@ -434,10 +466,17 @@ func (m *Manager) PendingAutomationIntent() *AutomationIntent {
 
 func (m *Manager) AcceptAutomationIntent(id string) error {
 	m.mu.Lock()
-	m.clearExpiredAutomationIntentLocked(m.clock.Now())
+	now := m.clock.Now()
 	if m.pendingAutomationIntent == nil || (id != "" && m.pendingAutomationIntent.ID != id) {
 		m.mu.Unlock()
 		return errors.New("automation intent is not pending")
+	}
+	if expired, resolution := m.resolveExpiredAutomationIntentLocked(now); resolution != automationIntentNotExpired {
+		m.mu.Unlock()
+		if resolution == automationIntentApply && expired != nil {
+			return m.applyAutomationIntentNow(*expired)
+		}
+		return nil
 	}
 	intent := *m.pendingAutomationIntent
 	m.pendingAutomationIntent = nil
@@ -448,40 +487,37 @@ func (m *Manager) AcceptAutomationIntent(id string) error {
 
 func (m *Manager) RejectAutomationIntent(id string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.clearExpiredAutomationIntentLocked(m.clock.Now())
+	now := m.clock.Now()
 	if m.pendingAutomationIntent == nil || (id != "" && m.pendingAutomationIntent.ID != id) {
+		m.mu.Unlock()
 		return errors.New("automation intent is not pending")
+	}
+	if expired, resolution := m.resolveExpiredAutomationIntentLocked(now); resolution != automationIntentNotExpired {
+		m.mu.Unlock()
+		if resolution == automationIntentApply && expired != nil {
+			return m.applyAutomationIntentNow(*expired)
+		}
+		return nil
 	}
 	intent := *m.pendingAutomationIntent
 	m.pendingAutomationIntent = nil
 	if intent.Transition == AutomationPause {
-		deadline := m.clock.Now().Add(4 * time.Minute)
+		deadline := now.Add(4 * time.Minute)
 		m.autoPauseSnoozeUntil = &deadline
 	}
+	m.mu.Unlock()
 	return nil
 }
 
 func (m *Manager) ProcessExpiredAutomationIntent(now time.Time) error {
 	m.mu.Lock()
-	if now.IsZero() {
-		now = m.clock.Now()
-	}
-	pending := m.pendingAutomationIntent
-	if pending == nil || pending.ExpiresAt.IsZero() || now.Before(pending.ExpiresAt) {
-		m.mu.Unlock()
-		return nil
-	}
-	intent := *pending
-	m.pendingAutomationIntent = nil
-	action := intent.ExpiryAction
+	intent, resolution := m.resolveExpiredAutomationIntentLocked(now)
 	m.mu.Unlock()
 
-	if action != AutomationExpiryApply {
+	if resolution != automationIntentApply || intent == nil {
 		return nil
 	}
-	intent.RequiresConfirmation = false
-	return m.applyAutomationIntentNow(intent)
+	return m.applyAutomationIntentNow(*intent)
 }
 
 // ApplyAutomationIntent either applies an intent immediately or records a
@@ -490,7 +526,13 @@ func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
 	if intent.RequiresConfirmation {
 		m.mu.Lock()
 		now := m.clock.Now()
-		m.clearExpiredAutomationIntentLocked(now)
+		if expired, resolution := m.resolveExpiredAutomationIntentLocked(now); resolution != automationIntentNotExpired {
+			m.mu.Unlock()
+			if resolution == automationIntentApply && expired != nil {
+				return m.applyAutomationIntentNow(*expired)
+			}
+			return m.ApplyAutomationIntent(intent)
+		}
 		if m.pendingAutomationIntent != nil {
 			m.mu.Unlock()
 			return nil

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -485,5 +486,95 @@ func TestRejectAutomaticPauseCreatesShortSnooze(t *testing.T) {
 	}
 	if got.UserMode != UserModeStudy {
 		t.Fatalf("reject changed mode: %+v", got)
+	}
+}
+
+func TestExpiredAutoPauseAcceptAndRejectApplyExpirySemantics(t *testing.T) {
+	now := time.Date(2026, 9, 9, 9, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	cfg := config.DefaultConfig()
+	first := NewPersistentManager(clock, cfg, nil, nil, nil, nil)
+	if err := first.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.ApplyAutomationIntent(AutomationIntent{ID: "pause-accept", Transition: AutomationPause, Reason: PauseReasonIdle, RequiresConfirmation: true}); err != nil {
+		t.Fatal(err)
+	}
+	clock.Set(now.Add(16 * time.Second))
+	if err := first.AcceptAutomationIntent("pause-accept"); err != nil {
+		t.Fatal(err)
+	}
+	if got := first.GetStatus(); got.UserMode != UserModeBreak || got.PendingAutomationIntent != nil {
+		t.Fatalf("expired accept status=%+v", got)
+	}
+	if err := first.ProcessExpiredAutomationIntent(clock.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got := first.GetStatus(); got.UserMode != UserModeBreak {
+		t.Fatalf("post-accept processing changed mode=%s", got.UserMode)
+	}
+
+	secondClock := NewFakeClock(now)
+	second := NewPersistentManager(secondClock, cfg, nil, nil, nil, nil)
+	if err := second.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.ApplyAutomationIntent(AutomationIntent{ID: "pause-reject", Transition: AutomationPause, Reason: PauseReasonIdle, RequiresConfirmation: true}); err != nil {
+		t.Fatal(err)
+	}
+	secondClock.Set(now.Add(16 * time.Second))
+	if err := second.RejectAutomationIntent("pause-reject"); err != nil {
+		t.Fatal(err)
+	}
+	if got := second.GetStatus(); got.UserMode != UserModeBreak || got.PendingAutomationIntent != nil || got.AutoPauseSnoozeUntil != nil {
+		t.Fatalf("expired reject status=%+v", got)
+	}
+}
+
+func TestExpiredAutomationIntentIsExactlyOnceAcrossProcessAndAccept(t *testing.T) {
+	now := time.Date(2026, 9, 9, 10, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	cfg := config.DefaultConfig()
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	mgr := NewPersistentManager(clock, cfg, store, nil, nil, nil)
+	if err := mgr.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ApplyAutomationIntent(AutomationIntent{ID: "pause-race", Transition: AutomationPause, Reason: PauseReasonIdle, RequiresConfirmation: true}); err != nil {
+		t.Fatal(err)
+	}
+	clock.Set(now.Add(16 * time.Second))
+
+	var wg sync.WaitGroup
+	results := make(chan error, 2)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		results <- mgr.ProcessExpiredAutomationIntent(clock.Now())
+	}()
+	go func() {
+		defer wg.Done()
+		results <- mgr.AcceptAutomationIntent("pause-race")
+	}()
+	wg.Wait()
+	close(results)
+
+	for range results {
+		// One caller claims the intent; the other may observe the already
+		// consumed intent. The session count below proves the transition ran once.
+	}
+	if got := mgr.GetStatus(); got.UserMode != UserModeBreak || got.PendingAutomationIntent != nil {
+		t.Fatalf("race status=%+v", got)
+	}
+	sessions, err := store.ListSessionsForDate(context.Background(), storage.LocalDate(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 3 {
+		t.Fatalf("session transitions=%d, want standby, study close, plus one automatic pause", len(sessions))
 	}
 }

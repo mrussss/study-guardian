@@ -48,6 +48,7 @@ export interface QuickPanelProps {
   onModeAction?: (mode: "STUDY" | "BREAK" | "OFF") => void;
   onAcceptAutomation?: () => void | Promise<void>;
   onRejectAutomation?: () => void | Promise<void>;
+  onAutomationExpired?: () => void | Promise<void>;
   automationBusy?: boolean;
   onOpenCenter?: () => void;
   onOpenSettings?: () => void;
@@ -82,6 +83,7 @@ export function QuickPanel({
   onModeAction,
   onAcceptAutomation,
   onRejectAutomation,
+  onAutomationExpired,
   automationBusy = false,
   onOptimisticTaskChange,
   onTaskResult,
@@ -131,7 +133,7 @@ export function QuickPanel({
             <div className="elapsed"><Clock3 size={16} /><span>{elapsed}</span></div>
           </div>
           <p className="focus-description">{copy.description}</p>
-          <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={onAcceptAutomation} onReject={onRejectAutomation} />
+          <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={onAcceptAutomation} onReject={onRejectAutomation} onExpired={onAutomationExpired} />
           <div className="task-line"><BookOpen size={15} /><TaskWheel currentTask={task} presets={taskPresets} compact disabled={!connected} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} onUpdatePreset={onUpdateTaskPreset} onDeletePreset={onDeleteTaskPreset} onOptimisticTaskChange={onOptimisticTaskChange} onTaskMutationStarted={onTaskMutationStarted} onResult={onTaskResult} /></div>
         </section>
 

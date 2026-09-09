@@ -165,6 +165,11 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
     const result = next === "STUDY" ? await control.setModeStudy(currentTask === "未设置任务" ? "" : currentTask) : next === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
     setTaskNotice(result.ok ? "状态已更新" : "状态暂时无法更新");
   };
+  const refreshAutomation = async (): Promise<void> => {
+    setAutomationBusy(true);
+    await onRefresh?.();
+    setAutomationBusy(false);
+  };
   const resolveAutomation = async (accept: boolean): Promise<void> => {
     const pending = status?.pending_automation_intent;
     if (!pending) return;
@@ -185,7 +190,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
     <section className="focus-hero" aria-labelledby="current-focus-title">
       <div className="hero-main">
         <div className="hero-topline"><span className="hero-kicker"><span className="live-dot" />当前状态</span><span className={`hero-health is-${supervision.behaviorTone}`}><ShieldCheck size={15} />{supervision.behaviorLabel}</span></div>
-        <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={() => resolveAutomation(true)} onReject={() => resolveAutomation(false)} />
+        <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={() => resolveAutomation(true)} onReject={() => resolveAutomation(false)} onExpired={() => refreshAutomation()} />
         <h2 id="current-focus-title">{modeTitle[currentMode]}</h2>
         <div className="hero-task-control"><BookOpen size={17} /><TaskWheel currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData}
           onOptimisticTaskChange={task => {

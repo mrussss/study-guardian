@@ -100,6 +100,11 @@ function RuntimeQuickPanel(): ReactElement {
       : nextMode === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
     setNotice(result.ok ? "状态已更新" : controlNotice(result.error_kind));
   };
+  const refreshAutomation = async (): Promise<void> => {
+    setAutomationBusy(true);
+    await pollerRef.current?.refresh();
+    setAutomationBusy(false);
+  };
   const resolveAutomation = async (accept: boolean): Promise<void> => {
     const pending = status?.pending_automation_intent;
     if (!pending) return;
@@ -142,6 +147,7 @@ function RuntimeQuickPanel(): ReactElement {
     onModeAction={handleModeAction}
     onAcceptAutomation={() => resolveAutomation(true)}
     onRejectAutomation={() => resolveAutomation(false)}
+    onAutomationExpired={() => refreshAutomation()}
     automationBusy={automationBusy}
     onOpenCenter={() => openControlCenter("overview")}
     onOpenSettings={() => openControlCenter("settings")}
