@@ -2,7 +2,6 @@ package aisettings
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -115,7 +114,7 @@ func (s *Service) Save(ctx context.Context, input SettingsDTO) (SettingsDTO, err
 	if err := validateDTO(input); err != nil {
 		return SettingsDTO{}, err
 	}
-	next := s.cfg.AI
+	next := canonicalRuntimeAI(s.cfg.AI)
 	next.Enabled = input.Enabled
 	next.MinConfidence = input.MinConfidence
 	proxy := config.AIProxyConfig{Mode: strings.ToLower(strings.TrimSpace(input.Proxy.Mode)), URL: strings.TrimSpace(input.Proxy.URL)}
@@ -135,6 +134,7 @@ func (s *Service) Save(ctx context.Context, input SettingsDTO) (SettingsDTO, err
 	next.Text = applyEndpoint(next.Text, input.Text)
 	next.Vision = applyEndpoint(next.Vision, input.Vision)
 	next.UseVisionOnlyWhenNeeded = true
+	next = canonicalRuntimeAI(next)
 	if err := s.persistLocked(ctx, next); err != nil {
 		return SettingsDTO{}, err
 	}
@@ -224,7 +224,7 @@ func (s *Service) PutSecret(ctx context.Context, target, secret string) (Setting
 	}
 	_ = os.Chmod(path, 0600)
 	endpoint.APIKeyFile, endpoint.APIKeyEnv = filepath.Clean(path), ""
-	next := s.cfg.AI
+	next := canonicalRuntimeAI(s.cfg.AI)
 	if target == "text" {
 		next.Text = *endpoint
 	} else {
@@ -249,7 +249,7 @@ func (s *Service) DeleteSecret(ctx context.Context, target string) (SettingsDTO,
 		_ = os.Remove(managed)
 	}
 	endpoint.APIKeyFile, endpoint.APIKeyEnv = "", ""
-	next := s.cfg.AI
+	next := canonicalRuntimeAI(s.cfg.AI)
 	if target == "text" {
 		next.Text = *endpoint
 	} else {
@@ -276,7 +276,7 @@ func (s *Service) endpointLocked(target string) (*config.AIEndpointConfig, error
 }
 
 func (s *Service) persistLocked(ctx context.Context, next config.AIConfig) error {
-	raw, err := json.Marshal(next)
+	raw, err := EncodePersistedAIConfig(canonicalRuntimeAI(next))
 	if err != nil {
 		return fmt.Errorf("settings encoding failed")
 	}
@@ -284,6 +284,16 @@ func (s *Service) persistLocked(ctx context.Context, next config.AIConfig) error
 		return fmt.Errorf("settings persistence failed")
 	}
 	return nil
+}
+
+func canonicalRuntimeAI(value config.AIConfig) config.AIConfig {
+	value.SchemaVersion = 2
+	value.Provider = ""
+	value.Model = ""
+	value.APIKey = ""
+	value.Endpoint = ""
+	value.MigrationWarning = ""
+	return value
 }
 
 func (s *Service) applyLocked(next config.AIConfig) {

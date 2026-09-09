@@ -809,7 +809,14 @@ export function AutomationSettingsCard({ settings: source, pending, onRefresh, c
       return;
     }
     const refreshed = await onRefresh?.();
-    const canonical = refreshed?.automation_settings ? normalize(refreshed.automation_settings) : payload;
+    const canonical = refreshed?.automation_settings ? normalize(refreshed.automation_settings) : undefined;
+    if (!canonical || JSON.stringify(canonical) !== JSON.stringify(payload)) {
+      setDraft(payload);
+      setDirty(true);
+      setNotice("设置已提交，等待后台配置确认");
+      setBusy(false);
+      return;
+    }
     setDraft(canonical);
     setDirty(false);
     setNotice("自动学习计时设置已保存");

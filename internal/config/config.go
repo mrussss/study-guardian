@@ -85,11 +85,11 @@ type AIConfig struct {
 	Vision                  AIEndpointConfig `yaml:"vision"`
 	// Legacy fields are retained for backwards-compatible loading. New code
 	// should use Text/Vision; LoadConfig maps the old flat shape into Text.
-	Provider         string `yaml:"provider"`
-	Model            string `yaml:"model"`
-	APIKey           string `yaml:"api_key"`
-	Endpoint         string `yaml:"endpoint"`
-	MigrationWarning string `yaml:"-"`
+	Provider         string `yaml:"provider" json:"-"`
+	Model            string `yaml:"model" json:"-"`
+	APIKey           string `yaml:"api_key" json:"-"`
+	Endpoint         string `yaml:"endpoint" json:"-"`
+	MigrationWarning string `yaml:"-" json:"-"`
 }
 
 const (

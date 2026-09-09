@@ -68,3 +68,16 @@ test("automation save failure keeps the draft dirty for retry", async () => {
   assert.ok(screen.getByText("有未保存的修改"));
   assert.equal((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked, true);
 });
+
+test("successful save keeps the draft dirty when refresh still returns old settings", async () => {
+  let saves = 0;
+  const control = controlAdapter({ saveAutomationSettings: async () => { saves += 1; return { ok: true }; } });
+  render(<AutomationSettingsCard settings={settings} control={control} onRefresh={() => Promise.resolve({ automation_settings: settings } as never)} />);
+  const user = userEvent.setup();
+  await user.click(screen.getAllByRole("checkbox")[0]);
+  await user.click(screen.getByRole("button", { name: /保存自动计时/ }));
+  await waitFor(() => assert.equal(saves, 1));
+  assert.ok(screen.getByText("有未保存的修改"));
+  assert.ok(screen.getAllByRole("status").some(item => item.textContent?.includes("等待后台配置确认")));
+  assert.equal(screen.queryByText("自动学习计时设置已保存"), null);
+});
