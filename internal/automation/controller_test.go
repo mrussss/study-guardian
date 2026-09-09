@@ -53,6 +53,73 @@ func TestControllerOnlyResumesAutomationBreak(t *testing.T) {
 	}
 }
 
+func TestControllerPreservesBreakFocusAcrossLongSamplingIntervals(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.Enabled = false
+	cfg.AutoResume.FocusedStableSeconds = 120
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
+	outcome := focusedOutcome()
+	outcome.UserMode = state.UserModeBreak
+	status := state.SystemStatus{UserMode: state.UserModeBreak, ModeOrigin: state.ModeOriginAutomation, AutoResumeEligible: true, PrivacyState: state.PrivacyNormal}
+	if got := controller.Evaluate(start, outcome, status); got != nil {
+		t.Fatalf("resumed before stability threshold: %+v", got)
+	}
+	if got := controller.Evaluate(start.Add(60*time.Second), outcome, status); got != nil {
+		t.Fatalf("a sampling interval reset the focus timer: %+v", got)
+	}
+	if got := controller.Evaluate(start.Add(119*time.Second), outcome, status); got != nil {
+		t.Fatalf("resumed before 120 seconds: %+v", got)
+	}
+	if got := controller.Evaluate(start.Add(120*time.Second), outcome, status); got == nil || got.Transition != state.AutomationResume {
+		t.Fatalf("did not resume after cumulative focus: %+v", got)
+	}
+}
+
+func TestControllerBreakResumeFocusInterruptionsResetStability(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*state.TickOutcome, *state.SystemStatus)
+	}{
+		{name: "afk", mutate: func(outcome *state.TickOutcome, _ *state.SystemStatus) {
+			outcome.Interaction = state.InteractionIdleStatic
+		}},
+		{name: "locked", mutate: func(outcome *state.TickOutcome, _ *state.SystemStatus) { outcome.Locked = true }},
+		{name: "activitywatch unavailable", mutate: func(outcome *state.TickOutcome, _ *state.SystemStatus) { outcome.ActivityValid = false }},
+		{name: "privacy", mutate: func(_ *state.TickOutcome, status *state.SystemStatus) { status.PrivacyState = state.PrivacySensitive }},
+		{name: "not focused", mutate: func(outcome *state.TickOutcome, _ *state.SystemStatus) { outcome.Relation = state.RelationDistracted }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.DefaultConfig().Automation
+			cfg.Enabled = true
+			cfg.AutoStart.Enabled = false
+			cfg.AutoResume.FocusedStableSeconds = 10
+			cfg.TransitionCooldownSeconds = 1
+			controller := New(cfg)
+			start := time.Date(2026, 9, 9, 11, 0, 0, 0, time.UTC)
+			focused := focusedOutcome()
+			focused.UserMode = state.UserModeBreak
+			status := state.SystemStatus{UserMode: state.UserModeBreak, ModeOrigin: state.ModeOriginAutomation, AutoResumeEligible: true, PrivacyState: state.PrivacyNormal}
+			controller.Evaluate(start, focused, status)
+			interrupted := focused
+			interruptedStatus := status
+			tc.mutate(&interrupted, &interruptedStatus)
+			if got := controller.Evaluate(start.Add(5*time.Second), interrupted, interruptedStatus); got != nil {
+				t.Fatalf("interrupted focus resumed: %+v", got)
+			}
+			if got := controller.Evaluate(start.Add(10*time.Second), focused, status); got != nil {
+				t.Fatalf("timer was not reset after interruption: %+v", got)
+			}
+			if got := controller.Evaluate(start.Add(20*time.Second), focused, status); got == nil || got.Transition != state.AutomationResume {
+				t.Fatalf("focus did not resume after a fresh stable interval: %+v", got)
+			}
+		})
+	}
+}
+
 func TestControllerAllowsAutoPauseAfterManualStudy(t *testing.T) {
 	cfg := config.DefaultConfig().Automation
 	cfg.Enabled = true

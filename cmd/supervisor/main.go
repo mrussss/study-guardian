@@ -84,13 +84,34 @@ func main() {
 		store, _ = storage.OpenSQLite(":memory:")
 	}
 	defer store.Close()
+	configDir := filepath.Join(filepath.Dir(targetDB), "..", "config")
+	if *configPath != "" {
+		configDir = filepath.Dir(*configPath)
+	}
 	if raw, ok, loadErr := store.GetSetting(context.Background(), aisettings.SettingKey); loadErr != nil {
 		log.Printf("[AI] settings load failed: %v", loadErr)
 	} else if ok {
-		var persisted config.AIConfig
-		if decodeErr := json.Unmarshal([]byte(raw), &persisted); decodeErr == nil {
-			cfg.AI = persisted
+		loaded, decodeErr := aisettings.DecodePersisted(raw, cfg.AI)
+		if decodeErr != nil {
+			log.Printf("[AI] settings decode failed: %v", decodeErr)
+		} else {
+			cfg.AI = loaded.Config
 			config.NormalizeAIConfig(cfg, false)
+			if loaded.LegacyAPIKey != "" {
+				if secretPath, migrateErr := aisettings.MigrateLegacySecret(filepath.Join(configDir, "secrets"), "text", loaded.LegacyAPIKey); migrateErr != nil {
+					log.Printf("[AI] legacy secret migration failed; the key was not persisted")
+				} else {
+					cfg.AI.Text.APIKeyFile = secretPath
+					cfg.AI.Text.APIKeyEnv = ""
+				}
+			}
+			if loaded.NeedsRewrite {
+				if encoded, encodeErr := aisettings.EncodePersistedAIConfig(cfg.AI); encodeErr != nil {
+					log.Printf("[AI] settings migration encoding failed: %v", encodeErr)
+				} else if persistErr := store.SetSetting(context.Background(), aisettings.SettingKey, string(encoded), time.Now()); persistErr != nil {
+					log.Printf("[AI] settings migration persistence failed: %v", persistErr)
+				}
+			}
 		}
 	}
 	if raw, ok, loadErr := store.GetSetting(context.Background(), "automation.config.v1"); loadErr != nil {
@@ -179,10 +200,6 @@ func main() {
 		}()
 	}
 	server.SetMotivation(motivationService)
-	configDir := filepath.Join(filepath.Dir(targetDB), "..", "config")
-	if *configPath != "" {
-		configDir = filepath.Dir(*configPath)
-	}
 	aiSettingsService := aisettings.New(cfg, store, filepath.Join(configDir, "secrets"), classifierService, reviewService)
 	server.SetAISettings(aiSettingsService)
 	server.SetAIStatus(func() interface{} { return aiSettingsService.Status() })
@@ -332,40 +349,32 @@ func main() {
 					lastCaptureTime = t
 
 					currentTask := stateMgr.GetCurrentTask()
-					if shouldSkipAI(sysStatus.UserMode, isAFK, isLocked, awStatus.StableOK, priv) {
-						reason := "ActivityWatch unavailable or stale"
-						if isAFK {
-							reason = "AFK; AI skipped"
-							if !lastAFKAudit {
-								stateMgr.RecordAutomationAudit("AI_SKIPPED_FOR_AFK", nil, 0, "local_interaction")
-								lastAFKAudit = true
-							}
-						} else if isLocked {
-							reason = "locked; AI skipped"
-						} else if priv == state.PrivacySensitive {
-							reason = "sensitive privacy state"
+					localClassify := func() state.ClassificationResult {
+						result := ruleEngine.Classify(app, title, domain, currentTask)
+						if result.Relation == state.RelationUnknown && sysStatus.UserMode == state.UserModeBreak {
+							result.Reason = "BREAK mode; no local focus evidence"
 						}
-						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: reason, SourceKind: state.SourceKindLocalRule, IsFromRule: true}
-					} else if sysStatus.UserMode == state.UserModeBreak {
-						// BREAK never invokes AI, but local rules still provide the
-						// bounded evidence needed for an eligible automatic resume.
-						lastClassRes = ruleEngine.Classify(app, title, domain, currentTask)
-						if lastClassRes.Relation == state.RelationUnknown {
-							lastClassRes.Reason = "BREAK mode; no local focus evidence"
-						}
-					} else {
-						lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), "")
+						return result
+					}
+					remoteClassify := func() state.ClassificationResult {
+						result := classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), "")
 						minConfidence := cfg.AI.MinConfidence
 						if minConfidence <= 0 {
 							minConfidence = 0.75
 						}
-						needsVision := cfg.AI.Enabled && cfg.AI.Vision.Enabled && aiRegistry.VisionProvider() != nil && (lastClassRes.Relation == state.RelationUnknown || lastClassRes.Confidence < minConfidence)
+						needsVision := cfg.AI.Enabled && cfg.AI.Vision.Enabled && aiRegistry.VisionProvider() != nil && (result.Relation == state.RelationUnknown || result.Confidence < minConfidence)
 						if needsVision && sensorOK && cfg.Screen.Enabled && priv == state.PrivacyNormal {
 							visionResp, visionErr := sensorClient.Capture(tickerCtx, sensor.CaptureRequest{Monitor: cfg.Screen.Monitor, IncludeAnalysisImage: true, MaxWidth: 960})
 							if visionErr == nil && visionResp != nil && visionResp.AnalysisImage != nil {
-								lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), *visionResp.AnalysisImage)
+								result = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), *visionResp.AnalysisImage)
 							}
 						}
+						return result
+					}
+					lastClassRes = classifyObservation(sysStatus.UserMode, isAFK, isLocked, awStatus.StableOK, priv, localClassify, remoteClassify)
+					if isAFK && !isLocked && !lastAFKAudit {
+						stateMgr.RecordAutomationAudit("AI_SKIPPED_FOR_AFK", nil, 0, "local_interaction")
+						lastAFKAudit = true
 					}
 				} else if sysStatus.UserMode == state.UserModeOff {
 					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "System is OFF"}

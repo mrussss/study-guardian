@@ -78,13 +78,14 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 
 	focusKind := ""
 	stableSeconds := c.cfg.AutoStart.FocusedStableSeconds
-	focused := outcome.Relation == state.RelationFocused && outcome.Interaction == state.InteractionActive && outcome.ActivityValid && status.PrivacyState == state.PrivacyNormal && outcome.Classification.Confidence >= c.cfg.AutoStart.MinConfidence
+	focused := outcome.Relation == state.RelationFocused && outcome.Interaction == state.InteractionActive && outcome.ActivityValid && !outcome.Locked && status.PrivacyState == state.PrivacyNormal && outcome.Classification.Confidence >= c.cfg.AutoStart.MinConfidence
 	if focused {
 		focusKind = "FOCUSED"
 	} else if c.cfg.AutoStart.AllowUnclassified &&
 		outcome.Relation == state.RelationUnknown &&
 		outcome.Interaction == state.InteractionActive &&
 		outcome.ActivityValid &&
+		!outcome.Locked &&
 		status.PrivacyState == state.PrivacyNormal &&
 		strings.TrimSpace(status.Task) != "" &&
 		state.IsExplicitStudyActivity(outcome.Classification.Activity) {
