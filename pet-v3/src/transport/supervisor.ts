@@ -78,6 +78,7 @@ export interface NativeAutomationIntent {
   created_at: string;
   expires_at: string;
   requires_confirmation: boolean;
+  expiry_action?: "DISMISS" | "APPLY";
 }
 
 export interface NativeSupervisorStatus {
@@ -92,6 +93,11 @@ export interface NativeSupervisorStatus {
   active_seconds: number;
   activitywatch_ok: boolean;
   screen_sensor_ok: boolean;
+  activitywatch_last_success_at?: string;
+  activitywatch_consecutive_failures?: number;
+  activitywatch_stable_ok?: boolean;
+  activitywatch_health_phase?: "AVAILABLE" | "DEGRADED" | "UNAVAILABLE";
+  auto_pause_snooze_until?: string;
   last_activity_at?: string;
   mode_origin?: "MANUAL" | "AUTOMATION";
   pause_reason?: "NONE" | "IDLE" | "LOCKED" | "SLEEP" | "SENSOR_UNAVAILABLE";
@@ -311,6 +317,11 @@ function validStatus(value: unknown): value is NativeSupervisorStatus {
     nonNegativeInteger(value.study_seconds) && nonNegativeInteger(value.break_seconds) &&
     nonNegativeInteger(value.active_seconds) && typeof value.activitywatch_ok === "boolean" &&
     typeof value.screen_sensor_ok === "boolean" &&
+    (value.activitywatch_last_success_at === undefined || boundedText(value.activitywatch_last_success_at, 128)) &&
+    (value.activitywatch_consecutive_failures === undefined || nonNegativeInteger(value.activitywatch_consecutive_failures)) &&
+    (value.activitywatch_stable_ok === undefined || typeof value.activitywatch_stable_ok === "boolean") &&
+    (value.activitywatch_health_phase === undefined || ["AVAILABLE", "DEGRADED", "UNAVAILABLE"].includes(value.activitywatch_health_phase as string)) &&
+    (value.auto_pause_snooze_until === undefined || boundedText(value.auto_pause_snooze_until, 128)) &&
     (value.last_activity_at === undefined || boundedText(value.last_activity_at, 128)) &&
     (value.mode_origin === undefined || ["MANUAL", "AUTOMATION"].includes(value.mode_origin as string)) &&
     (value.pause_reason === undefined || ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"].includes(value.pause_reason as string)) &&
@@ -320,7 +331,9 @@ function validStatus(value: unknown): value is NativeSupervisorStatus {
       ["AUTO_START", "AUTO_PAUSE", "AUTO_RESUME"].includes(value.pending_automation_intent.transition as string) &&
       ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"].includes(value.pending_automation_intent.reason as string) &&
       boundedText(value.pending_automation_intent.task, 256) && boundedText(value.pending_automation_intent.created_at, 128) &&
-      boundedText(value.pending_automation_intent.expires_at, 128) && typeof value.pending_automation_intent.requires_confirmation === "boolean"));
+      boundedText(value.pending_automation_intent.expires_at, 128) &&
+      (value.pending_automation_intent.expiry_action === undefined || ["DISMISS", "APPLY"].includes(value.pending_automation_intent.expiry_action as string)) &&
+      typeof value.pending_automation_intent.requires_confirmation === "boolean"));
 }
 
 function validMotivation(value: unknown): value is NativeMotivationStatus {

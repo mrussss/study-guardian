@@ -846,6 +846,25 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
         "activitywatch_ok": activitywatch_ok,
         "screen_sensor_ok": screen_sensor_ok,
     });
+    if let Some(last_success_at) = optional_text_field(object, "activitywatch_last_success_at", 128)? {
+        output["activitywatch_last_success_at"] = json!(last_success_at);
+    }
+    if let Some(failures) = object.get("activitywatch_consecutive_failures").and_then(Value::as_i64) {
+        if failures >= 0 {
+            output["activitywatch_consecutive_failures"] = json!(failures);
+        }
+    }
+    if let Some(stable_ok) = object.get("activitywatch_stable_ok").and_then(Value::as_bool) {
+        output["activitywatch_stable_ok"] = json!(stable_ok);
+    }
+    if let Some(phase) = object.get("activitywatch_health_phase").and_then(Value::as_str) {
+        if ["AVAILABLE", "DEGRADED", "UNAVAILABLE"].contains(&phase) {
+            output["activitywatch_health_phase"] = json!(phase);
+        }
+    }
+    if let Some(snooze_until) = optional_text_field(object, "auto_pause_snooze_until", 128)? {
+        output["auto_pause_snooze_until"] = json!(snooze_until);
+    }
     if let Some(last_activity_at) = optional_text_field(object, "last_activity_at", 128)? {
         output["last_activity_at"] = json!(last_activity_at);
     }
@@ -870,7 +889,8 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
         let expires_at = text_field(intent, "expires_at", 128)?;
         let task = optional_text_field(intent, "task", 256)?.unwrap_or_default();
         let requires_confirmation = bool_field(intent, "requires_confirmation")?;
-        output["pending_automation_intent"] = json!({
+        let expiry_action = intent.get("expiry_action").and_then(Value::as_str).filter(|value| ["DISMISS", "APPLY"].contains(value));
+        let mut intent_output = json!({
             "intent_id": intent_id,
             "transition": transition,
             "reason": reason,
@@ -879,6 +899,10 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
             "expires_at": expires_at,
             "requires_confirmation": requires_confirmation,
         });
+        if let Some(expiry_action) = expiry_action {
+            intent_output["expiry_action"] = json!(expiry_action);
+        }
+        output["pending_automation_intent"] = intent_output;
     }
     Ok(output)
 }

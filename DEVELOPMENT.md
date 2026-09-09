@@ -94,3 +94,12 @@ AI 的 `ai.proxy` 是文字、视觉和 Daily Review 共享的 transport 策略�
 - 自动化确认意图通过 `/v1/automation/pending`、`/accept`、`/reject` 暴露给 Control Center；确认队列 15 秒过期。`auto_pause.confirm` 的界面文案为“暂停前提醒”，手动 STUDY 仍允许锁屏/静止自动暂停，手动 BREAK/OFF 不会自动恢复。
 - 提醒的 `current_reminder` 仅表示当前有效提醒；历史行保留，恢复稳定专注 20 秒、模式切换或有效期到达会标记 inactive 并从 `/v1/status` 清除。
 - 本轮验证：`go test ./...`、Pet 84 项测试、TypeScript/Vite build、Windows Rust 17/17、native/candidate、完整 Windows release build/deploy 均通过。部署后代理测试 `manual` 1239ms；Text provider `aihubmix` / model `coding-glm-5.3-flash-free` 896ms，`account_rate_limited`，按规则停止同 provider fallback；Vision provider `aihubmix` / model `minimax-m3-free` 7962ms 通过；Daily Review 接口生成曾返回 `READY` / `FALLBACK`、revision 6、`error_kind=account_rate_limited`，生成本地总结成功，随后因新证据按设计变为 `STALE`。实机锁屏/游戏/微信/Toast 和完整 UI E2E 仍按目标机 Gate 单独验收。
+
+### 第二轮监督与复盘修复（2026-09-09）
+
+- 重启恢复会话统一以 UTC 写入；读取和迁移不再依赖 SQLite 文本排序，而是在 Go 中解析真实 instant 排序。`session_duration_repairs` 记录 `original_duration_seconds`、`repaired_duration_seconds`、`repair_reason`、`repair_version`；迁移以 `daily_state` 为事实基准，仅在候选时长总和与日状态差额完全相等时事务修正，重复启动幂等，无法安全归因的 mismatch 只告警不修改。
+- 自动化确认意图由显式 `ProcessExpiredAutomationIntent` 处理：AUTO_PAUSE 到期 APPLY，AUTO_START 到期 DISMISS；`GetStatus`、`PendingAutomationIntent` 等读取不再隐式改变模式。拒绝自动暂停会产生 4 分钟 snooze；总览和 Quick Panel 显示基于 `expires_at` 的确认倒计时。
+- ActivityWatch 使用失败阈值、时间窗口和连续成功恢复的 debounce。短暂失败保持同一分心事件但排除不可用间隔；稳定不可用才关闭并记录诊断字段 `last_success_at`、`consecutive_failures`、`stable_ok`、`health_phase`。
+- Daily Review provider input 将 topic-capable learning semantic 与 behavior-only semantic 分离；Topic 只能引用有主题资格的证据，Accomplishment 必须引用 Completed Mission 等完成证据。发现 sessions 与 `daily_state` 不一致时写入 `session_duration_mismatch` 警告，并限制 fallback 的任务投入时长不超过日学习事实。
+- 本轮自动门禁：Go 全量测试通过；Pet 86 项测试、TypeScript/Vite build、Windows Rust check/test 通过；`native`/`candidate` 通过。WSL 没有 Linux `cargo`，使用仓库 Windows Rust 工具链和 `D:\StudyGuardianBuild` target/staging 完成 Rust 门禁；直接在 `\\wsl$` 路径启用 incremental 会触发 Windows lock 文件错误，因此门禁关闭 incremental。
+- 本轮没有读取、打印、提交 API Key，没有重发付费 AI 请求，也没有自动开启用户的 AI 或自动监督设置。

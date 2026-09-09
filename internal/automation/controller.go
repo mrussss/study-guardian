@@ -110,27 +110,33 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 	}
 
 	if status.UserMode == state.UserModeStudy && c.cfg.AutoPause.Enabled {
-		if outcome.Locked {
-			if c.lockedSince.IsZero() {
-				c.lockedSince = now
-			}
-			if now.Sub(c.lockedSince) >= time.Duration(c.cfg.AutoPause.LockedSeconds)*time.Second {
-				c.lastTransition = now
-				return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonLocked, RequiresConfirmation: c.cfg.AutoPause.Confirm}
-			}
-		} else {
+		snoozed := status.AutoPauseSnoozeUntil != nil && now.Before(*status.AutoPauseSnoozeUntil)
+		if snoozed {
 			c.lockedSince = time.Time{}
-		}
-		if outcome.Interaction == state.InteractionIdleStatic {
-			if c.staticSince.IsZero() {
-				c.staticSince = now
-			}
-			if now.Sub(c.staticSince) >= time.Duration(c.cfg.AutoPause.IdleStaticSeconds)*time.Second {
-				c.lastTransition = now
-				return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonIdle, RequiresConfirmation: c.cfg.AutoPause.Confirm}
-			}
-		} else {
 			c.staticSince = time.Time{}
+		} else {
+			if outcome.Locked {
+				if c.lockedSince.IsZero() {
+					c.lockedSince = now
+				}
+				if now.Sub(c.lockedSince) >= time.Duration(c.cfg.AutoPause.LockedSeconds)*time.Second {
+					c.lastTransition = now
+					return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonLocked, RequiresConfirmation: c.cfg.AutoPause.Confirm}
+				}
+			} else {
+				c.lockedSince = time.Time{}
+			}
+			if outcome.Interaction == state.InteractionIdleStatic {
+				if c.staticSince.IsZero() {
+					c.staticSince = now
+				}
+				if now.Sub(c.staticSince) >= time.Duration(c.cfg.AutoPause.IdleStaticSeconds)*time.Second {
+					c.lastTransition = now
+					return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonIdle, RequiresConfirmation: c.cfg.AutoPause.Confirm}
+				}
+			} else {
+				c.staticSince = time.Time{}
+			}
 		}
 	}
 

@@ -37,6 +37,7 @@ import { TaskWheel } from "../shared/task-wheel/TaskWheel";
 import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
 import { HelpDrawer } from "../shared/HelpDrawer";
+import { AutomationIntentPrompt } from "../shared/AutomationIntentPrompt";
 import { FocusClock } from "./FocusClock";
 import type { ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeAutomationIntent, NativeAutomationSettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
@@ -145,6 +146,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
   const progressLabel = motivation ? `${Math.round(progress * 100)}%` : liveData ? "—" : "72%";
   const targetLabel = motivation ? `${targetMinutes} min` : liveData ? "—" : "120 min";
   const [taskNotice, setTaskNotice] = useState("");
+  const [automationBusy, setAutomationBusy] = useState(false);
   const control = getSupervisorControlAdapter();
   const taskOperation = (operation: Promise<ControlResult>): Promise<ControlResult> => operation;
   const taskResult = async (result: TaskPickerActionResult, action: TaskWheelAction): Promise<void> => {
@@ -163,6 +165,17 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
     const result = next === "STUDY" ? await control.setModeStudy(currentTask === "未设置任务" ? "" : currentTask) : next === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
     setTaskNotice(result.ok ? "状态已更新" : "状态暂时无法更新");
   };
+  const resolveAutomation = async (accept: boolean): Promise<void> => {
+    const pending = status?.pending_automation_intent;
+    if (!pending) return;
+    setAutomationBusy(true);
+    const result = accept
+      ? await control.acceptAutomationIntent?.(pending.intent_id)
+      : await control.rejectAutomationIntent?.(pending.intent_id);
+    setTaskNotice(result?.ok ? (accept ? "已接受自动转场" : "已拒绝自动转场") : "自动转场响应失败");
+    await onRefresh?.();
+    setAutomationBusy(false);
+  };
   return <div className="dashboard-page">
     <div className="page-heading">
       <div><p className="heading-kicker">{liveData ? "今天" : "2026 年 9 月 4 日 · 星期五"}</p><h1>{liveData ? "今天，保持一点进展就够了" : "今天，保持一点进展就够了"}</h1><p className="heading-subtitle">{modeCaption}</p></div>
@@ -172,6 +185,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
     <section className="focus-hero" aria-labelledby="current-focus-title">
       <div className="hero-main">
         <div className="hero-topline"><span className="hero-kicker"><span className="live-dot" />当前状态</span><span className={`hero-health is-${supervision.behaviorTone}`}><ShieldCheck size={15} />{supervision.behaviorLabel}</span></div>
+        <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={() => resolveAutomation(true)} onReject={() => resolveAutomation(false)} />
         <h2 id="current-focus-title">{modeTitle[currentMode]}</h2>
         <div className="hero-task-control"><BookOpen size={17} /><TaskWheel currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData}
           onOptimisticTaskChange={task => {

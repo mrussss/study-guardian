@@ -52,6 +52,7 @@ function controlNotice(kind: string | undefined): string {
 function RuntimeQuickPanel(): ReactElement {
   const [snapshot, setSnapshot] = useState<SupervisorDashboardSnapshot>();
   const [notice, setNotice] = useState<string>();
+  const [automationBusy, setAutomationBusy] = useState(false);
   const pollerRef = useRef<SupervisorDashboardPollLoop | undefined>(undefined);
   const taskMutationRevision = useRef(0);
 
@@ -99,6 +100,18 @@ function RuntimeQuickPanel(): ReactElement {
       : nextMode === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
     setNotice(result.ok ? "状态已更新" : controlNotice(result.error_kind));
   };
+  const resolveAutomation = async (accept: boolean): Promise<void> => {
+    const pending = status?.pending_automation_intent;
+    if (!pending) return;
+    setAutomationBusy(true);
+    setNotice("正在响应自动转场…");
+    const result = accept
+      ? await control.acceptAutomationIntent?.(pending.intent_id)
+      : await control.rejectAutomationIntent?.(pending.intent_id);
+    setNotice(result?.ok ? (accept ? "已接受自动转场" : "已拒绝自动转场") : "自动转场响应失败");
+    await pollerRef.current?.refresh();
+    setAutomationBusy(false);
+  };
 
   return <QuickPanel
     mode={mode}
@@ -127,6 +140,9 @@ function RuntimeQuickPanel(): ReactElement {
       return created ? control.selectTaskPreset(created.id) : control.setTask(name);
     }))}
     onModeAction={handleModeAction}
+    onAcceptAutomation={() => resolveAutomation(true)}
+    onRejectAutomation={() => resolveAutomation(false)}
+    automationBusy={automationBusy}
     onOpenCenter={() => openControlCenter("overview")}
     onOpenSettings={() => openControlCenter("settings")}
     onClose={closeQuickPanel}

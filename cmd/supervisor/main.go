@@ -195,6 +195,7 @@ func main() {
 
 	// ActivityWatch & Screen Sensor clients
 	awClient := activitywatch.NewClient(*awURL)
+	awAvailability := activitywatch.NewAvailabilityDebouncer()
 	sensorClient := sensor.NewHTTPClient(cfg.IPC.SensorHost, cfg.IPC.SensorPort, cfg.IPC.AuthToken)
 
 	// Start API server in goroutine
@@ -216,6 +217,8 @@ func main() {
 		var lastScreenHash string
 		var lastCaptureTime time.Time
 		var latestSnapshot *activitywatch.ActivitySnapshot
+		var lastTrustedSnapshot *activitywatch.ActivitySnapshot
+		lastAWPhase := activitywatch.PhaseAvailable
 		lastObservedMode := state.UserModeStandby
 		lastClassRes := state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "No observation yet"}
 
@@ -225,48 +228,55 @@ func main() {
 				return
 			case t := <-ticker.C:
 				latestSnapshot = nil
-				awOK := awClient.Health(tickerCtx)
+				awServerOK := awClient.Health(tickerCtx)
+				var currentSnapshot *activitywatch.ActivitySnapshot
+				activitySampleSuccess := false
+				if awServerOK {
+					snap, err := awClient.GetLatestActivity(tickerCtx)
+					if err == nil && snap != nil && snap.IsFresh(t, 2*time.Minute) {
+						currentSnapshot = snap
+						activitySampleSuccess = true
+					}
+				}
 				sensorHealth, _ := sensorClient.Health(tickerCtx)
-				// Issue 6 Fix: Check MSSAvailable
 				sensorOK := (sensorHealth != nil && sensorHealth.Status == "ok" && sensorHealth.MSSAvailable)
-
-				stateMgr.SetHealth(awOK, sensorOK)
+				awStatus := awAvailability.Observe(t, activitySampleSuccess)
+				var lastSuccessAt *time.Time
+				if !awStatus.LastSuccessAt.IsZero() {
+					value := awStatus.LastSuccessAt
+					lastSuccessAt = &value
+				}
+				stateMgr.SetActivityWatchHealth(state.ActivityWatchDiagnostics{
+					LastSuccessAt: lastSuccessAt, ConsecutiveFailures: awStatus.ConsecutiveFailures,
+					StableOK: awStatus.StableOK, Phase: state.ActivityWatchHealthPhase(awStatus.Phase),
+				}, sensorOK)
+				if awStatus.Phase != lastAWPhase {
+					log.Printf("[ActivityWatch] %s -> %s", lastAWPhase, awStatus.Phase)
+					lastAWPhase = awStatus.Phase
+				}
+				if err := stateMgr.ProcessExpiredAutomationIntent(t); err != nil {
+					log.Printf("[Automation] expired intent apply failed: %v", err)
+				}
 				sysStatus := stateMgr.GetStatus()
 
 				app := ""
 				title := ""
 				domain := ""
 				isAFK := false
-				isStale := false
-
-				if awOK {
-					snap, err := awClient.GetLatestActivity(tickerCtx)
-					if err == nil && snap != nil {
-						latestSnapshot = snap
-						// Issue 4 Fix: Drop stale events (older than 2 minutes)
-						if !snap.IsFresh(t, 2*time.Minute) {
-							isStale = true
-						} else {
-							app = snap.App
-							title = snap.Title
-							domain = snap.Domain
-							isAFK = snap.IsAFK
-						}
-					}
+				if activitySampleSuccess {
+					latestSnapshot = currentSnapshot
+					lastTrustedSnapshot = currentSnapshot
+					app = currentSnapshot.App
+					title = currentSnapshot.Title
+					domain = currentSnapshot.Domain
+					isAFK = currentSnapshot.IsAFK
+				} else if awStatus.StableOK && lastTrustedSnapshot != nil {
+					latestSnapshot = lastTrustedSnapshot
+					app = lastTrustedSnapshot.App
+					title = lastTrustedSnapshot.Title
+					domain = lastTrustedSnapshot.Domain
+					isAFK = lastTrustedSnapshot.IsAFK
 				}
-				if !awOK {
-					latestSnapshot = nil
-				}
-
-				if isStale || !awOK {
-					app = ""
-					title = ""
-					domain = ""
-					isAFK = false // AW Offline/Stale forces Unknown Interaction
-				}
-				// aw-server health alone does not prove watcher freshness. A stale
-				// window event must stop active-time accumulation and force UNKNOWN.
-				stateMgr.SetHealth(awOK && !isStale, sensorOK)
 
 				isLocked := windows.IsLocked()
 				if isLocked {
@@ -291,11 +301,13 @@ func main() {
 					priv = privacyGate.Evaluate(app, title, domain)
 				}
 
-				if !awOK || isStale {
-					// Without a fresh ActivityWatch event there is no current
-					// activity to classify. Keep the system UNKNOWN and avoid
-					// unnecessary screenshots or AI calls.
-					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "ActivityWatch unavailable or stale"}
+				if !activitySampleSuccess {
+					// A degraded but not yet unavailable watcher retains the last
+					// trusted classification. The tracker receives ActivityFresh=false
+					// and therefore holds an open event without extending it.
+					if !awStatus.StableOK {
+						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "ActivityWatch unavailable or stale"}
+					}
 					lastScreenChanged = false
 				} else if shouldSample {
 					if sensorOK && cfg.Screen.Enabled && priv == state.PrivacyNormal {
@@ -370,7 +382,7 @@ func main() {
 				// decision, so a stable AW event can still satisfy the transition
 				// window across multiple Supervisor ticks.
 				observedAt := outcome.Now
-				semanticFresh := latestSnapshot != nil && awOK && !isStale && latestSnapshot.IsFresh(outcome.Now, semantic.DefaultTiming.LiveMaxAge)
+				semanticFresh := activitySampleSuccess && latestSnapshot != nil && latestSnapshot.IsFresh(outcome.Now, semantic.DefaultTiming.LiveMaxAge)
 				reminderLevel := "NONE"
 				if postStatus.CurrentReminder != nil {
 					reminderLevel = string(postStatus.CurrentReminder.Level)

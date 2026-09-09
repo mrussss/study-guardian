@@ -84,3 +84,16 @@ func TestFallbackSeparatesFocusedTopicsFromDistractionAndUnknownSemantic(t *test
 		t.Fatalf("topics=%+v", doc.Topics)
 	}
 }
+
+func TestFallbackCapsTaskInvestmentWhenSessionTotalsDisagree(t *testing.T) {
+	bundle := evidence.DailyEvidenceBundle{
+		Date:       "2026-09-08",
+		DailyState: evidence.DailyStateSummary{StudySeconds: 120},
+		Quality:    evidence.EvidenceQuality{SessionDurationMismatch: true},
+		Sessions:   []evidence.SessionSummary{{Ref: "session:go", Mode: "STUDY", Task: "Go", StartedAt: time.Date(2026, 9, 8, 10, 0, 0, 0, time.Local), DurationSeconds: 240}},
+	}
+	markdown := RenderMarkdown(BuildFallback(bundle), bundle)
+	if !strings.Contains(markdown, "Go — 2m") || strings.Contains(markdown, "Go — 4m") {
+		t.Fatalf("capped fallback markdown=%s", markdown)
+	}
+}

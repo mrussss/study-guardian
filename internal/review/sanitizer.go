@@ -46,6 +46,12 @@ func Sanitize(input ReviewInput, maxFinalChars int) (ReviewInput, SanitizerRepor
 	for index := range output.Reminders {
 		output.Reminders[index].Message = sanitize(output.Reminders[index].Message)
 	}
+	for index := range output.BehaviorSemantic {
+		output.BehaviorSemantic[index].Task = sanitize(output.BehaviorSemantic[index].Task)
+		output.BehaviorSemantic[index].App = sanitize(output.BehaviorSemantic[index].App)
+		output.BehaviorSemantic[index].Title = sanitize(output.BehaviorSemantic[index].Title)
+		output.BehaviorSemantic[index].Domain = sanitize(output.BehaviorSemantic[index].Domain)
+	}
 	for index := range output.Semantic {
 		output.Semantic[index].Task = sanitize(output.Semantic[index].Task)
 		output.Semantic[index].App = sanitize(output.Semantic[index].App)
@@ -119,6 +125,7 @@ func cloneReviewInput(input ReviewInput) ReviewInput {
 	output.Distractions = append([]evidence.DistractionSummary(nil), input.Distractions...)
 	output.Reminders = append([]evidence.ReminderSummary(nil), input.Reminders...)
 	output.Semantic = append([]evidence.SemanticSummary(nil), input.Semantic...)
+	output.BehaviorSemantic = append([]evidence.SemanticSummary(nil), input.BehaviorSemantic...)
 	output.Warnings = append([]string(nil), input.Warnings...)
 	output.ChatConversations = append([]CompactedConversation(nil), input.ChatConversations...)
 	for conversationIndex := range output.ChatConversations {

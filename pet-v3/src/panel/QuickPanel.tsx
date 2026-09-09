@@ -16,6 +16,7 @@ import {
 import { clampProgress, formatFocusMinutes } from "../shared/models/dashboard";
 import { BrandMark } from "../shared/BrandMark";
 import { deriveSupervisionState } from "../shared/models/supervision-state";
+import { AutomationIntentPrompt } from "../shared/AutomationIntentPrompt";
 import { TaskWheel } from "../shared/task-wheel/TaskWheel";
 import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
@@ -45,6 +46,9 @@ export interface QuickPanelProps {
   onTaskResult?: (result: TaskPickerActionResult, action: TaskWheelAction) => void | Promise<void>;
   onTaskMutationStarted?: () => void;
   onModeAction?: (mode: "STUDY" | "BREAK" | "OFF") => void;
+  onAcceptAutomation?: () => void | Promise<void>;
+  onRejectAutomation?: () => void | Promise<void>;
+  automationBusy?: boolean;
   onOpenCenter?: () => void;
   onOpenSettings?: () => void;
   onClose?: () => void;
@@ -76,6 +80,9 @@ export function QuickPanel({
   onUpdateTaskPreset,
   onDeleteTaskPreset,
   onModeAction,
+  onAcceptAutomation,
+  onRejectAutomation,
+  automationBusy = false,
   onOptimisticTaskChange,
   onTaskResult,
   onTaskMutationStarted,
@@ -124,6 +131,7 @@ export function QuickPanel({
             <div className="elapsed"><Clock3 size={16} /><span>{elapsed}</span></div>
           </div>
           <p className="focus-description">{copy.description}</p>
+          <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={onAcceptAutomation} onReject={onRejectAutomation} />
           <div className="task-line"><BookOpen size={15} /><TaskWheel currentTask={task} presets={taskPresets} compact disabled={!connected} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} onUpdatePreset={onUpdateTaskPreset} onDeletePreset={onDeleteTaskPreset} onOptimisticTaskChange={onOptimisticTaskChange} onTaskMutationStarted={onTaskMutationStarted} onResult={onTaskResult} /></div>
         </section>
 

@@ -112,7 +112,7 @@ func (s *Storage) AddReviewExclusion(ctx context.Context, record ReviewExclusion
 	if record.CreatedAt.IsZero() {
 		record.CreatedAt = time.Now()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO review_exclusions (date, source_type, source_id, created_at) VALUES (?, ?, ?, ?)`, record.Date, record.SourceType, record.SourceID, record.CreatedAt)
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO review_exclusions (date, source_type, source_id, created_at) VALUES (?, ?, ?, ?)`, record.Date, record.SourceType, record.SourceID, canonicalDBTime(record.CreatedAt))
 	return err
 }
 
@@ -126,6 +126,15 @@ func (s *Storage) SaveDailyReview(ctx context.Context, record DailyReviewRecord)
 	if record.UpdatedAt.IsZero() {
 		record.UpdatedAt = time.Now()
 	}
+	if record.StartedAt != nil {
+		value := canonicalDBTime(*record.StartedAt)
+		record.StartedAt = &value
+	}
+	if record.GeneratedAt != nil {
+		value := canonicalDBTime(*record.GeneratedAt)
+		record.GeneratedAt = &value
+	}
+	record.UpdatedAt = canonicalDBTime(record.UpdatedAt)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO daily_reviews
 		(date, status, generation_mode, revision, generated_evidence_revision, input_hash, schema_version, prompt_version, provider, model, review_json, markdown, attempt_count, started_at, generated_at, updated_at, error_code)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -196,7 +205,7 @@ func (s *Storage) DeleteDailyReview(ctx context.Context, date string) error {
 }
 
 func (s *Storage) MarkDailyReviewStale(ctx context.Context, date string, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE daily_reviews SET status = 'STALE', updated_at = ? WHERE date = ? AND status = 'READY'`, now, date)
+	_, err := s.db.ExecContext(ctx, `UPDATE daily_reviews SET status = 'STALE', updated_at = ? WHERE date = ? AND status = 'READY'`, canonicalDBTime(now), date)
 	return err
 }
 
@@ -210,7 +219,7 @@ func (s *Storage) MarkDailyReviewReady(ctx context.Context, date string, revisio
 	result, err := s.db.ExecContext(ctx, `UPDATE daily_reviews
 		SET status = 'READY', generated_at = ?, updated_at = ?, error_code = ?
 		WHERE date = ? AND revision = ? AND status = 'PENDING'`,
-		generatedAt, updatedAt, errorCode, date, revision)
+		canonicalDBTime(generatedAt), canonicalDBTime(updatedAt), errorCode, date, revision)
 	if err != nil {
 		return err
 	}

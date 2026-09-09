@@ -13,6 +13,7 @@ type DailyEvidenceBundle struct {
 	Motivation       MotivationSummary         `json:"motivation"`
 	ChatTurns        []ChatTurnSummary         `json:"chat_turns"`
 	Semantic         []SemanticSummary         `json:"semantic"`
+	BehaviorSemantic []SemanticSummary         `json:"behavior_semantic,omitempty"`
 	Missions         []CompletedMissionSummary `json:"completed_missions"`
 	Quality          EvidenceQuality           `json:"quality"`
 	Warnings         []string                  `json:"warnings"`
@@ -111,9 +112,10 @@ type CompletedMissionSummary struct {
 }
 
 type EvidenceQuality struct {
-	Score             float64 `json:"score"`
-	StudyStatePresent bool    `json:"study_state_present"`
-	HasEligibleChat   bool    `json:"has_eligible_chat"`
-	HasSemantic       bool    `json:"has_semantic"`
-	HasAccomplishment bool    `json:"has_accomplishment"`
+	Score                   float64 `json:"score"`
+	StudyStatePresent       bool    `json:"study_state_present"`
+	HasEligibleChat         bool    `json:"has_eligible_chat"`
+	HasSemantic             bool    `json:"has_semantic"`
+	HasAccomplishment       bool    `json:"has_accomplishment"`
+	SessionDurationMismatch bool    `json:"session_duration_mismatch"`
 }

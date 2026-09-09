@@ -114,8 +114,8 @@ func TestAggregatorUsesSemanticDatabaseIDReference(t *testing.T) {
 	if len(bundle.Semantic) != 1 || bundle.Semantic[0].ID <= 0 || bundle.Semantic[0].Ref != "semantic:"+itoa64(bundle.Semantic[0].ID) {
 		t.Fatalf("semantic evidence=%+v", bundle.Semantic)
 	}
-	if !bundle.Quality.HasSemantic {
-		t.Fatal("semantic evidence did not set quality.has_semantic")
+	if bundle.Quality.HasSemantic {
+		t.Fatal("behavior-only semantic evidence must not set quality.has_semantic")
 	}
 }
 
@@ -143,5 +143,44 @@ func TestAggregatorIncludesCompletedMissionEvidence(t *testing.T) {
 	}
 	if !bundle.Quality.HasAccomplishment {
 		t.Fatal("completed mission did not set accomplishment quality")
+	}
+}
+
+func TestAggregatorWarnsOnSessionDurationMismatch(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	base := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
+	if err := store.UpdateDailyState(ctx, "2026-09-08", 0, 120, 0, 0, 0, base); err != nil {
+		t.Fatal(err)
+	}
+	end1 := base.Add(time.Minute)
+	end2 := base.Add(2 * time.Minute)
+	for _, session := range []storage.SessionRecord{
+		{ID: "s1", Mode: "STUDY", Task: "Go", StartedAt: base, EndedAt: &end1, DurationSeconds: 100},
+		{ID: "s2", Mode: "STUDY", Task: "Go", StartedAt: end1, EndedAt: &end2, DurationSeconds: 40},
+	} {
+		if err := store.SaveSession(ctx, session); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle, err := NewAggregator(store, time.UTC).Build(ctx, "2026-09-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bundle.Quality.SessionDurationMismatch {
+		t.Fatalf("quality=%+v", bundle.Quality)
+	}
+	found := false
+	for _, warning := range bundle.Warnings {
+		if warning == "session_duration_mismatch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("warnings=%v", bundle.Warnings)
 	}
 }

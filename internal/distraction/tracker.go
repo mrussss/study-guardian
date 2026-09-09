@@ -44,13 +44,15 @@ type Input struct {
 }
 
 type Tracker struct {
-	mu            sync.Mutex
-	store         *storage.Storage
-	timing        Timing
-	pendingSince  time.Time
-	unknownSince  time.Time
-	recoverySince time.Time
-	current       *storage.DistractionEventRecord
+	mu                  sync.Mutex
+	store               *storage.Storage
+	timing              Timing
+	pendingSince        time.Time
+	unknownSince        time.Time
+	recoverySince       time.Time
+	unavailableSince    time.Time
+	excludedUnavailable time.Duration
+	current             *storage.DistractionEventRecord
 }
 
 var sequence atomic.Uint64
@@ -101,11 +103,28 @@ func (t *Tracker) Observe(ctx context.Context, input Input) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if input.UserMode != state.UserModeStudy || !input.ActivityWatchOK || !input.ActivityFresh || input.Privacy != state.PrivacyNormal || input.Locked {
+	if input.UserMode != state.UserModeStudy || !input.ActivityWatchOK || input.Privacy != state.PrivacyNormal || input.Locked {
 		t.pendingSince = time.Time{}
 		t.unknownSince = time.Time{}
 		t.recoverySince = time.Time{}
 		return t.closeLocked(ctx, input.Now, closeReason(input))
+	}
+	if !input.ActivityFresh {
+		// A debounced ActivityWatch outage is not a new behavioral state. Hold
+		// the current event open, but do not extend its duration until a trusted
+		// sample returns. This prevents short gaps from fragmenting or inflating
+		// distraction totals.
+		t.pendingSince = time.Time{}
+		t.unknownSince = time.Time{}
+		t.recoverySince = time.Time{}
+		if t.current != nil && t.unavailableSince.IsZero() {
+			t.unavailableSince = input.Now
+		}
+		return nil
+	}
+	if !t.unavailableSince.IsZero() {
+		t.excludedUnavailable += input.Now.Sub(t.unavailableSince)
+		t.unavailableSince = time.Time{}
 	}
 
 	if t.current != nil && storage.LocalDate(t.current.StartedAt) != storage.LocalDate(input.Now) {
@@ -191,7 +210,7 @@ func (t *Tracker) updateOpenLocked(ctx context.Context, input Input) error {
 		return nil
 	}
 	event := *t.current
-	event.DurationSeconds = maxSeconds(input.Now.Sub(event.StartedAt))
+	event.DurationSeconds = t.durationSecondsLocked(input.Now)
 	if input.ReminderLevel != "" {
 		event.ReminderLevel = input.ReminderLevel
 	}
@@ -215,8 +234,9 @@ func (t *Tracker) closeLocked(ctx context.Context, now time.Time, reason string)
 		return nil
 	}
 	event := *t.current
-	event.EndedAt = &now
-	event.DurationSeconds = maxSeconds(now.Sub(event.StartedAt))
+	endedAt := now.Round(0)
+	event.EndedAt = &endedAt
+	event.DurationSeconds = t.durationSecondsLocked(now)
 	event.EndReason = reason
 	if t.store != nil {
 		if err := t.store.UpdateDistractionEvent(ctx, event); err != nil {
@@ -227,7 +247,20 @@ func (t *Tracker) closeLocked(ctx context.Context, now time.Time, reason string)
 		}
 	}
 	t.current = nil
+	t.unavailableSince = time.Time{}
+	t.excludedUnavailable = 0
 	return nil
+}
+
+func (t *Tracker) durationSecondsLocked(now time.Time) int64 {
+	if t.current == nil {
+		return 0
+	}
+	excluded := t.excludedUnavailable
+	if !t.unavailableSince.IsZero() {
+		excluded += now.Sub(t.unavailableSince)
+	}
+	return maxSeconds(now.Sub(t.current.StartedAt) - excluded)
 }
 
 func closeReason(input Input) string {

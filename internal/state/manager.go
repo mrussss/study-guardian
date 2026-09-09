@@ -69,12 +69,17 @@ type Manager struct {
 	lastTickTime   time.Time
 	lastActivityAt *time.Time
 
-	activityWatchOK         bool
-	screenSensorOK          bool
-	currentReminder         *ReminderEvent
-	reminderRecoverySince   time.Time
-	pendingAutomationIntent *AutomationIntent
-	feedbacks               []FeedbackRecord
+	activityWatchOK                  bool
+	activityWatchLastSuccessAt       *time.Time
+	activityWatchConsecutiveFailures int
+	activityWatchStableOK            bool
+	activityWatchHealthPhase         ActivityWatchHealthPhase
+	screenSensorOK                   bool
+	currentReminder                  *ReminderEvent
+	reminderRecoverySince            time.Time
+	pendingAutomationIntent          *AutomationIntent
+	autoPauseSnoozeUntil             *time.Time
+	feedbacks                        []FeedbackRecord
 
 	toastNotifier func(title, msg string) error
 }
@@ -94,25 +99,27 @@ func NewPersistentManager(
 	dateStr := now.Format("2006-01-02")
 
 	m := &Manager{
-		clock:           clock,
-		cfg:             cfg,
-		storage:         store,
-		ruleEngine:      ruleEngine,
-		privacyGate:     privacyGate,
-		reminderEng:     reminderEng,
-		currentDate:     dateStr,
-		userMode:        UserModeStandby,
-		interaction:     InteractionUnknown,
-		relation:        RelationUnknown,
-		privacy:         PrivacyNormal,
-		confidence:      1.0,
-		modeOrigin:      ModeOriginManual,
-		pauseReason:     PauseReasonNone,
-		modeStartTime:   now,
-		lastTickTime:    now,
-		lastActivityAt:  &now,
-		activityWatchOK: true,
-		screenSensorOK:  true,
+		clock:                    clock,
+		cfg:                      cfg,
+		storage:                  store,
+		ruleEngine:               ruleEngine,
+		privacyGate:              privacyGate,
+		reminderEng:              reminderEng,
+		currentDate:              dateStr,
+		userMode:                 UserModeStandby,
+		interaction:              InteractionUnknown,
+		relation:                 RelationUnknown,
+		privacy:                  PrivacyNormal,
+		confidence:               1.0,
+		modeOrigin:               ModeOriginManual,
+		pauseReason:              PauseReasonNone,
+		modeStartTime:            now,
+		lastTickTime:             now,
+		lastActivityAt:           &now,
+		activityWatchOK:          true,
+		activityWatchStableOK:    true,
+		activityWatchHealthPhase: ActivityWatchAvailable,
+		screenSensorOK:           true,
 	}
 
 	// 1. Load Daily State
@@ -235,28 +242,32 @@ func (m *Manager) GetStatus() SystemStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.clock.Now()
-	m.clearExpiredAutomationIntentLocked(now)
 	m.clearExpiredReminderLocked(now)
 	pending := cloneAutomationIntent(m.pendingAutomationIntent)
 	return SystemStatus{
-		UserMode:                m.userMode,
-		InteractionState:        m.interaction,
-		TaskRelation:            m.relation,
-		PrivacyState:            m.privacy,
-		Confidence:              m.confidence,
-		Task:                    m.task,
-		StudySeconds:            m.studySeconds,
-		BreakSeconds:            m.breakSeconds,
-		ActiveSeconds:           m.activeSeconds,
-		LastActivityAt:          m.lastActivityAt,
-		ActivityWatchOK:         m.activityWatchOK,
-		ScreenSensorOK:          m.screenSensorOK,
-		CurrentReminder:         m.currentReminder,
-		ModeOrigin:              m.modeOrigin,
-		PauseReason:             m.pauseReason,
-		AutoResumeEligible:      m.autoResumeEligible,
-		ManualOverrideUntil:     m.manualOverrideUntil,
-		PendingAutomationIntent: pending,
+		UserMode:                         m.userMode,
+		InteractionState:                 m.interaction,
+		TaskRelation:                     m.relation,
+		PrivacyState:                     m.privacy,
+		Confidence:                       m.confidence,
+		Task:                             m.task,
+		StudySeconds:                     m.studySeconds,
+		BreakSeconds:                     m.breakSeconds,
+		ActiveSeconds:                    m.activeSeconds,
+		LastActivityAt:                   m.lastActivityAt,
+		ActivityWatchOK:                  m.activityWatchOK,
+		ActivityWatchLastSuccessAt:       m.activityWatchLastSuccessAt,
+		ActivityWatchConsecutiveFailures: m.activityWatchConsecutiveFailures,
+		ActivityWatchStableOK:            m.activityWatchStableOK,
+		ActivityWatchHealthPhase:         m.activityWatchHealthPhase,
+		ScreenSensorOK:                   m.screenSensorOK,
+		CurrentReminder:                  m.currentReminder,
+		ModeOrigin:                       m.modeOrigin,
+		PauseReason:                      m.pauseReason,
+		AutoResumeEligible:               m.autoResumeEligible,
+		ManualOverrideUntil:              m.manualOverrideUntil,
+		AutoPauseSnoozeUntil:             m.autoPauseSnoozeUntil,
+		PendingAutomationIntent:          pending,
 	}
 }
 
@@ -289,6 +300,7 @@ func (m *Manager) SetModeStudy(task string) error {
 	m.currentModeSeconds = 0
 	m.clearCurrentReminderLocked()
 	m.pendingAutomationIntent = nil
+	m.autoPauseSnoozeUntil = nil
 	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
@@ -329,6 +341,7 @@ func (m *Manager) SetModeBreak() error {
 	m.currentModeSeconds = 0
 	m.clearCurrentReminderLocked()
 	m.pendingAutomationIntent = nil
+	m.autoPauseSnoozeUntil = nil
 	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
@@ -365,6 +378,7 @@ func (m *Manager) SetModeOff() error {
 	m.currentModeSeconds = 0
 	m.clearCurrentReminderLocked()
 	m.pendingAutomationIntent = nil
+	m.autoPauseSnoozeUntil = nil
 	m.currentSessID = newSessionID(now)
 
 	if m.storage != nil {
@@ -413,9 +427,8 @@ func (m *Manager) clearExpiredAutomationIntentLocked(now time.Time) {
 }
 
 func (m *Manager) PendingAutomationIntent() *AutomationIntent {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.clearExpiredAutomationIntentLocked(m.clock.Now())
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return cloneAutomationIntent(m.pendingAutomationIntent)
 }
 
@@ -440,8 +453,35 @@ func (m *Manager) RejectAutomationIntent(id string) error {
 	if m.pendingAutomationIntent == nil || (id != "" && m.pendingAutomationIntent.ID != id) {
 		return errors.New("automation intent is not pending")
 	}
+	intent := *m.pendingAutomationIntent
 	m.pendingAutomationIntent = nil
+	if intent.Transition == AutomationPause {
+		deadline := m.clock.Now().Add(4 * time.Minute)
+		m.autoPauseSnoozeUntil = &deadline
+	}
 	return nil
+}
+
+func (m *Manager) ProcessExpiredAutomationIntent(now time.Time) error {
+	m.mu.Lock()
+	if now.IsZero() {
+		now = m.clock.Now()
+	}
+	pending := m.pendingAutomationIntent
+	if pending == nil || pending.ExpiresAt.IsZero() || now.Before(pending.ExpiresAt) {
+		m.mu.Unlock()
+		return nil
+	}
+	intent := *pending
+	m.pendingAutomationIntent = nil
+	action := intent.ExpiryAction
+	m.mu.Unlock()
+
+	if action != AutomationExpiryApply {
+		return nil
+	}
+	intent.RequiresConfirmation = false
+	return m.applyAutomationIntentNow(intent)
 }
 
 // ApplyAutomationIntent either applies an intent immediately or records a
@@ -463,6 +503,13 @@ func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
 		}
 		if intent.ExpiresAt.IsZero() {
 			intent.ExpiresAt = now.Add(15 * time.Second)
+		}
+		if intent.ExpiryAction == "" {
+			if intent.Transition == AutomationPause || intent.Transition == AutomationResume {
+				intent.ExpiryAction = AutomationExpiryApply
+			} else {
+				intent.ExpiryAction = AutomationExpiryDismiss
+			}
 		}
 		m.pendingAutomationIntent = &intent
 		notifier := m.toastNotifier
@@ -512,6 +559,7 @@ func (m *Manager) applyAutomationIntentNow(intent AutomationIntent) error {
 		m.userMode = UserModeBreak
 		m.modeOrigin, m.pauseReason, m.autoResumeEligible = ModeOriginAutomation, intent.Reason, true
 		m.manualOverrideUntil = nil
+		m.autoPauseSnoozeUntil = nil
 		notice = "已离开学习，计时已自动暂停。"
 	case AutomationResume:
 		if m.userMode != UserModeBreak || m.modeOrigin != ModeOriginAutomation || !m.autoResumeEligible {
@@ -583,7 +631,32 @@ func (m *Manager) SetHealth(awOK, sensorOK bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.activityWatchOK = awOK
+	m.activityWatchStableOK = awOK
+	if awOK {
+		m.activityWatchHealthPhase = ActivityWatchAvailable
+	} else {
+		m.activityWatchHealthPhase = ActivityWatchUnavailable
+	}
 	m.screenSensorOK = sensorOK
+}
+
+func (m *Manager) SetActivityWatchHealth(diagnostics ActivityWatchDiagnostics, sensorOK bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.activityWatchOK = diagnostics.StableOK
+	m.activityWatchStableOK = diagnostics.StableOK
+	m.activityWatchLastSuccessAt = cloneTimePtr(diagnostics.LastSuccessAt)
+	m.activityWatchConsecutiveFailures = diagnostics.ConsecutiveFailures
+	m.activityWatchHealthPhase = diagnostics.Phase
+	m.screenSensorOK = sensorOK
+}
+
+func cloneTimePtr(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := value.Round(0)
+	return &copy
 }
 
 func (m *Manager) UpdateObservation(obs Observation) {

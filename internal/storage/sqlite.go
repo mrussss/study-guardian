@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -412,37 +414,65 @@ func (s *Storage) migrate() error {
 	return s.ensureDailyEvidenceDateColumns()
 }
 
+const currentRestartRepairVersion = 2
+
 func (s *Storage) repairRestartInheritedDurations() error {
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS session_duration_repairs (
 		session_id TEXT PRIMARY KEY,
-		previous_session_id TEXT NOT NULL,
-		repaired_at TIMESTAMP NOT NULL
+		previous_session_id TEXT NOT NULL DEFAULT '',
+		original_duration_seconds INTEGER NOT NULL DEFAULT 0,
+		repaired_duration_seconds INTEGER NOT NULL DEFAULT 0,
+		repair_reason TEXT NOT NULL DEFAULT '',
+		repaired_at TIMESTAMP NOT NULL,
+		repair_version INTEGER NOT NULL DEFAULT 1
 	);`); err != nil {
 		return err
 	}
-
-	type row struct {
-		id, mode, task, endReason string
-		startedAt                 time.Time
-		endedAt                   *time.Time
-		duration                  int64
+	for _, column := range []struct{ name, definition string }{
+		{`original_duration_seconds`, `INTEGER NOT NULL DEFAULT 0`},
+		{`repaired_duration_seconds`, `INTEGER NOT NULL DEFAULT 0`},
+		{`repair_reason`, `TEXT NOT NULL DEFAULT ''`},
+		{`repair_version`, `INTEGER NOT NULL DEFAULT 1`},
+	} {
+		if err := s.ensureColumn(`session_duration_repairs`, column.name, column.definition); err != nil {
+			return err
+		}
 	}
-	tx, err := s.db.Begin()
+	type sessionRow struct {
+		id, mode, task, localDate, endReason string
+		startedAt                            time.Time
+		endedAt                              *time.Time
+		duration                             int64
+	}
+	rows, err := s.db.Query(`SELECT id, mode, task, started_at, local_date, ended_at, duration_seconds, end_reason FROM sessions`)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-
-	rows, err := tx.Query(`SELECT id, mode, task, started_at, ended_at, duration_seconds, end_reason FROM sessions ORDER BY started_at, id`)
-	if err != nil {
-		return err
-	}
-	var records []row
+	var records []sessionRow
 	for rows.Next() {
-		var item row
-		if err := rows.Scan(&item.id, &item.mode, &item.task, &item.startedAt, &item.endedAt, &item.duration, &item.endReason); err != nil {
+		var item sessionRow
+		var startedRaw, endedRaw any
+		if err := rows.Scan(&item.id, &item.mode, &item.task, &startedRaw, &item.localDate, &endedRaw, &item.duration, &item.endReason); err != nil {
 			rows.Close()
 			return err
+		}
+		started, ok := parseStoredDBTime(startedRaw)
+		if !ok {
+			log.Printf(`[Storage] session duration repair skipped id=%s reason=invalid_started_at`, item.id)
+			continue
+		}
+		item.startedAt = started.Round(0)
+		if endedRaw != nil {
+			ended, ok := parseStoredDBTime(endedRaw)
+			if !ok {
+				log.Printf(`[Storage] session duration repair skipped id=%s reason=invalid_ended_at`, item.id)
+				continue
+			}
+			ended = ended.Round(0)
+			item.endedAt = &ended
+		}
+		if item.localDate == `` {
+			item.localDate = LocalDate(item.startedAt)
 		}
 		records = append(records, item)
 	}
@@ -451,38 +481,127 @@ func (s *Storage) repairRestartInheritedDurations() error {
 		return err
 	}
 	rows.Close()
-
-	for index := range records {
-		current := records[index]
-		previousIndex := -1
-		for candidate := index - 1; candidate >= 0; candidate-- {
-			previous := records[candidate]
-			if previous.endReason != "RESTART_RECOVERY" || previous.endedAt == nil ||
-				previous.mode != current.mode || previous.task != current.task ||
-				current.startedAt.Before(*previous.endedAt) ||
-				current.startedAt.Sub(*previous.endedAt) > 10*time.Minute {
+	sort.SliceStable(records, func(i, j int) bool {
+		if records[i].startedAt.Equal(records[j].startedAt) {
+			return records[i].id < records[j].id
+		}
+		return records[i].startedAt.Before(records[j].startedAt)
+	})
+	existingRepairs := map[string]int{}
+	repairRows, err := s.db.Query(`SELECT session_id, repair_version FROM session_duration_repairs`)
+	if err != nil {
+		return err
+	}
+	for repairRows.Next() {
+		var id string
+		var version int
+		if err := repairRows.Scan(&id, &version); err != nil {
+			repairRows.Close()
+			return err
+		}
+		existingRepairs[id] = version
+	}
+	if err := repairRows.Err(); err != nil {
+		repairRows.Close()
+		return err
+	}
+	repairRows.Close()
+	type dailyTotals struct{ standby, study, breakSeconds, off int64 }
+	dailyRows, err := s.db.Query(`SELECT date, standby_seconds, study_seconds, break_seconds, off_seconds FROM daily_state`)
+	if err != nil {
+		return err
+	}
+	daily := map[string]dailyTotals{}
+	for dailyRows.Next() {
+		var date string
+		var totals dailyTotals
+		if err := dailyRows.Scan(&date, &totals.standby, &totals.study, &totals.breakSeconds, &totals.off); err != nil {
+			dailyRows.Close()
+			return err
+		}
+		daily[date] = totals
+	}
+	if err := dailyRows.Err(); err != nil {
+		dailyRows.Close()
+		return err
+	}
+	dailyRows.Close()
+	sumByMode := map[string]int64{}
+	for _, item := range records {
+		sumByMode[item.localDate+`|`+item.mode] += item.duration
+	}
+	targetForMode := func(t dailyTotals, mode string) (int64, bool) {
+		switch mode {
+		case `STANDBY`:
+			return t.standby, true
+		case `STUDY`:
+			return t.study, true
+		case `BREAK`:
+			return t.breakSeconds, true
+		case `OFF`:
+			return t.off, true
+		default:
+			return 0, false
+		}
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for date, totals := range daily {
+		for _, mode := range []string{`STANDBY`, `STUDY`, `BREAK`, `OFF`} {
+			target, ok := targetForMode(totals, mode)
+			if !ok {
 				continue
 			}
-			previousIndex = candidate
-			break
-		}
-		if previousIndex < 0 || current.duration <= 0 || records[previousIndex].duration <= 0 ||
-			current.duration < records[previousIndex].duration {
-			continue
-		}
-		var exists int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM session_duration_repairs WHERE session_id = ?`, current.id).Scan(&exists); err != nil {
-			return err
-		}
-		if exists != 0 {
-			continue
-		}
-		corrected := current.duration - records[previousIndex].duration
-		if _, err := tx.Exec(`UPDATE sessions SET duration_seconds = ? WHERE id = ?`, corrected, current.id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`INSERT INTO session_duration_repairs(session_id, previous_session_id, repaired_at) VALUES(?,?,?)`, current.id, records[previousIndex].id, canonicalDBTime(time.Now())); err != nil {
-			return err
+			key := date + `|` + mode
+			excess := sumByMode[key] - target
+			if excess <= 0 {
+				continue
+			}
+			candidates := []int{}
+			var candidateTotal int64
+			for index, item := range records {
+				if item.localDate != date || item.mode != mode || item.endedAt == nil || item.endReason != `RESTART_RECOVERY` || item.duration <= 0 {
+					continue
+				}
+				if _, repaired := existingRepairs[item.id]; repaired {
+					continue
+				}
+				actualSeconds := int64(item.endedAt.Sub(item.startedAt).Seconds())
+				if actualSeconds < 0 || item.duration <= actualSeconds+5 {
+					continue
+				}
+				candidates = append(candidates, index)
+				candidateTotal += item.duration
+			}
+			if candidateTotal != excess || len(candidates) == 0 {
+				log.Printf(`[Storage] session duration mismatch date=%s mode=%s session_seconds=%d daily_state_seconds=%d excess=%d candidate_seconds=%d candidates=%d reason=not_safely_repairable`, date, mode, sumByMode[key], target, excess, candidateTotal, len(candidates))
+				continue
+			}
+			for _, index := range candidates {
+				item := records[index]
+				previousID := ``
+				for previous := index - 1; previous >= 0; previous-- {
+					prior := records[previous]
+					if prior.mode == item.mode && prior.task == item.task && prior.endedAt != nil && prior.endReason == `RESTART_RECOVERY` && !item.startedAt.Before(*prior.endedAt) && item.startedAt.Sub(*prior.endedAt) <= 10*time.Minute {
+						previousID = prior.id
+						break
+					}
+				}
+				corrected := int64(0)
+				if _, err := tx.Exec(`UPDATE sessions SET duration_seconds = ? WHERE id = ?`, corrected, item.id); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(`INSERT INTO session_duration_repairs (session_id, previous_session_id, original_duration_seconds, repaired_duration_seconds, repair_reason, repaired_at, repair_version) VALUES (?, ?, ?, ?, ?, ?, ?)`, item.id, previousID, item.duration, corrected, `daily_state_restart_inheritance_mismatch`, canonicalDBTime(time.Now()), currentRestartRepairVersion); err != nil {
+					return err
+				}
+				records[index].duration = corrected
+				existingRepairs[item.id] = currentRestartRepairVersion
+				log.Printf(`[Storage] repaired restart session id=%s original_seconds=%d repaired_seconds=%d reason=daily_state_restart_inheritance_mismatch version=%d`, item.id, item.duration, corrected, currentRestartRepairVersion)
+			}
+			sumByMode[key] -= candidateTotal
 		}
 	}
 	return tx.Commit()
@@ -818,7 +937,7 @@ func (s *Storage) MarkReminderInactive(ctx context.Context, id string) error {
 
 func (s *Storage) RecordFeedback(ctx context.Context, eventID, feedback string, t time.Time) error {
 	query := `INSERT INTO feedback (event_id, feedback, created_at) VALUES (?, ?, ?);`
-	_, err := s.db.ExecContext(ctx, query, eventID, feedback, t)
+	_, err := s.db.ExecContext(ctx, query, eventID, feedback, canonicalDBTime(t))
 	return err
 }
 
@@ -832,6 +951,7 @@ func (s *Storage) UpdateDailyState(ctx context.Context, date string, standby, st
 			off_seconds = excluded.off_seconds,
 			active_seconds = excluded.active_seconds,
 			updated_at = excluded.updated_at;`
+	now = canonicalDBTime(now)
 	_, err := s.db.ExecContext(ctx, query, date, standby, study, breakSec, off, active, now, now)
 	return err
 }
@@ -900,12 +1020,46 @@ func (s *Storage) LoadDailyState(ctx context.Context, date string) (standby, stu
 	return
 }
 
+func scanSessionRows(rows *sql.Rows) ([]SessionRecord, error) {
+	defer rows.Close()
+	var records []SessionRecord
+	for rows.Next() {
+		var record SessionRecord
+		if err := rows.Scan(&record.ID, &record.Mode, &record.Task, &record.StartedAt, &record.LocalDate, &record.EndedAt, &record.DurationSeconds, &record.EndReason, &record.ModeOrigin, &record.PauseReason, &record.AutoResumeEligible); err != nil {
+			return nil, err
+		}
+		record.StartedAt = canonicalDBTime(record.StartedAt)
+		if record.EndedAt != nil {
+			value := canonicalDBTime(*record.EndedAt)
+			record.EndedAt = &value
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(records, func(i, j int) bool {
+		if records[i].StartedAt.Equal(records[j].StartedAt) {
+			return records[i].ID < records[j].ID
+		}
+		return records[i].StartedAt.Before(records[j].StartedAt)
+	})
+	return records, nil
+}
+
 func (s *Storage) LoadLastSession(ctx context.Context) (SessionRecord, error) {
-	query := `SELECT id, mode, task, started_at, local_date, ended_at, duration_seconds, end_reason, mode_origin, pause_reason, auto_resume_eligible FROM sessions ORDER BY started_at DESC LIMIT 1;`
-	row := s.db.QueryRowContext(ctx, query)
-	var rec SessionRecord
-	err := row.Scan(&rec.ID, &rec.Mode, &rec.Task, &rec.StartedAt, &rec.LocalDate, &rec.EndedAt, &rec.DurationSeconds, &rec.EndReason, &rec.ModeOrigin, &rec.PauseReason, &rec.AutoResumeEligible)
-	return rec, err
+	rows, err := s.db.QueryContext(ctx, `SELECT id, mode, task, started_at, local_date, ended_at, duration_seconds, end_reason, mode_origin, pause_reason, auto_resume_eligible FROM sessions`)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	records, err := scanSessionRows(rows)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	if len(records) == 0 {
+		return SessionRecord{}, sql.ErrNoRows
+	}
+	return records[len(records)-1], nil
 }
 
 // LoadOpenSession returns the most recently persisted session that was not
@@ -913,12 +1067,18 @@ func (s *Storage) LoadLastSession(ctx context.Context) (SessionRecord, error) {
 // restart must recover only an interrupted session, never a previously
 // completed mode.
 func (s *Storage) LoadOpenSession(ctx context.Context) (SessionRecord, error) {
-	query := `SELECT id, mode, task, started_at, local_date, ended_at, duration_seconds, end_reason, mode_origin, pause_reason, auto_resume_eligible
-		FROM sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1;`
-	row := s.db.QueryRowContext(ctx, query)
-	var rec SessionRecord
-	err := row.Scan(&rec.ID, &rec.Mode, &rec.Task, &rec.StartedAt, &rec.LocalDate, &rec.EndedAt, &rec.DurationSeconds, &rec.EndReason, &rec.ModeOrigin, &rec.PauseReason, &rec.AutoResumeEligible)
-	return rec, err
+	rows, err := s.db.QueryContext(ctx, `SELECT id, mode, task, started_at, local_date, ended_at, duration_seconds, end_reason, mode_origin, pause_reason, auto_resume_eligible FROM sessions WHERE ended_at IS NULL`)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	records, err := scanSessionRows(rows)
+	if err != nil {
+		return SessionRecord{}, err
+	}
+	if len(records) == 0 {
+		return SessionRecord{}, sql.ErrNoRows
+	}
+	return records[len(records)-1], nil
 }
 
 // CloseOpenSessions marks every interrupted session closed. Older versions

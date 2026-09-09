@@ -42,6 +42,16 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 	for _, item := range sessions {
 		bundle.Sessions = append(bundle.Sessions, SessionSummary{Ref: "session:" + item.ID, ID: item.ID, Mode: item.Mode, Task: item.Task, StartedAt: item.StartedAt, EndedAt: item.EndedAt, DurationSeconds: item.DurationSeconds})
 	}
+	var sessionStudySeconds int64
+	for _, item := range sessions {
+		if item.Mode == "STUDY" && item.DurationSeconds > 0 {
+			sessionStudySeconds += item.DurationSeconds
+		}
+	}
+	durationMismatch := statePresent && sessionStudySeconds > study+5
+	if durationMismatch {
+		bundle.Warnings = append(bundle.Warnings, "session_duration_mismatch")
+	}
 	distractions, err := a.store.ListDistractionsForDate(ctx, date)
 	if err != nil {
 		return DailyEvidenceBundle{}, err
@@ -125,13 +135,23 @@ func (a *Aggregator) Build(ctx context.Context, date string) (DailyEvidenceBundl
 		bundle.Warnings = append(bundle.Warnings, "review exclusions applied")
 	}
 	bundle.Quality = EvidenceQuality{
-		Score:             qualityScore(bundle),
-		StudyStatePresent: statePresent,
-		HasEligibleChat:   len(bundle.ChatTurns) > 0,
-		HasSemantic:       len(bundle.Semantic) > 0,
-		HasAccomplishment: len(bundle.Missions) > 0,
+		Score:                   qualityScore(bundle),
+		StudyStatePresent:       statePresent,
+		HasEligibleChat:         len(bundle.ChatTurns) > 0,
+		HasSemantic:             hasLearningSemantic(bundle),
+		HasAccomplishment:       len(bundle.Missions) > 0,
+		SessionDurationMismatch: durationMismatch,
 	}
 	return bundle, nil
+}
+
+func hasLearningSemantic(bundle DailyEvidenceBundle) bool {
+	for _, item := range bundle.Semantic {
+		if IsLearningSemantic(item) {
+			return true
+		}
+	}
+	return false
 }
 
 func qualityScore(bundle DailyEvidenceBundle) float64 {
@@ -145,7 +165,7 @@ func qualityScore(bundle DailyEvidenceBundle) float64 {
 	if len(bundle.ChatTurns) > 0 {
 		score += .25
 	}
-	if len(bundle.Semantic) > 0 {
+	if hasLearningSemantic(bundle) {
 		score += .2
 	}
 	return score

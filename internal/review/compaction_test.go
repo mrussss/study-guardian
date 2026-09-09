@@ -122,3 +122,26 @@ func TestCompactFinalInputCapAndRawBundleUnchanged(t *testing.T) {
 		t.Fatalf("expected bounded projection metadata: %+v", input)
 	}
 }
+
+func TestCompactSeparatesBehaviorSemanticFromLearningSemantic(t *testing.T) {
+	bundle := evidence.DailyEvidenceBundle{
+		Date: "2026-09-08",
+		Semantic: []evidence.SemanticSummary{
+			{Ref: "semantic:learning", Relation: "FOCUSED", Privacy: "NORMAL", Confidence: .9, Activity: "CODING", Topic: "Go"},
+			{Ref: "semantic:behavior", Relation: "DISTRACTED", Privacy: "NORMAL", Confidence: .9, Activity: "MESSAGING", Topic: "聊天"},
+		},
+	}
+	input, err := Compact(bundle, ReviewLimits{MaxFinalInputChars: 10000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Semantic) != 1 || input.Semantic[0].Ref != "semantic:learning" {
+		t.Fatalf("learning semantic=%+v", input.Semantic)
+	}
+	if len(input.BehaviorSemantic) != 1 || input.BehaviorSemantic[0].Ref != "semantic:behavior" {
+		t.Fatalf("behavior semantic=%+v", input.BehaviorSemantic)
+	}
+	if !input.Quality.HasSemantic {
+		t.Fatal("learning semantic quality was lost")
+	}
+}

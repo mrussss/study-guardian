@@ -145,13 +145,21 @@ func TestRestartDurationRepairIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := time.Date(2026, 9, 8, 10, 0, 0, 0, time.Local)
+	ctx := context.Background()
+	started := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
 	ended := started.Add(2 * time.Minute)
-	if err := store.SaveSession(context.Background(), SessionRecord{ID: "old", Mode: "STUDY", Task: "Go", StartedAt: started, EndedAt: &ended, DurationSeconds: 120, EndReason: "RESTART_RECOVERY"}); err != nil {
+	if err := store.SaveSession(ctx, SessionRecord{ID: "old", Mode: "STUDY", Task: "Go", StartedAt: started, EndedAt: &ended, DurationSeconds: 120, EndReason: "USER_BREAK"}); err != nil {
 		t.Fatal(err)
 	}
 	current := ended.Add(2 * time.Second)
-	if err := store.SaveSession(context.Background(), SessionRecord{ID: "new", Mode: "STUDY", Task: "Go", StartedAt: current, DurationSeconds: 120}); err != nil {
+	newEnded := current.Add(2 * time.Second)
+	if err := store.SaveSession(ctx, SessionRecord{ID: "new", Mode: "STUDY", Task: "Go", StartedAt: current, EndedAt: &newEnded, DurationSeconds: 120, EndReason: "RESTART_RECOVERY"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateDailyState(ctx, "2026-09-08", 0, 120, 0, 0, 0, current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE sessions SET started_at = ?, ended_at = ? WHERE id = 'old'`, canonicalDBTime(started), canonicalDBTime(ended)); err != nil {
 		t.Fatal(err)
 	}
 	_ = store.Close()
@@ -160,13 +168,21 @@ func TestRestartDurationRepairIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := store.db.QueryRow(`SELECT duration_seconds FROM sessions WHERE id = 'new'`)
 	var duration int64
-	if err := row.Scan(&duration); err != nil {
+	if err := store.db.QueryRow(`SELECT duration_seconds FROM sessions WHERE id = 'new'`).Scan(&duration); err != nil {
 		t.Fatal(err)
 	}
 	if duration != 0 {
 		t.Fatalf("repaired duration=%d, want 0", duration)
+	}
+	var original, repaired int64
+	var reason string
+	var version int
+	if err := store.db.QueryRow(`SELECT original_duration_seconds, repaired_duration_seconds, repair_reason, repair_version FROM session_duration_repairs WHERE session_id = 'new'`).Scan(&original, &repaired, &reason, &version); err != nil {
+		t.Fatal(err)
+	}
+	if original != 120 || repaired != 0 || reason != "daily_state_restart_inheritance_mismatch" || version != currentRestartRepairVersion {
+		t.Fatalf("repair audit=(%d,%d,%q,%d)", original, repaired, reason, version)
 	}
 	_ = store.Close()
 
@@ -175,11 +191,43 @@ func TestRestartDurationRepairIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	row = store.db.QueryRow(`SELECT duration_seconds FROM sessions WHERE id = 'new'`)
-	if err := row.Scan(&duration); err != nil {
+	if err := store.db.QueryRow(`SELECT duration_seconds FROM sessions WHERE id = 'new'`).Scan(&duration); err != nil {
 		t.Fatal(err)
 	}
 	if duration != 0 {
 		t.Fatalf("second migration changed repaired duration=%d", duration)
+	}
+	var repairCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM session_duration_repairs WHERE session_id = 'new'`).Scan(&repairCount); err != nil {
+		t.Fatal(err)
+	}
+	if repairCount != 1 {
+		t.Fatalf("repair count=%d, want 1", repairCount)
+	}
+}
+
+func TestSessionListingSortsMixedTimezoneTextByInstant(t *testing.T) {
+	store, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, err = store.db.Exec(`INSERT INTO sessions (id, mode, task, started_at, local_date, duration_seconds, end_reason)
+		VALUES
+		('later-utc', 'STUDY', 'Go', '2026-09-08 12:00:00.000000000 +0000 UTC', '2026-09-08', 10, ''),
+		('earlier-cst', 'STUDY', 'Go', '2026-09-08 19:59:59.000000000 +0800 CST', '2026-09-08', 10, '')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.ListSessionsForDate(context.Background(), "2026-09-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].ID != "earlier-cst" || rows[1].ID != "later-utc" {
+		t.Fatalf("mixed-timezone order=%+v", rows)
+	}
+	last, err := store.LoadLastSession(context.Background())
+	if err != nil || last.ID != "later-utc" {
+		t.Fatalf("last=%+v err=%v", last, err)
 	}
 }

@@ -38,20 +38,11 @@ type ChatTurnEvidenceRecord struct {
 }
 
 func (s *Storage) ListSessionsForDate(ctx context.Context, date string) ([]SessionRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, mode, task, started_at, local_date, ended_at, duration_seconds, end_reason, mode_origin, pause_reason, auto_resume_eligible FROM sessions WHERE local_date = ? ORDER BY started_at`, date)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, mode, task, started_at, local_date, ended_at, duration_seconds, end_reason, mode_origin, pause_reason, auto_resume_eligible FROM sessions WHERE local_date = ?`, date)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []SessionRecord
-	for rows.Next() {
-		var record SessionRecord
-		if err := rows.Scan(&record.ID, &record.Mode, &record.Task, &record.StartedAt, &record.LocalDate, &record.EndedAt, &record.DurationSeconds, &record.EndReason, &record.ModeOrigin, &record.PauseReason, &record.AutoResumeEligible); err != nil {
-			return nil, err
-		}
-		out = append(out, record)
-	}
-	return out, rows.Err()
+	return scanSessionRows(rows)
 }
 
 func (s *Storage) ListDistractionsForDate(ctx context.Context, date string) ([]DistractionEvidenceRecord, error) {

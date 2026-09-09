@@ -45,22 +45,23 @@ type CompactedConversation struct {
 // providers. It contains existing evidence summaries, not a second database
 // or a second source of truth.
 type ReviewInput struct {
-	SchemaVersion        int                           `json:"schema_version"`
-	Date                 string                        `json:"date"`
-	Timezone             string                        `json:"timezone"`
-	DailyState           evidence.DailyStateSummary    `json:"daily_state"`
-	Sessions             []evidence.SessionSummary     `json:"sessions"`
-	Distractions         []evidence.DistractionSummary `json:"distractions"`
-	Reminders            []evidence.ReminderSummary    `json:"reminders"`
-	Motivation           evidence.MotivationSummary    `json:"motivation"`
-	Semantic             []evidence.SemanticSummary    `json:"semantic"`
-	CompletedMissions   []evidence.CompletedMissionSummary `json:"completed_missions"`
-	ChatConversations    []CompactedConversation       `json:"chat_conversations"`
-	Quality              evidence.EvidenceQuality      `json:"quality"`
-	Warnings             []string                      `json:"warnings"`
-	OmittedTurnCount     int                           `json:"omitted_turn_count"`
-	OmittedEvidenceCount int                           `json:"omitted_evidence_count"`
-	Truncated            bool                          `json:"truncated"`
+	SchemaVersion        int                                `json:"schema_version"`
+	Date                 string                             `json:"date"`
+	Timezone             string                             `json:"timezone"`
+	DailyState           evidence.DailyStateSummary         `json:"daily_state"`
+	Sessions             []evidence.SessionSummary          `json:"sessions"`
+	Distractions         []evidence.DistractionSummary      `json:"distractions"`
+	Reminders            []evidence.ReminderSummary         `json:"reminders"`
+	Motivation           evidence.MotivationSummary         `json:"motivation"`
+	Semantic             []evidence.SemanticSummary         `json:"semantic"`
+	BehaviorSemantic     []evidence.SemanticSummary         `json:"behavior_semantic"`
+	CompletedMissions    []evidence.CompletedMissionSummary `json:"completed_missions"`
+	ChatConversations    []CompactedConversation            `json:"chat_conversations"`
+	Quality              evidence.EvidenceQuality           `json:"quality"`
+	Warnings             []string                           `json:"warnings"`
+	OmittedTurnCount     int                                `json:"omitted_turn_count"`
+	OmittedEvidenceCount int                                `json:"omitted_evidence_count"`
+	Truncated            bool                               `json:"truncated"`
 }
 
 func normalizeReviewLimits(limits ReviewLimits) ReviewLimits {
@@ -81,6 +82,17 @@ func normalizeReviewLimits(limits ReviewLimits) ReviewLimits {
 func Compact(bundle evidence.DailyEvidenceBundle, limits ReviewLimits) (ReviewInput, error) {
 	limits = normalizeReviewLimits(limits)
 	conversations, omittedTurns, truncated := compactConversations(bundle.ChatTurns, limits)
+	learningSemantic := make([]evidence.SemanticSummary, 0, len(bundle.Semantic))
+	behaviorSemantic := append([]evidence.SemanticSummary(nil), bundle.BehaviorSemantic...)
+	for _, item := range bundle.Semantic {
+		if evidence.IsLearningSemantic(item) {
+			learningSemantic = append(learningSemantic, item)
+		} else {
+			behaviorSemantic = append(behaviorSemantic, item)
+		}
+	}
+	quality := bundle.Quality
+	quality.HasSemantic = len(learningSemantic) > 0
 	input := ReviewInput{
 		SchemaVersion:        1,
 		Date:                 bundle.Date,
@@ -90,10 +102,11 @@ func Compact(bundle evidence.DailyEvidenceBundle, limits ReviewLimits) (ReviewIn
 		Distractions:         append([]evidence.DistractionSummary(nil), bundle.Distractions...),
 		Reminders:            append([]evidence.ReminderSummary(nil), bundle.Reminders...),
 		Motivation:           bundle.Motivation,
-		Semantic:             append([]evidence.SemanticSummary(nil), bundle.Semantic...),
+		Semantic:             learningSemantic,
+		BehaviorSemantic:     behaviorSemantic,
 		CompletedMissions:    append([]evidence.CompletedMissionSummary(nil), bundle.Missions...),
 		ChatConversations:    conversations,
-		Quality:              bundle.Quality,
+		Quality:              quality,
 		Warnings:             append([]string(nil), bundle.Warnings...),
 		OmittedTurnCount:     omittedTurns,
 		OmittedEvidenceCount: 0,
@@ -267,6 +280,13 @@ func boundFixedEvidence(input *ReviewInput) {
 	for index := range input.Reminders {
 		input.Reminders[index].Message = headTail(input.Reminders[index].Message, 1024)
 	}
+	for index := range input.BehaviorSemantic {
+		input.BehaviorSemantic[index].Task = headTail(input.BehaviorSemantic[index].Task, 1024)
+		input.BehaviorSemantic[index].App = headTail(input.BehaviorSemantic[index].App, 256)
+		input.BehaviorSemantic[index].Title = headTail(input.BehaviorSemantic[index].Title, 1024)
+		input.BehaviorSemantic[index].Domain = headTail(input.BehaviorSemantic[index].Domain, 512)
+		input.BehaviorSemantic[index].SourceKind = headTail(input.BehaviorSemantic[index].SourceKind, 128)
+	}
 	for index := range input.Semantic {
 		input.Semantic[index].Task = headTail(input.Semantic[index].Task, 1024)
 		input.Semantic[index].App = headTail(input.Semantic[index].App, 256)
@@ -403,6 +423,9 @@ func dropOneFixedEvidence(input *ReviewInput) bool {
 		drop   func(int)
 	}
 	collections := []collection{
+		{len(input.BehaviorSemantic), func(index int) {
+			input.BehaviorSemantic = append(input.BehaviorSemantic[:index], input.BehaviorSemantic[index+1:]...)
+		}},
 		{len(input.Semantic), func(index int) { input.Semantic = append(input.Semantic[:index], input.Semantic[index+1:]...) }},
 		{len(input.Sessions), func(index int) { input.Sessions = append(input.Sessions[:index], input.Sessions[index+1:]...) }},
 		{len(input.Distractions), func(index int) {

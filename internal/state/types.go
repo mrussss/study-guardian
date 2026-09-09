@@ -39,14 +39,37 @@ const (
 	AutomationResume AutomationTransition = "AUTO_RESUME"
 )
 
+type AutomationExpiryAction string
+
+const (
+	AutomationExpiryDismiss AutomationExpiryAction = "DISMISS"
+	AutomationExpiryApply   AutomationExpiryAction = "APPLY"
+)
+
 type AutomationIntent struct {
-	ID                   string               `json:"intent_id"`
-	Transition           AutomationTransition `json:"transition"`
-	Task                 string               `json:"task,omitempty"`
-	Reason               PauseReason          `json:"reason"`
-	CreatedAt            time.Time            `json:"created_at"`
-	ExpiresAt            time.Time            `json:"expires_at"`
-	RequiresConfirmation bool                 `json:"requires_confirmation"`
+	ID                   string                 `json:"intent_id"`
+	Transition           AutomationTransition   `json:"transition"`
+	Task                 string                 `json:"task,omitempty"`
+	Reason               PauseReason            `json:"reason"`
+	CreatedAt            time.Time              `json:"created_at"`
+	ExpiresAt            time.Time              `json:"expires_at"`
+	ExpiryAction         AutomationExpiryAction `json:"expiry_action,omitempty"`
+	RequiresConfirmation bool                   `json:"requires_confirmation"`
+}
+
+type ActivityWatchHealthPhase string
+
+const (
+	ActivityWatchAvailable   ActivityWatchHealthPhase = "AVAILABLE"
+	ActivityWatchDegraded    ActivityWatchHealthPhase = "DEGRADED"
+	ActivityWatchUnavailable ActivityWatchHealthPhase = "UNAVAILABLE"
+)
+
+type ActivityWatchDiagnostics struct {
+	LastSuccessAt       *time.Time
+	ConsecutiveFailures int
+	StableOK            bool
+	Phase               ActivityWatchHealthPhase
 }
 
 type InteractionState string
@@ -243,22 +266,27 @@ type TickOutcome struct {
 }
 
 type SystemStatus struct {
-	UserMode                UserMode          `json:"user_mode"`
-	InteractionState        InteractionState  `json:"interaction_state"`
-	TaskRelation            TaskRelation      `json:"task_relation"`
-	PrivacyState            PrivacyState      `json:"privacy_state"`
-	Confidence              float64           `json:"confidence"`
-	Task                    string            `json:"task"`
-	StudySeconds            int64             `json:"study_seconds"`
-	BreakSeconds            int64             `json:"break_seconds"`
-	ActiveSeconds           int64             `json:"active_seconds"`
-	LastActivityAt          *time.Time        `json:"last_activity_at,omitempty"`
-	ActivityWatchOK         bool              `json:"activitywatch_ok"`
-	ScreenSensorOK          bool              `json:"screen_sensor_ok"`
-	CurrentReminder         *ReminderEvent    `json:"current_reminder,omitempty"`
-	ModeOrigin              ModeOrigin        `json:"mode_origin"`
-	PauseReason             PauseReason       `json:"pause_reason"`
-	AutoResumeEligible      bool              `json:"auto_resume_eligible"`
-	ManualOverrideUntil     *time.Time        `json:"manual_override_until,omitempty"`
-	PendingAutomationIntent *AutomationIntent `json:"pending_automation_intent,omitempty"`
+	UserMode                         UserMode                 `json:"user_mode"`
+	InteractionState                 InteractionState         `json:"interaction_state"`
+	TaskRelation                     TaskRelation             `json:"task_relation"`
+	PrivacyState                     PrivacyState             `json:"privacy_state"`
+	Confidence                       float64                  `json:"confidence"`
+	Task                             string                   `json:"task"`
+	StudySeconds                     int64                    `json:"study_seconds"`
+	BreakSeconds                     int64                    `json:"break_seconds"`
+	ActiveSeconds                    int64                    `json:"active_seconds"`
+	LastActivityAt                   *time.Time               `json:"last_activity_at,omitempty"`
+	ActivityWatchOK                  bool                     `json:"activitywatch_ok"`
+	ActivityWatchLastSuccessAt       *time.Time               `json:"activitywatch_last_success_at,omitempty"`
+	ActivityWatchConsecutiveFailures int                      `json:"activitywatch_consecutive_failures"`
+	ActivityWatchStableOK            bool                     `json:"activitywatch_stable_ok"`
+	ActivityWatchHealthPhase         ActivityWatchHealthPhase `json:"activitywatch_health_phase"`
+	ScreenSensorOK                   bool                     `json:"screen_sensor_ok"`
+	CurrentReminder                  *ReminderEvent           `json:"current_reminder,omitempty"`
+	ModeOrigin                       ModeOrigin               `json:"mode_origin"`
+	PauseReason                      PauseReason              `json:"pause_reason"`
+	AutoResumeEligible               bool                     `json:"auto_resume_eligible"`
+	ManualOverrideUntil              *time.Time               `json:"manual_override_until,omitempty"`
+	AutoPauseSnoozeUntil             *time.Time               `json:"auto_pause_snooze_until,omitempty"`
+	PendingAutomationIntent          *AutomationIntent        `json:"pending_automation_intent,omitempty"`
 }

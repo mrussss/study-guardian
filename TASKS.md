@@ -189,3 +189,12 @@
 - [x] 134. 保留单模型配置兼容；备用模型默认空、最多三个，并在 UI 标明潜在计费
 - [x] 136. AI 全局代理 transport、网络诊断 API/UI、错误 scope 分类与旧配置兼容
 - [~] 135. 后端 AIHubMix Text/Vision/Review API E2E 部分通过；2026-09-08 Text `coding-glm-5.3-flash-free` 受 `account_rate_limited` 阻断，Vision `minimax-m3-free` 通过，Daily Review 已生成 `READY/FALLBACK` 本地总结（revision 6）；Text 成功和 Control Center 完整 UI E2E 仍待验证
+
+### 第二轮监督与复盘修复（2026-09-09）
+
+- 重启恢复会话统一以 UTC 写入；读取和迁移不再依赖 SQLite 文本排序，而是在 Go 中解析真实 instant 排序。`session_duration_repairs` 记录 `original_duration_seconds`、`repaired_duration_seconds`、`repair_reason`、`repair_version`；迁移以 `daily_state` 为事实基准，仅在候选时长总和与日状态差额完全相等时事务修正，重复启动幂等，无法安全归因的 mismatch 只告警不修改。
+- 自动化确认意图由显式 `ProcessExpiredAutomationIntent` 处理：AUTO_PAUSE 到期 APPLY，AUTO_START 到期 DISMISS；`GetStatus`、`PendingAutomationIntent` 等读取不再隐式改变模式。拒绝自动暂停会产生 4 分钟 snooze；总览和 Quick Panel 显示基于 `expires_at` 的确认倒计时。
+- ActivityWatch 使用失败阈值、时间窗口和连续成功恢复的 debounce。短暂失败保持同一分心事件但排除不可用间隔；稳定不可用才关闭并记录诊断字段 `last_success_at`、`consecutive_failures`、`stable_ok`、`health_phase`。
+- Daily Review provider input 将 topic-capable learning semantic 与 behavior-only semantic 分离；Topic 只能引用有主题资格的证据，Accomplishment 必须引用 Completed Mission 等完成证据。发现 sessions 与 `daily_state` 不一致时写入 `session_duration_mismatch` 警告，并限制 fallback 的任务投入时长不超过日学习事实。
+- 本轮自动门禁：Go 全量测试通过；Pet 86 项测试、TypeScript/Vite build、Windows Rust check/test 通过；`native`/`candidate` 通过。WSL 没有 Linux `cargo`，使用仓库 Windows Rust 工具链和 `D:\StudyGuardianBuild` target/staging 完成 Rust 门禁；直接在 `\\wsl$` 路径启用 incremental 会触发 Windows lock 文件错误，因此门禁关闭 incremental。
+- 本轮没有读取、打印、提交 API Key，没有重发付费 AI 请求，也没有自动开启用户的 AI 或自动监督设置。

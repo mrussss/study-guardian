@@ -18,6 +18,7 @@ type ValidationReport struct {
 
 type evidenceRef struct {
 	kind              string
+	topicCapable      bool
 	completionCapable bool
 }
 
@@ -45,31 +46,37 @@ func ValidateDocument(input ReviewInput, document Document) (Document, Validatio
 
 func buildEvidenceIndex(input ReviewInput) evidenceIndex {
 	index := make(evidenceIndex)
-	add := func(ref, kind string, completionCapable bool) {
+	add := func(ref, kind string, topicCapable, completionCapable bool) {
 		ref = strings.TrimSpace(ref)
 		if ref == "" {
 			return
 		}
 		if _, exists := index[ref]; !exists {
-			index[ref] = evidenceRef{kind: kind, completionCapable: completionCapable}
+			index[ref] = evidenceRef{kind: kind, topicCapable: topicCapable, completionCapable: completionCapable}
 		}
 	}
 	for _, item := range input.Sessions {
-		add(item.Ref, "session", false)
+		add(item.Ref, "session", true, false)
 	}
 	for _, item := range input.Distractions {
-		add(item.Ref, "distraction", false)
+		add(item.Ref, "distraction", false, false)
 	}
 	for _, item := range input.Reminders {
-		add(item.Ref, "reminder", false)
+		add(item.Ref, "reminder", false, false)
 	}
 	for _, item := range input.Semantic {
-		add(item.Ref, "semantic", false)
+		add(item.Ref, "semantic", true, false)
 	}
 	for _, conversation := range input.ChatConversations {
 		for _, turn := range conversation.Turns {
-			add(turn.Ref, "chat_turn", false)
+			add(turn.Ref, "chat_turn", true, false)
 		}
+	}
+	for _, mission := range input.CompletedMissions {
+		add(mission.Ref, "completed_mission", true, true)
+	}
+	for _, item := range input.BehaviorSemantic {
+		add(item.Ref, "behavior_semantic", false, false)
 	}
 	return index
 }
@@ -82,7 +89,7 @@ func validateTopics(topics []Topic, index evidenceIndex, report *ValidationRepor
 			report.Warnings = append(report.Warnings, "a topic with invalid confidence was removed")
 			continue
 		}
-		refs := validRefs(topic.EvidenceRefs, index, report)
+		refs := validTopicRefs(topic.EvidenceRefs, index, report)
 		if len(refs) == 0 {
 			report.StrippedTopicCount++
 			report.Warnings = append(report.Warnings, "a topic without valid evidence refs was removed")
@@ -124,6 +131,32 @@ func validateAccomplishments(accomplishments []Accomplishment, index evidenceInd
 		out = append(out, accomplishment)
 	}
 	return out
+}
+
+func validTopicRefs(refs []string, index evidenceIndex, report *ValidationReport) []string {
+	valid := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, raw := range refs {
+		ref := strings.TrimSpace(raw)
+		if ref == "" {
+			report.InvalidReferenceCount++
+			continue
+		}
+		evidence, ok := index[ref]
+		if !ok || !evidence.topicCapable {
+			report.InvalidReferenceCount++
+			if ok {
+				report.Warnings = append(report.Warnings, "behavior-only evidence cannot support a learning topic")
+			}
+			continue
+		}
+		if _, duplicate := seen[ref]; duplicate {
+			continue
+		}
+		seen[ref] = struct{}{}
+		valid = append(valid, ref)
+	}
+	return valid
 }
 
 func validRefs(refs []string, index evidenceIndex, report *ValidationReport) []string {

@@ -19,16 +19,7 @@ type taskInvestment struct {
 }
 
 func isLearningSemantic(item evidence.SemanticSummary) bool {
-	if strings.ToUpper(strings.TrimSpace(item.Relation)) != string(state.RelationFocused) || item.Confidence < 0.6 || (item.Privacy != "" && strings.ToUpper(strings.TrimSpace(item.Privacy)) != string(state.PrivacyNormal)) {
-		return false
-	}
-	activity, _ := state.NormalizeActivity(item.Activity)
-	switch activity {
-	case state.ActivityUnknown, state.ActivityOther, state.ActivityMessaging, state.ActivityGaming:
-		return false
-	default:
-		return true
-	}
+	return evidence.IsLearningSemantic(item)
 }
 
 func learningSemanticCount(bundle evidence.DailyEvidenceBundle) int {
@@ -53,7 +44,7 @@ func distractedSemanticCount(bundle evidence.DailyEvidenceBundle) int {
 
 func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
 	tasks := rankTasks(bundle)
-	doc := Document{SchemaVersion: 1, Date: bundle.Date, Behavior: Behavior{DistractionCount: len(bundle.Distractions), LargestDistractionSec: largestDistraction(bundle)}}
+	doc := Document{SchemaVersion: 1, Date: bundle.Date, Behavior: Behavior{DistractionCount: len(bundle.Distractions), LargestDistractionSec: largestDistraction(bundle)}, Warnings: append([]string(nil), bundle.Warnings...)}
 	doc.Headline = fallbackHeadline(bundle, tasks)
 	if len(tasks) > 0 {
 		doc.TomorrowPriority = fmt.Sprintf("明天优先继续 %s；先完成一个可以独立验证的小任务。", tasks[0].Name)
@@ -275,6 +266,9 @@ func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 	}
 	items := make([]taskInvestment, 0, len(byKey))
 	for _, item := range byKey {
+		if bundle.Quality.SessionDurationMismatch && item.Seconds > bundle.DailyState.StudySeconds {
+			item.Seconds = bundle.DailyState.StudySeconds
+		}
 		items = append(items, *item)
 	}
 	sort.Slice(items, func(i, j int) bool {

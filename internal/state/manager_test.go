@@ -406,8 +406,14 @@ func TestAutomationConfirmationAcceptRejectAndExpiry(t *testing.T) {
 	}
 	now = now.Add(16 * time.Second)
 	clock.Set(now)
-	if got := mgr.GetStatus(); got.PendingAutomationIntent != nil {
-		t.Fatalf("expired intent remains: %+v", got.PendingAutomationIntent)
+	if got := mgr.GetStatus(); got.PendingAutomationIntent == nil {
+		t.Fatalf("expired intent should remain pending until processed: %+v", got)
+	}
+	if err := mgr.ProcessExpiredAutomationIntent(now); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.GetStatus(); got.PendingAutomationIntent != nil || got.UserMode != UserModeOff {
+		t.Fatalf("expired AUTO_START should dismiss without starting: %+v", got)
 	}
 }
 
@@ -425,5 +431,59 @@ func TestManualStudyStillAllowsAutomaticPause(t *testing.T) {
 	}
 	if got := mgr.GetStatus(); got.UserMode != UserModeBreak || got.ModeOrigin != ModeOriginAutomation || !got.AutoResumeEligible {
 		t.Fatalf("manual study was not auto-paused: %+v", got)
+	}
+}
+
+func TestExpiredAutoPauseAppliesOnlyWhenExplicitlyProcessed(t *testing.T) {
+	now := time.Date(2026, 9, 8, 19, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	cfg := config.DefaultConfig()
+	mgr := NewPersistentManager(clock, cfg, nil, nil, nil, nil)
+	if err := mgr.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	intent := AutomationIntent{ID: "intent-pause", Transition: AutomationPause, Reason: PauseReasonIdle, RequiresConfirmation: true}
+	if err := mgr.ApplyAutomationIntent(intent); err != nil {
+		t.Fatal(err)
+	}
+	clock.Set(now.Add(16 * time.Second))
+	if got := mgr.GetStatus(); got.UserMode != UserModeStudy || got.PendingAutomationIntent == nil {
+		t.Fatalf("GetStatus had side effects: %+v", got)
+	}
+	if err := mgr.ProcessExpiredAutomationIntent(clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	got := mgr.GetStatus()
+	if got.UserMode != UserModeBreak || got.ModeOrigin != ModeOriginAutomation || !got.AutoResumeEligible || got.PendingAutomationIntent != nil {
+		t.Fatalf("expired AUTO_PAUSE was not applied: %+v", got)
+	}
+	if err := mgr.ProcessExpiredAutomationIntent(clock.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.GetStatus(); got.UserMode != UserModeBreak {
+		t.Fatalf("second expiry processing changed mode: %+v", got)
+	}
+}
+
+func TestRejectAutomaticPauseCreatesShortSnooze(t *testing.T) {
+	now := time.Date(2026, 9, 8, 20, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	cfg := config.DefaultConfig()
+	mgr := NewPersistentManager(clock, cfg, nil, nil, nil, nil)
+	if err := mgr.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.ApplyAutomationIntent(AutomationIntent{ID: "intent-pause", Transition: AutomationPause, Reason: PauseReasonIdle, RequiresConfirmation: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.RejectAutomationIntent("intent-pause"); err != nil {
+		t.Fatal(err)
+	}
+	got := mgr.GetStatus()
+	if got.AutoPauseSnoozeUntil == nil || !got.AutoPauseSnoozeUntil.After(now.Add(3*time.Minute)) || !got.AutoPauseSnoozeUntil.Before(now.Add(5*time.Minute)) {
+		t.Fatalf("snooze=%v", got.AutoPauseSnoozeUntil)
+	}
+	if got.UserMode != UserModeStudy {
+		t.Fatalf("reject changed mode: %+v", got)
 	}
 }
