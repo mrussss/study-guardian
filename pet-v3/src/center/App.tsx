@@ -781,16 +781,30 @@ export function AutomationSettingsCard({ settings: source, pending, onRefresh, c
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [pendingBusy, setPendingBusy] = useState(false);
+  const draftRef = useRef(draft);
   const sourceFingerprint = useRef<string | undefined>(source ? JSON.stringify(source) : undefined);
   useEffect(() => {
     if (!source) return;
     const fingerprint = JSON.stringify(source);
     const changed = sourceFingerprint.current !== undefined && sourceFingerprint.current !== fingerprint;
     sourceFingerprint.current = fingerprint;
-    if (!dirty) setDraft(normalize(source));
-    else if (changed) setNotice("后台配置已变化，保存将使用当前页面内容");
+    const canonical = normalize(source);
+    if (!dirty) {
+      draftRef.current = canonical;
+      setDraft(canonical);
+    } else if (changed && JSON.stringify(canonical) === JSON.stringify(draftRef.current)) {
+      draftRef.current = canonical;
+      setDraft(canonical);
+      setDirty(false);
+      setNotice("自动学习计时设置已保存");
+    } else if (changed) setNotice("后台配置已变化，保存将使用当前页面内容");
   }, [source, dirty]);
-  const edit = (next: NativeAutomationSettings): void => { setDraft(normalize(next)); setDirty(true); };
+  const edit = (next: NativeAutomationSettings): void => {
+    const normalized = normalize(next);
+    draftRef.current = normalized;
+    setDraft(normalized);
+    setDirty(true);
+  };
   const resolvePending = async (accept: boolean): Promise<void> => {
     if (!pending) return;
     setPendingBusy(true);
@@ -802,6 +816,7 @@ export function AutomationSettingsCard({ settings: source, pending, onRefresh, c
   const save = async (): Promise<void> => {
     setBusy(true);
     const payload = normalize(draft);
+    draftRef.current = payload;
     const result = control.saveAutomationSettings ? await control.saveAutomationSettings(payload) : { ok: false as const, error_kind: "unavailable" as const };
     if (!result.ok) {
       setNotice("自动学习计时设置暂时无法保存");
@@ -811,12 +826,14 @@ export function AutomationSettingsCard({ settings: source, pending, onRefresh, c
     const refreshed = await onRefresh?.();
     const canonical = refreshed?.automation_settings ? normalize(refreshed.automation_settings) : undefined;
     if (!canonical || JSON.stringify(canonical) !== JSON.stringify(payload)) {
+      draftRef.current = payload;
       setDraft(payload);
       setDirty(true);
       setNotice("设置已提交，等待后台配置确认");
       setBusy(false);
       return;
     }
+    draftRef.current = canonical;
     setDraft(canonical);
     setDirty(false);
     setNotice("自动学习计时设置已保存");

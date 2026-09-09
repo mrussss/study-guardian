@@ -81,3 +81,32 @@ test("successful save keeps the draft dirty when refresh still returns old setti
   assert.ok(screen.getAllByRole("status").some(item => item.textContent?.includes("等待后台配置确认")));
   assert.equal(screen.queryByText("自动学习计时设置已保存"), null);
 });
+
+test("a later canonical refresh clears dirty after a previously stale refresh", async () => {
+  const control = controlAdapter({ saveAutomationSettings: async () => ({ ok: true }) });
+  const view = render(<AutomationSettingsCard settings={settings} control={control} onRefresh={() => Promise.resolve({ automation_settings: settings } as never)} />);
+  const user = userEvent.setup();
+  await user.click(screen.getAllByRole("checkbox")[0]);
+  await user.click(screen.getByRole("button", { name: /保存自动计时/ }));
+  await waitFor(() => assert.ok(screen.getByText("有未保存的修改")));
+  const canonical = { ...settings, enabled: true };
+  view.rerender(<AutomationSettingsCard settings={canonical} control={control} onRefresh={() => Promise.resolve({ automation_settings: canonical } as never)} />);
+  await waitFor(() => assert.equal(screen.queryByText("有未保存的修改"), null));
+  assert.ok(screen.getAllByRole("status").some(item => item.textContent?.includes("已保存")));
+});
+
+test("a late canonical refresh cannot overwrite a newer user edit", async () => {
+  const control = controlAdapter({ saveAutomationSettings: async () => ({ ok: true }) });
+  const view = render(<AutomationSettingsCard settings={settings} control={control} onRefresh={() => Promise.resolve({ automation_settings: settings } as never)} />);
+  const user = userEvent.setup();
+  await user.click(screen.getAllByRole("checkbox")[0]);
+  await user.click(screen.getByRole("button", { name: /保存自动计时/ }));
+  await waitFor(() => assert.ok(screen.getByText("有未保存的修改")));
+  const numberInput = screen.getByDisplayValue("45") as HTMLInputElement;
+  await user.clear(numberInput);
+  await user.type(numberInput, "120");
+  const lateCanonical = { ...settings, enabled: true };
+  view.rerender(<AutomationSettingsCard settings={lateCanonical} control={control} onRefresh={() => Promise.resolve({ automation_settings: lateCanonical } as never)} />);
+  assert.equal((screen.getByDisplayValue("120") as HTMLInputElement).value, "120");
+  assert.ok(screen.getByText("有未保存的修改"));
+});
