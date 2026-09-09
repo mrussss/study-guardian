@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -63,6 +64,8 @@ type Manager struct {
 	activeSeconds      int64
 	distractedSeconds  int64
 	idleStaticSeconds  int64
+	afkSeconds         int64
+	afkSince           time.Time
 	currentModeSeconds int64
 
 	modeStartTime  time.Time
@@ -244,6 +247,11 @@ func (m *Manager) GetStatus() SystemStatus {
 	now := m.clock.Now()
 	m.clearExpiredReminderLocked(now)
 	pending := cloneAutomationIntent(m.pendingAutomationIntent)
+	var afkSince *time.Time
+	if !m.afkSince.IsZero() {
+		value := m.afkSince
+		afkSince = &value
+	}
 	return SystemStatus{
 		UserMode:                         m.userMode,
 		InteractionState:                 m.interaction,
@@ -254,6 +262,8 @@ func (m *Manager) GetStatus() SystemStatus {
 		StudySeconds:                     m.studySeconds,
 		BreakSeconds:                     m.breakSeconds,
 		ActiveSeconds:                    m.activeSeconds,
+		AfkSeconds:                       m.afkSeconds,
+		AfkSince:                         afkSince,
 		LastActivityAt:                   m.lastActivityAt,
 		ActivityWatchOK:                  m.activityWatchOK,
 		ActivityWatchLastSuccessAt:       m.activityWatchLastSuccessAt,
@@ -297,6 +307,8 @@ func (m *Manager) SetModeStudy(task string) error {
 	m.modeStartTime = now
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
+	m.afkSeconds = 0
+	m.afkSince = time.Time{}
 	m.currentModeSeconds = 0
 	m.clearCurrentReminderLocked()
 	m.pendingAutomationIntent = nil
@@ -338,6 +350,8 @@ func (m *Manager) SetModeBreak() error {
 	m.modeStartTime = now
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
+	m.afkSeconds = 0
+	m.afkSince = time.Time{}
 	m.currentModeSeconds = 0
 	m.clearCurrentReminderLocked()
 	m.pendingAutomationIntent = nil
@@ -375,6 +389,8 @@ func (m *Manager) SetModeOff() error {
 	m.modeStartTime = now
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
+	m.afkSeconds = 0
+	m.afkSince = time.Time{}
 	m.currentModeSeconds = 0
 	m.clearCurrentReminderLocked()
 	m.pendingAutomationIntent = nil
@@ -506,6 +522,7 @@ func (m *Manager) RejectAutomationIntent(id string) error {
 		m.autoPauseSnoozeUntil = &deadline
 	}
 	m.mu.Unlock()
+	m.RecordAutomationAudit("AUTOMATION_REJECTED", &intent, 0, "user_rejected")
 	return nil
 }
 
@@ -514,7 +531,14 @@ func (m *Manager) ProcessExpiredAutomationIntent(now time.Time) error {
 	intent, resolution := m.resolveExpiredAutomationIntentLocked(now)
 	m.mu.Unlock()
 
-	if resolution != automationIntentApply || intent == nil {
+	if intent == nil {
+		return nil
+	}
+	if resolution == automationIntentDismiss {
+		m.RecordAutomationAudit("AUTOMATION_DISMISSED", intent, 0, "expired")
+		return nil
+	}
+	if resolution != automationIntentApply {
 		return nil
 	}
 	return m.applyAutomationIntentNow(*intent)
@@ -534,7 +558,9 @@ func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
 			return m.ApplyAutomationIntent(intent)
 		}
 		if m.pendingAutomationIntent != nil {
+			blocked := cloneAutomationIntent(m.pendingAutomationIntent)
 			m.mu.Unlock()
+			m.RecordAutomationAudit("AUTOMATION_BLOCKED", blocked, 0, "pending_intent")
 			return nil
 		}
 		if intent.ID == "" {
@@ -556,6 +582,7 @@ func (m *Manager) ApplyAutomationIntent(intent AutomationIntent) error {
 		m.pendingAutomationIntent = &intent
 		notifier := m.toastNotifier
 		m.mu.Unlock()
+		m.RecordAutomationAudit("AUTOMATION_INTENT_CREATED", &intent, 0, "pending_confirmation")
 		if notifier != nil {
 			message := "检测到持续学习，是否开始计时？"
 			if intent.Transition == AutomationPause {
@@ -620,6 +647,8 @@ func (m *Manager) applyAutomationIntentNow(intent AutomationIntent) error {
 	m.currentModeSeconds = 0
 	m.distractedSeconds = 0
 	m.idleStaticSeconds = 0
+	m.afkSeconds = 0
+	m.afkSince = time.Time{}
 	m.clearCurrentReminderLocked()
 	m.currentSessID = newSessionID(now)
 	var saveErr error
@@ -632,6 +661,7 @@ func (m *Manager) applyAutomationIntentNow(intent AutomationIntent) error {
 	if saveErr != nil {
 		return saveErr
 	}
+	m.RecordAutomationAudit("AUTOMATION_APPLIED", &intent, 0, "applied")
 	if notifier != nil {
 		if task != "" && intent.Transition == AutomationStart {
 			notice += "：" + task
@@ -652,6 +682,43 @@ func (m *Manager) SetTask(task string) error {
 	}
 	m.task = task
 	return nil
+}
+
+// RecordAutomationAudit persists bounded automation diagnostics without
+// storing titles, screenshots, prompts, tokens, or provider responses.
+func (m *Manager) RecordAutomationAudit(eventType string, intent *AutomationIntent, thresholdSeconds int64, result string) {
+	if m == nil || m.storage == nil || strings.TrimSpace(eventType) == "" {
+		return
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	m.recordAutomationAuditLocked(eventType, intent, thresholdSeconds, result)
+}
+
+func (m *Manager) recordAutomationAuditLocked(eventType string, intent *AutomationIntent, thresholdSeconds int64, result string) {
+	if m == nil || m.storage == nil || strings.TrimSpace(eventType) == "" {
+		return
+	}
+	now := m.clock.Now()
+	metadata := map[string]interface{}{
+		"timestamp":           now.UTC().Format(time.RFC3339Nano),
+		"user_mode":           string(m.userMode),
+		"interaction":         string(m.interaction),
+		"afk_seconds":         m.afkSeconds,
+		"idle_static_seconds": m.idleStaticSeconds,
+		"threshold_seconds":   thresholdSeconds,
+		"result":              result,
+	}
+	if intent != nil {
+		metadata["intent_id"] = intent.ID
+		metadata["transition"] = string(intent.Transition)
+		metadata["reason"] = string(intent.Reason)
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return
+	}
+	_, _ = m.storage.RecordUIEvent(context.Background(), eventType, "automation decision", string(raw), now)
 }
 
 func (m *Manager) RecordFeedback(eventID, feedback string) error {
@@ -759,6 +826,18 @@ func (m *Manager) TickWithClassification(
 		m.lastActivityAt = &now
 	}
 
+	// AFK duration is independent from the screen-change classification. A
+	// dynamic screen still belongs to the same no-input interval.
+	if isAFK && m.activityWatchOK {
+		m.afkSeconds += deltaSec
+		if m.afkSince.IsZero() {
+			m.afkSince = now.Add(-time.Duration(deltaSec) * time.Second)
+		}
+	} else {
+		m.afkSeconds = 0
+		m.afkSince = time.Time{}
+	}
+
 	// 4. Update Mode duration. A lock screen is not user time in any mode.
 	if !isLocked {
 		m.currentModeSeconds += deltaSec
@@ -798,6 +877,15 @@ func (m *Manager) TickWithClassification(
 		}
 	}
 
+	// Input recovery cancels an unprocessed automatic pause intent. This is
+	// deliberately done in the manager so the UI and background worker share
+	// the same exactly-once state transition.
+	if !isAFK && !isLocked && m.pendingAutomationIntent != nil && m.pendingAutomationIntent.Transition == AutomationPause {
+		cancelled := cloneAutomationIntent(m.pendingAutomationIntent)
+		m.pendingAutomationIntent = nil
+		m.recordAutomationAuditLocked("AUTOMATION_CANDIDATE_CANCELLED", cancelled, 0, "active_input")
+	}
+
 	// 7. Task Relation Evaluation (from classification result). Lock screen
 	// observations must not inherit a stale DISTRACTED result.
 	effectiveClassification := classification
@@ -805,7 +893,11 @@ func (m *Manager) TickWithClassification(
 		m.interaction = InteractionUnknown
 		m.relation = RelationUnknown
 		m.confidence = 1.0
-		effectiveClassification = ClassificationResult{Relation: RelationUnknown, Confidence: 1.0, Reason: "lock screen", SourceKind: SourceKindLocalRule, IsFromRule: true}
+		effectiveClassification = ClassificationResult{Relation: RelationUnknown, Confidence: 1.0, Reason: "lock screen; AI skipped", SourceKind: SourceKindLocalRule, IsFromRule: true}
+	} else if isAFK {
+		m.relation = RelationUnknown
+		m.confidence = 1.0
+		effectiveClassification = ClassificationResult{Relation: RelationUnknown, Confidence: 1.0, Reason: "AFK; AI skipped", SourceKind: SourceKindLocalRule, IsFromRule: true}
 	} else {
 		m.relation = classification.Relation
 		m.confidence = classification.Confidence
@@ -909,7 +1001,15 @@ func (m *Manager) TickWithClassification(
 		ActivityValid:     m.activityWatchOK,
 		Locked:            isLocked,
 		IdleStaticSeconds: m.idleStaticSeconds,
-		Classification:    effectiveClassification,
+		AfkSeconds:        m.afkSeconds,
+		AfkSince: cloneTimePtr(func() *time.Time {
+			if m.afkSince.IsZero() {
+				return nil
+			}
+			value := m.afkSince
+			return &value
+		}()),
+		Classification: effectiveClassification,
 	}
 }
 
@@ -929,6 +1029,8 @@ func (m *Manager) checkMidnightResetLocked(now time.Time) {
 		m.activeSeconds = 0
 		m.distractedSeconds = 0
 		m.idleStaticSeconds = 0
+		m.afkSeconds = 0
+		m.afkSince = time.Time{}
 		m.currentModeSeconds = 0
 		m.clearCurrentReminderLocked()
 		m.modeOrigin = ModeOriginManual

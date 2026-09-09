@@ -173,6 +173,21 @@ func TestManagerSupervisionStateChainAndActivityWatchFailSoft(t *testing.T) {
 	if dynamic.Interaction != InteractionIdleDynamic || dynamic.IdleStaticSeconds != 0 {
 		t.Fatalf("expected IDLE_DYNAMIC with screen change, got %+v", dynamic)
 	}
+	if dynamic.AfkSeconds <= static.AfkSeconds || dynamic.AfkSeconds <= 0 || dynamic.AfkSince == nil {
+		t.Fatalf("AFK duration must span STATIC to DYNAMIC, static=%+v dynamic=%+v", static, dynamic)
+	}
+	now = now.Add(5 * time.Second)
+	clock.Set(now)
+	activeAgain := mgr.Tick(now, "code.exe", "main.go", "", false, false, false)
+	if activeAgain.AfkSeconds != 0 || activeAgain.AfkSince != nil {
+		t.Fatalf("active input must clear AFK interval: %+v", activeAgain)
+	}
+	now = now.Add(5 * time.Second)
+	clock.Set(now)
+	afkClassification := mgr.TickWithClassification(now, "code.exe", "main.go", "", true, true, false, ClassificationResult{Relation: RelationFocused, Confidence: .99, SourceKind: SourceKindTextAI})
+	if afkClassification.Relation != RelationUnknown || afkClassification.Classification.SourceKind != SourceKindLocalRule || afkClassification.Classification.Reason != "AFK; AI skipped" {
+		t.Fatalf("AFK must not inherit or persist AI relation: %+v", afkClassification)
+	}
 
 	beforeOffline := mgr.GetStatus().ActiveSeconds
 	mgr.SetHealth(false, true)

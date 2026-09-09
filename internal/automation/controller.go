@@ -15,7 +15,6 @@ type Controller struct {
 	focusedSince   time.Time
 	focusedKind    string
 	lockedSince    time.Time
-	staticSince    time.Time
 	lastTransition time.Time
 }
 
@@ -35,6 +34,9 @@ func New(cfg config.AutomationConfig) *Controller {
 	if cfg.AutoPause.IdleStaticSeconds <= 0 {
 		cfg.AutoPause.IdleStaticSeconds = 300
 	}
+	if cfg.AutoPause.IdleDynamicSeconds <= 0 {
+		cfg.AutoPause.IdleDynamicSeconds = 900
+	}
 	if cfg.AutoPause.LockedSeconds <= 0 {
 		cfg.AutoPause.LockedSeconds = 15
 	}
@@ -53,7 +55,6 @@ func (c *Controller) UpdateConfig(cfg config.AutomationConfig) {
 	c.cfg = next.cfg
 	c.focusedSince = time.Time{}
 	c.lockedSince = time.Time{}
-	c.staticSince = time.Time{}
 	c.lastTransition = time.Time{}
 	c.focusedKind = ""
 	c.mu.Unlock()
@@ -113,7 +114,6 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 		snoozed := status.AutoPauseSnoozeUntil != nil && now.Before(*status.AutoPauseSnoozeUntil)
 		if snoozed {
 			c.lockedSince = time.Time{}
-			c.staticSince = time.Time{}
 		} else {
 			if outcome.Locked {
 				if c.lockedSince.IsZero() {
@@ -126,16 +126,16 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 			} else {
 				c.lockedSince = time.Time{}
 			}
-			if outcome.Interaction == state.InteractionIdleStatic {
-				if c.staticSince.IsZero() {
-					c.staticSince = now
-				}
-				if now.Sub(c.staticSince) >= time.Duration(c.cfg.AutoPause.IdleStaticSeconds)*time.Second {
-					c.lastTransition = now
-					return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonIdle, RequiresConfirmation: c.cfg.AutoPause.Confirm}
-				}
-			} else {
-				c.staticSince = time.Time{}
+			threshold := 0
+			switch outcome.Interaction {
+			case state.InteractionIdleStatic:
+				threshold = c.cfg.AutoPause.IdleStaticSeconds
+			case state.InteractionIdleDynamic:
+				threshold = c.cfg.AutoPause.IdleDynamicSeconds
+			}
+			if threshold > 0 && status.AfkSeconds >= int64(threshold) {
+				c.lastTransition = now
+				return &state.AutomationIntent{Transition: state.AutomationPause, Reason: state.PauseReasonIdle, RequiresConfirmation: c.cfg.AutoPause.Confirm}
 			}
 		}
 	}

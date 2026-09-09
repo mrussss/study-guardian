@@ -182,10 +182,11 @@ type AutomationStartConfig struct {
 }
 
 type AutomationPauseConfig struct {
-	Enabled           bool `yaml:"enabled"`
-	IdleStaticSeconds int  `yaml:"idle_static_seconds"`
-	LockedSeconds     int  `yaml:"locked_seconds"`
-	Confirm           bool `yaml:"confirm"`
+	Enabled            bool `yaml:"enabled"`
+	IdleStaticSeconds  int  `yaml:"idle_static_seconds"`
+	IdleDynamicSeconds int  `yaml:"idle_dynamic_seconds"`
+	LockedSeconds      int  `yaml:"locked_seconds"`
+	Confirm            bool `yaml:"confirm"`
 }
 
 type AutomationResumeConfig struct {
@@ -260,7 +261,7 @@ func DefaultConfig() *Config {
 		Automation: AutomationConfig{
 			Enabled:                   false,
 			AutoStart:                 AutomationStartConfig{Enabled: true, FocusedStableSeconds: 90, MinConfidence: .80, AllowUnclassified: true},
-			AutoPause:                 AutomationPauseConfig{Enabled: true, IdleStaticSeconds: 300, LockedSeconds: 15},
+			AutoPause:                 AutomationPauseConfig{Enabled: true, IdleStaticSeconds: 300, IdleDynamicSeconds: 900, LockedSeconds: 15},
 			AutoResume:                AutomationResumeConfig{Enabled: true, FocusedStableSeconds: 45},
 			TransitionCooldownSeconds: 30,
 			ManualOverrideMinutes:     30,
@@ -285,6 +286,7 @@ func LoadConfig(configPath string, tokenPath string) (*Config, error) {
 		return nil, fmt.Errorf("invalid AI proxy config: %w", err)
 	}
 	NormalizeMotivationConfig(cfg)
+	NormalizeAutomationConfig(cfg)
 	if err := ValidateReminderConfig(cfg); err != nil {
 		return nil, fmt.Errorf("invalid reminder config: %w", err)
 	}
@@ -301,6 +303,18 @@ func LoadConfig(configPath string, tokenPath string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func NormalizeAutomationConfig(cfg *Config) {
+	if cfg.Automation.AutoPause.IdleStaticSeconds <= 0 {
+		cfg.Automation.AutoPause.IdleStaticSeconds = 300
+	}
+	if cfg.Automation.AutoPause.IdleDynamicSeconds <= 0 {
+		cfg.Automation.AutoPause.IdleDynamicSeconds = 900
+	}
+	if cfg.Automation.AutoPause.LockedSeconds <= 0 {
+		cfg.Automation.AutoPause.LockedSeconds = 15
+	}
 }
 
 func NormalizeMotivationConfig(cfg *Config) {

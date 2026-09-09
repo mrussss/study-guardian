@@ -262,6 +262,8 @@ type TickOutcome struct {
 	ActivityValid     bool
 	Locked            bool
 	IdleStaticSeconds int64
+	AfkSeconds        int64
+	AfkSince          *time.Time
 	Classification    ClassificationResult
 }
 
@@ -276,6 +278,8 @@ type SystemStatus struct {
 	BreakSeconds                     int64                    `json:"break_seconds"`
 	ActiveSeconds                    int64                    `json:"active_seconds"`
 	LastActivityAt                   *time.Time               `json:"last_activity_at,omitempty"`
+	AfkSeconds                       int64                    `json:"afk_seconds"`
+	AfkSince                         *time.Time               `json:"afk_since,omitempty"`
 	ActivityWatchOK                  bool                     `json:"activitywatch_ok"`
 	ActivityWatchLastSuccessAt       *time.Time               `json:"activitywatch_last_success_at,omitempty"`
 	ActivityWatchConsecutiveFailures int                      `json:"activitywatch_consecutive_failures"`

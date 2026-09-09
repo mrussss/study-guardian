@@ -118,3 +118,32 @@ func TestControllerUpdateConfigResetsStabilityTimers(t *testing.T) {
 		t.Fatalf("intent=%+v", got)
 	}
 }
+
+func TestControllerUsesCumulativeAfkForStaticAndDynamicThresholds(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.Enabled = false
+	cfg.AutoPause.IdleStaticSeconds = 300
+	cfg.AutoPause.IdleDynamicSeconds = 900
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	now := time.Date(2026, 9, 9, 14, 0, 0, 0, time.UTC)
+	base := state.SystemStatus{UserMode: state.UserModeStudy, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	dynamic := state.TickOutcome{UserMode: state.UserModeStudy, Interaction: state.InteractionIdleDynamic, Relation: state.RelationUnknown, ActivityValid: true, AfkSeconds: 899}
+	if got := controller.Evaluate(now, dynamic, base); got != nil {
+		t.Fatalf("dynamic AFK paused before 900 seconds: %+v", got)
+	}
+	dynamic.AfkSeconds = 900
+	base.AfkSeconds = dynamic.AfkSeconds
+	if got := controller.Evaluate(now.Add(time.Second), dynamic, base); got == nil || got.Transition != state.AutomationPause {
+		t.Fatalf("dynamic AFK did not pause at threshold: %+v", got)
+	}
+	controller.UpdateConfig(cfg)
+	static := dynamic
+	static.Interaction = state.InteractionIdleStatic
+	static.AfkSeconds = 300
+	base.AfkSeconds = static.AfkSeconds
+	if got := controller.Evaluate(now, static, base); got == nil || got.Transition != state.AutomationPause {
+		t.Fatalf("static AFK did not pause at threshold: %+v", got)
+	}
+}

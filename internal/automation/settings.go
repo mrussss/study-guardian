@@ -22,10 +22,11 @@ type StartSettings struct {
 }
 
 type PauseSettings struct {
-	Enabled           bool `json:"enabled"`
-	IdleStaticSeconds int  `json:"idle_static_seconds"`
-	LockedSeconds     int  `json:"locked_seconds"`
-	Confirm           bool `json:"confirm"`
+	Enabled            bool `json:"enabled"`
+	IdleStaticSeconds  int  `json:"idle_static_seconds"`
+	IdleDynamicSeconds int  `json:"idle_dynamic_seconds"`
+	LockedSeconds      int  `json:"locked_seconds"`
+	Confirm            bool `json:"confirm"`
 }
 
 type ResumeSettings struct {
@@ -84,7 +85,7 @@ func fromConfig(value config.AutomationConfig) Settings {
 	return Settings{
 		Enabled:                   value.Enabled,
 		AutoStart:                 StartSettings{Enabled: value.AutoStart.Enabled, FocusedStableSeconds: value.AutoStart.FocusedStableSeconds, MinConfidence: value.AutoStart.MinConfidence, AllowUnclassified: value.AutoStart.AllowUnclassified, Confirm: value.AutoStart.Confirm},
-		AutoPause:                 PauseSettings{Enabled: value.AutoPause.Enabled, IdleStaticSeconds: value.AutoPause.IdleStaticSeconds, LockedSeconds: value.AutoPause.LockedSeconds, Confirm: value.AutoPause.Confirm},
+		AutoPause:                 PauseSettings{Enabled: value.AutoPause.Enabled, IdleStaticSeconds: value.AutoPause.IdleStaticSeconds, IdleDynamicSeconds: value.AutoPause.IdleDynamicSeconds, LockedSeconds: value.AutoPause.LockedSeconds, Confirm: value.AutoPause.Confirm},
 		AutoResume:                ResumeSettings{Enabled: value.AutoResume.Enabled, FocusedStableSeconds: value.AutoResume.FocusedStableSeconds},
 		TransitionCooldownSeconds: value.TransitionCooldownSeconds,
 		ManualOverrideMinutes:     value.ManualOverrideMinutes,
@@ -94,7 +95,7 @@ func fromConfig(value config.AutomationConfig) Settings {
 func toConfig(value Settings) config.AutomationConfig {
 	return config.AutomationConfig{Enabled: value.Enabled,
 		AutoStart:                 config.AutomationStartConfig{Enabled: value.AutoStart.Enabled, FocusedStableSeconds: value.AutoStart.FocusedStableSeconds, MinConfidence: value.AutoStart.MinConfidence, AllowUnclassified: value.AutoStart.AllowUnclassified, Confirm: value.AutoStart.Confirm},
-		AutoPause:                 config.AutomationPauseConfig{Enabled: value.AutoPause.Enabled, IdleStaticSeconds: value.AutoPause.IdleStaticSeconds, LockedSeconds: value.AutoPause.LockedSeconds, Confirm: value.AutoPause.Confirm},
+		AutoPause:                 config.AutomationPauseConfig{Enabled: value.AutoPause.Enabled, IdleStaticSeconds: value.AutoPause.IdleStaticSeconds, IdleDynamicSeconds: value.AutoPause.IdleDynamicSeconds, LockedSeconds: value.AutoPause.LockedSeconds, Confirm: value.AutoPause.Confirm},
 		AutoResume:                config.AutomationResumeConfig{Enabled: value.AutoResume.Enabled, FocusedStableSeconds: value.AutoResume.FocusedStableSeconds},
 		TransitionCooldownSeconds: value.TransitionCooldownSeconds, ManualOverrideMinutes: value.ManualOverrideMinutes}
 }
@@ -108,7 +109,7 @@ func validate(value Settings) error {
 	if value.AutoStart.MinConfidence < 0 || value.AutoStart.MinConfidence > 1 {
 		return fmt.Errorf("auto_start min_confidence must be 0-1")
 	}
-	if value.AutoPause.IdleStaticSeconds < 1 || value.AutoPause.IdleStaticSeconds > 86400 || value.AutoPause.LockedSeconds < 1 || value.AutoPause.LockedSeconds > 3600 {
+	if value.AutoPause.IdleStaticSeconds < 1 || value.AutoPause.IdleStaticSeconds > 86400 || value.AutoPause.IdleDynamicSeconds < 1 || value.AutoPause.IdleDynamicSeconds > 86400 || value.AutoPause.LockedSeconds < 1 || value.AutoPause.LockedSeconds > 3600 {
 		return fmt.Errorf("auto_pause thresholds are out of range")
 	}
 	if value.AutoResume.FocusedStableSeconds < 1 || value.AutoResume.FocusedStableSeconds > 3600 {
