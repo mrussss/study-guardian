@@ -29,8 +29,35 @@ test("canonical cleared AUTO_START intent is not shown as a failed response", ()
   assert.equal(result, "开始请求已处理");
 });
 
+test("canonical mode wins over a successful but conflicting AUTO_PAUSE decision", () => {
+  assert.equal(
+    automationDecisionNotice(intent("AUTO_PAUSE"), false, { ok: true }, snapshot("BREAK")),
+    "已自动暂停",
+  );
+  assert.equal(
+    automationDecisionNotice(intent("AUTO_PAUSE"), true, { ok: true }, snapshot("BREAK")),
+    "已接受自动暂停",
+  );
+});
+
+test("canonical mode wins over a successful AUTO_START decision", () => {
+  assert.equal(
+    automationDecisionNotice(intent("AUTO_START"), true, { ok: true }, snapshot("STUDY")),
+    "已开始学习",
+  );
+  assert.equal(
+    automationDecisionNotice(intent("AUTO_START"), true, { ok: true }, snapshot("STANDBY")),
+    "开始请求已处理",
+  );
+});
+
 test("a failed decision remains an error while the same intent is still canonical", () => {
   const pending = intent("AUTO_PAUSE");
   const result = automationDecisionNotice(pending, true, { ok: false, error_kind: "rejected" }, snapshot("STUDY", pending));
-  assert.equal(result, "自动转场响应失败");
+  assert.equal(result, "自动转场仍在等待处理");
+});
+
+test("result success is used only when canonical status is unavailable", () => {
+  assert.equal(automationDecisionNotice(intent("AUTO_PAUSE"), true, { ok: true }, undefined), "已接受自动暂停");
+  assert.equal(automationDecisionNotice(intent("AUTO_START"), false, { ok: true }, undefined), "已保持待机");
 });
