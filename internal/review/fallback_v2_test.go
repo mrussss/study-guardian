@@ -97,3 +97,29 @@ func TestFallbackCapsTaskInvestmentWhenSessionTotalsDisagree(t *testing.T) {
 		t.Fatalf("capped fallback markdown=%s", markdown)
 	}
 }
+
+func TestFallbackBoundsDurationsToCanonicalStudyState(t *testing.T) {
+	bundle := evidence.DailyEvidenceBundle{
+		Date:       "2026-09-08",
+		DailyState: evidence.DailyStateSummary{StudySeconds: 120},
+		Quality:    evidence.EvidenceQuality{StudyStatePresent: true},
+		Motivation: evidence.MotivationSummary{CreditedFocusSeconds: 600},
+		Sessions: []evidence.SessionSummary{{
+			Ref: "session:go", Mode: "STUDY", Task: "Go",
+			StartedAt:       time.Date(2026, 9, 8, 10, 0, 0, 0, time.Local),
+			DurationSeconds: 240,
+		}},
+	}
+	doc := BuildFallback(bundle)
+	markdown := RenderMarkdown(doc, bundle)
+	for _, want := range []string{"STUDY：2m", "有效专注：2m", "Go — 2m", "focus_duration_mismatch"} {
+		if !strings.Contains(markdown, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, markdown)
+		}
+	}
+	for _, forbidden := range []string{"有效专注：10m", "Go — 4m"} {
+		if strings.Contains(markdown, forbidden) {
+			t.Fatalf("markdown violates duration invariant with %q:\n%s", forbidden, markdown)
+		}
+	}
+}

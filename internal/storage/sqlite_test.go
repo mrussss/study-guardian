@@ -231,3 +231,243 @@ func TestSessionListingSortsMixedTimezoneTextByInstant(t *testing.T) {
 		t.Fatalf("last=%+v err=%v", last, err)
 	}
 }
+
+func seedRestartCandidate(t *testing.T, store *Storage, date, prefix string, offset, normalSeconds, restartSeconds int64) {
+	t.Helper()
+	started, err := time.ParseInLocation("2006-01-02", date, time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started = started.Add(10*time.Hour + time.Duration(offset)*time.Second)
+	normalEnded := started.Add(time.Duration(normalSeconds) * time.Second)
+	if err := store.SaveSession(context.Background(), SessionRecord{
+		ID: "normal-" + prefix, Mode: "STUDY", Task: "Go", StartedAt: started, LocalDate: date,
+		EndedAt: &normalEnded, DurationSeconds: normalSeconds, EndReason: "USER_BREAK",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	restartStarted := normalEnded.Add(2 * time.Second)
+	restartEnded := restartStarted.Add(2 * time.Second)
+	if err := store.SaveSession(context.Background(), SessionRecord{
+		ID: "restart-" + prefix, Mode: "STUDY", Task: "Go", StartedAt: restartStarted, LocalDate: date,
+		EndedAt: &restartEnded, DurationSeconds: restartSeconds, EndReason: "RESTART_RECOVERY",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedReadyReview(t *testing.T, store *Storage, date string, revision int64) {
+	t.Helper()
+	for current := int64(0); current < revision; current++ {
+		if _, err := store.BumpEvidenceRevision(context.Background(), date, time.Date(2026, 9, 9, 1, 0, int(current), 0, time.UTC)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Date(2026, 9, 9, 1, 1, 0, 0, time.UTC)
+	if err := store.SaveDailyReview(context.Background(), DailyReviewRecord{
+		Date: date, Status: "READY", GenerationMode: "FALLBACK", Revision: 7,
+		GeneratedEvidenceRevision: revision, InputHash: "old-hash", SchemaVersion: 1,
+		ReviewJSON: "old-review", Markdown: "old-markdown", AttemptCount: 1, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRestartRepairInvalidatesReviewAndBumpsRevision(t *testing.T) {
+	path := t.TempDir() + "/repair-review.db"
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedRestartCandidate(t, store, "2026-09-08", "single", 0, 120, 120)
+	if err := store.UpdateDailyState(context.Background(), "2026-09-08", 0, 120, 0, 0, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	seedReadyReview(t, store, "2026-09-08", 4)
+	_ = store.Close()
+
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var duration int64
+	if err := store.db.QueryRow(`SELECT duration_seconds FROM sessions WHERE id = 'restart-single'`).Scan(&duration); err != nil {
+		t.Fatal(err)
+	}
+	if duration != 0 {
+		t.Fatalf("duration=%d, want 0", duration)
+	}
+	revision, err := store.GetEvidenceRevision(context.Background(), "2026-09-08")
+	if err != nil || revision != 5 {
+		t.Fatalf("revision=%d err=%v, want 5", revision, err)
+	}
+	review, err := store.LoadDailyReview(context.Background(), "2026-09-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if review.Status != "STALE" || review.ReviewJSON != "old-review" || review.GeneratedEvidenceRevision != 4 {
+		t.Fatalf("review=%+v", review)
+	}
+}
+
+func TestRestartRepairBumpsSameDateOnlyOnceForMultipleSessions(t *testing.T) {
+	path := t.TempDir() + "/repair-same-date.db"
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedRestartCandidate(t, store, "2026-09-08", "a", 0, 60, 100)
+	seedRestartCandidate(t, store, "2026-09-08", "b", 300, 60, 100)
+	if err := store.UpdateDailyState(context.Background(), "2026-09-08", 0, 120, 0, 0, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	seedReadyReview(t, store, "2026-09-08", 2)
+	_ = store.Close()
+
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	revision, err := store.GetEvidenceRevision(context.Background(), "2026-09-08")
+	if err != nil || revision != 3 {
+		t.Fatalf("revision=%d err=%v, want 3", revision, err)
+	}
+	var repairs int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM session_duration_repairs WHERE session_id LIKE 'restart-%'`).Scan(&repairs); err != nil {
+		t.Fatal(err)
+	}
+	if repairs != 2 {
+		t.Fatalf("repairs=%d, want 2", repairs)
+	}
+}
+
+func TestRestartRepairBumpsEachAffectedDateAndStalesEachReview(t *testing.T) {
+	path := t.TempDir() + "/repair-cross-date.db"
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, date := range []string{"2026-09-07", "2026-09-08"} {
+		seedRestartCandidate(t, store, date, date, 0, 60, 100)
+		if err := store.UpdateDailyState(context.Background(), date, 0, 60, 0, 0, 0, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		seedReadyReview(t, store, date, 3)
+	}
+	_ = store.Close()
+
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, date := range []string{"2026-09-07", "2026-09-08"} {
+		revision, err := store.GetEvidenceRevision(context.Background(), date)
+		if err != nil || revision != 4 {
+			t.Fatalf("date=%s revision=%d err=%v, want 4", date, revision, err)
+		}
+		review, err := store.LoadDailyReview(context.Background(), date)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if review.Status != "STALE" {
+			t.Fatalf("date=%s review=%+v", date, review)
+		}
+	}
+}
+
+func TestRestartRepairIsIdempotentForRevisionAndReview(t *testing.T) {
+	path := t.TempDir() + "/repair-idempotent.db"
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedRestartCandidate(t, store, "2026-09-08", "idempotent", 0, 120, 120)
+	if err := store.UpdateDailyState(context.Background(), "2026-09-08", 0, 120, 0, 0, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	seedReadyReview(t, store, "2026-09-08", 2)
+	_ = store.Close()
+
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRevision, err := store.GetEvidenceRevision(context.Background(), "2026-09-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAudit, err := countRepairRows(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	secondRevision, err := store.GetEvidenceRevision(context.Background(), "2026-09-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAudit, err := countRepairRows(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := store.LoadDailyReview(context.Background(), "2026-09-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstRevision != 3 || secondRevision != firstRevision || firstAudit != 1 || secondAudit != firstAudit || review.Status != "STALE" {
+		t.Fatalf("first=(revision=%d audit=%d) second=(revision=%d audit=%d) review=%s", firstRevision, firstAudit, secondRevision, secondAudit, review.Status)
+	}
+}
+
+func TestRestartRepairLeavesUncertainCandidateAndReviewUntouched(t *testing.T) {
+	path := t.TempDir() + "/repair-uncertain.db"
+	store, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedRestartCandidate(t, store, "2026-09-08", "uncertain", 0, 100, 100)
+	if err := store.UpdateDailyState(context.Background(), "2026-09-08", 0, 50, 0, 0, 0, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	seedReadyReview(t, store, "2026-09-08", 2)
+	_ = store.Close()
+
+	store, err = OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var duration int64
+	if err := store.db.QueryRow(`SELECT duration_seconds FROM sessions WHERE id = 'restart-uncertain'`).Scan(&duration); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := store.GetEvidenceRevision(context.Background(), "2026-09-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := store.LoadDailyReview(context.Background(), "2026-09-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repairs, err := countRepairRows(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duration != 100 || revision != 2 || repairs != 0 || review.Status != "READY" {
+		t.Fatalf("duration=%d revision=%d repairs=%d review=%s", duration, revision, repairs, review.Status)
+	}
+}
+
+func countRepairRows(store *Storage) (int, error) {
+	var count int
+	err := store.db.QueryRow(`SELECT COUNT(*) FROM session_duration_repairs`).Scan(&count)
+	return count, err
+}

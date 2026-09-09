@@ -52,6 +52,9 @@ func BuildFallback(bundle evidence.DailyEvidenceBundle) Document {
 		doc.TomorrowPriority = "先选择一个明确学习任务，再完成一个可验证的小步骤。"
 	}
 
+	if bundle.Quality.StudyStatePresent && bundle.Motivation.CreditedFocusSeconds > bundle.DailyState.StudySeconds {
+		doc.Warnings = append(doc.Warnings, "focus_duration_mismatch")
+	}
 	seen := make(map[string]bool)
 	addTopic := func(name, summary, ref string, confidence float64) {
 		name = cleanTopic(name)
@@ -155,7 +158,7 @@ func NormalizeDocument(doc Document) Document {
 }
 
 func fallbackHeadline(bundle evidence.DailyEvidenceBundle, tasks []taskInvestment) string {
-	focusMinutes := bundle.Motivation.CreditedFocusSeconds / 60
+	focusMinutes := boundedFocusSeconds(bundle) / 60
 	if focusMinutes > 0 && len(tasks) > 0 {
 		return fmt.Sprintf("今天有效专注 %d 分钟，主要投入 %s", focusMinutes, tasks[0].Name)
 	}
@@ -266,8 +269,8 @@ func rankTasks(bundle evidence.DailyEvidenceBundle) []taskInvestment {
 	}
 	items := make([]taskInvestment, 0, len(byKey))
 	for _, item := range byKey {
-		if bundle.Quality.SessionDurationMismatch && item.Seconds > bundle.DailyState.StudySeconds {
-			item.Seconds = bundle.DailyState.StudySeconds
+		if (bundle.Quality.StudyStatePresent || bundle.Quality.SessionDurationMismatch) && item.Seconds > bundle.DailyState.StudySeconds {
+			item.Seconds = max64(bundle.DailyState.StudySeconds, 0)
 		}
 		items = append(items, *item)
 	}
@@ -288,7 +291,7 @@ func RenderMarkdown(doc Document, bundle evidence.DailyEvidenceBundle) string {
 	fmt.Fprintf(&b, "# %s 学习复盘\n\n", doc.Date)
 	fmt.Fprintf(&b, "%s\n\n", safeLine(doc.Headline))
 	b.WriteString("## 今日记录\n")
-	fmt.Fprintf(&b, "- STUDY：%s\n- 有效专注：%s\n- 学习会话：%d 次\n- ChatGPT 学习 Turn：%d\n- 有效学习语义：%d 条\n- 分心语义：%d 条\n- 跑偏：%d 次\n- 最大跑偏：%s\n\n", formatDuration(bundle.DailyState.StudySeconds), formatDuration(bundle.Motivation.CreditedFocusSeconds), studySessionCount(bundle), len(bundle.ChatTurns), learningSemanticCount(bundle), distractedSemanticCount(bundle), len(bundle.Distractions), formatDuration(doc.Behavior.LargestDistractionSec))
+	fmt.Fprintf(&b, "- STUDY：%s\n- 有效专注：%s\n- 学习会话：%d 次\n- ChatGPT 学习 Turn：%d\n- 有效学习语义：%d 条\n- 分心语义：%d 条\n- 跑偏：%d 次\n- 最大跑偏：%s\n\n", formatDuration(bundle.DailyState.StudySeconds), formatDuration(boundedFocusSeconds(bundle)), studySessionCount(bundle), len(bundle.ChatTurns), learningSemanticCount(bundle), distractedSemanticCount(bundle), len(bundle.Distractions), formatDuration(doc.Behavior.LargestDistractionSec))
 	tasks := rankTasks(bundle)
 	b.WriteString("## 主要任务\n")
 	if len(tasks) == 0 {
@@ -353,6 +356,14 @@ func boundedChatTopic(title, prompt string) string {
 	}
 	return cleanTopic(strings.Join(words, " "))
 }
+func boundedFocusSeconds(bundle evidence.DailyEvidenceBundle) int64 {
+	focus := max64(bundle.Motivation.CreditedFocusSeconds, 0)
+	if (bundle.Quality.StudyStatePresent || bundle.Quality.SessionDurationMismatch) && focus > bundle.DailyState.StudySeconds {
+		return max64(bundle.DailyState.StudySeconds, 0)
+	}
+	return focus
+}
+
 func formatDuration(seconds int64) string {
 	if seconds < 0 {
 		seconds = 0

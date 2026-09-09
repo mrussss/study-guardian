@@ -396,6 +396,9 @@ func (s *Storage) migrate() error {
 	if err := s.ensureSessionColumns(); err != nil {
 		return err
 	}
+	if err := s.ensureDailyReviewColumns(); err != nil {
+		return err
+	}
 	if err := s.repairRestartInheritedDurations(); err != nil {
 		return err
 	}
@@ -403,9 +406,6 @@ func (s *Storage) migrate() error {
 		return err
 	}
 	if err := s.ensureClassificationCacheColumns(); err != nil {
-		return err
-	}
-	if err := s.ensureDailyReviewColumns(); err != nil {
 		return err
 	}
 	if err := s.ensureReminderColumns(); err != nil {
@@ -424,7 +424,8 @@ func (s *Storage) repairRestartInheritedDurations() error {
 		repaired_duration_seconds INTEGER NOT NULL DEFAULT 0,
 		repair_reason TEXT NOT NULL DEFAULT '',
 		repaired_at TIMESTAMP NOT NULL,
-		repair_version INTEGER NOT NULL DEFAULT 1
+		repair_version INTEGER NOT NULL DEFAULT 1,
+		review_invalidation_version INTEGER NOT NULL DEFAULT 0
 	);`); err != nil {
 		return err
 	}
@@ -433,6 +434,7 @@ func (s *Storage) repairRestartInheritedDurations() error {
 		{`repaired_duration_seconds`, `INTEGER NOT NULL DEFAULT 0`},
 		{`repair_reason`, `TEXT NOT NULL DEFAULT ''`},
 		{`repair_version`, `INTEGER NOT NULL DEFAULT 1`},
+		{`review_invalidation_version`, `INTEGER NOT NULL DEFAULT 0`},
 	} {
 		if err := s.ensureColumn(`session_duration_repairs`, column.name, column.definition); err != nil {
 			return err
@@ -487,25 +489,44 @@ func (s *Storage) repairRestartInheritedDurations() error {
 		}
 		return records[i].startedAt.Before(records[j].startedAt)
 	})
-	existingRepairs := map[string]int{}
-	repairRows, err := s.db.Query(`SELECT session_id, repair_version FROM session_duration_repairs`)
+	recordByID := make(map[string]sessionRow, len(records))
+	for _, item := range records {
+		recordByID[item.id] = item
+	}
+	type repairState struct {
+		version             int
+		invalidationVersion int
+	}
+	existingRepairs := map[string]repairState{}
+	repairRows, err := s.db.Query(`SELECT session_id, repair_version, review_invalidation_version FROM session_duration_repairs`)
 	if err != nil {
 		return err
 	}
 	for repairRows.Next() {
 		var id string
-		var version int
-		if err := repairRows.Scan(&id, &version); err != nil {
+		var state repairState
+		if err := repairRows.Scan(&id, &state.version, &state.invalidationVersion); err != nil {
 			repairRows.Close()
 			return err
 		}
-		existingRepairs[id] = version
+		existingRepairs[id] = state
 	}
 	if err := repairRows.Err(); err != nil {
 		repairRows.Close()
 		return err
 	}
 	repairRows.Close()
+	legacyInvalidationDates := map[string]struct{}{}
+	reviewInvalidationIDs := map[string]struct{}{}
+	for id, state := range existingRepairs {
+		if state.version < currentRestartRepairVersion || state.invalidationVersion >= 1 {
+			continue
+		}
+		if item, ok := recordByID[id]; ok && item.localDate != `` {
+			legacyInvalidationDates[item.localDate] = struct{}{}
+			reviewInvalidationIDs[id] = struct{}{}
+		}
+	}
 	type dailyTotals struct{ standby, study, breakSeconds, off int64 }
 	dailyRows, err := s.db.Query(`SELECT date, standby_seconds, study_seconds, break_seconds, off_seconds FROM daily_state`)
 	if err != nil {
@@ -549,6 +570,11 @@ func (s *Storage) repairRestartInheritedDurations() error {
 		return err
 	}
 	defer tx.Rollback()
+	affectedDates := map[string]struct{}{}
+	for date := range legacyInvalidationDates {
+		affectedDates[date] = struct{}{}
+	}
+	repairNow := canonicalDBTime(time.Now())
 	for date, totals := range daily {
 		for _, mode := range []string{`STANDBY`, `STUDY`, `BREAK`, `OFF`} {
 			target, ok := targetForMode(totals, mode)
@@ -594,14 +620,39 @@ func (s *Storage) repairRestartInheritedDurations() error {
 				if _, err := tx.Exec(`UPDATE sessions SET duration_seconds = ? WHERE id = ?`, corrected, item.id); err != nil {
 					return err
 				}
-				if _, err := tx.Exec(`INSERT INTO session_duration_repairs (session_id, previous_session_id, original_duration_seconds, repaired_duration_seconds, repair_reason, repaired_at, repair_version) VALUES (?, ?, ?, ?, ?, ?, ?)`, item.id, previousID, item.duration, corrected, `daily_state_restart_inheritance_mismatch`, canonicalDBTime(time.Now()), currentRestartRepairVersion); err != nil {
+				if _, err := tx.Exec(`INSERT INTO session_duration_repairs (session_id, previous_session_id, original_duration_seconds, repaired_duration_seconds, repair_reason, repaired_at, repair_version) VALUES (?, ?, ?, ?, ?, ?, ?)`, item.id, previousID, item.duration, corrected, `daily_state_restart_inheritance_mismatch`, repairNow, currentRestartRepairVersion); err != nil {
 					return err
 				}
 				records[index].duration = corrected
-				existingRepairs[item.id] = currentRestartRepairVersion
+				existingRepairs[item.id] = repairState{version: currentRestartRepairVersion}
+				reviewInvalidationIDs[item.id] = struct{}{}
+				affectedDates[item.localDate] = struct{}{}
 				log.Printf(`[Storage] repaired restart session id=%s original_seconds=%d repaired_seconds=%d reason=daily_state_restart_inheritance_mismatch version=%d`, item.id, item.duration, corrected, currentRestartRepairVersion)
 			}
 			sumByMode[key] -= candidateTotal
+		}
+	}
+	dates := make([]string, 0, len(affectedDates))
+	for date := range affectedDates {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+	for _, date := range dates {
+		if _, err := tx.Exec(`INSERT INTO evidence_revisions (date, revision, updated_at)
+			VALUES (?, 1, ?)
+			ON CONFLICT(date) DO UPDATE SET revision = evidence_revisions.revision + 1, updated_at = excluded.updated_at`, date, repairNow); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE daily_reviews SET status = 'STALE', updated_at = ? WHERE date = ? AND status = 'READY'`, repairNow, date); err != nil {
+			return err
+		}
+		log.Printf(`[Storage] invalidated daily review after session repair date=%s`, date)
+	}
+	for id := range reviewInvalidationIDs {
+		if _, err := tx.Exec(`UPDATE session_duration_repairs
+			SET review_invalidation_version = 1
+			WHERE session_id = ? AND repair_version >= ? AND review_invalidation_version < 1`, id, currentRestartRepairVersion); err != nil {
+			return err
 		}
 	}
 	return tx.Commit()
