@@ -221,6 +221,7 @@ func main() {
 		lastAWPhase := activitywatch.PhaseAvailable
 		lastObservedMode := state.UserModeStandby
 		lastClassRes := state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "No observation yet"}
+		lastAFKAudit := false
 
 		for {
 			select {
@@ -282,6 +283,9 @@ func main() {
 				if isLocked {
 					isAFK = true
 				}
+				if !isAFK {
+					lastAFKAudit = false
+				}
 
 				// Issue 3 Fix: Dynamic sampling and skipping AI in OFF mode
 				sampleInterval := cfg.Screen.ActiveSampleSeconds
@@ -303,10 +307,12 @@ func main() {
 
 				if !activitySampleSuccess {
 					// A degraded but not yet unavailable watcher retains the last
-					// trusted classification. The tracker receives ActivityFresh=false
-					// and therefore holds an open event without extending it.
-					if !awStatus.StableOK {
-						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "ActivityWatch unavailable or stale"}
+					// trusted classification for distraction continuity, but AFK
+					// must never inherit the pre-AFK relation.
+					if isAFK {
+						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "AFK; AI skipped", SourceKind: state.SourceKindLocalRule, IsFromRule: true}
+					} else if !awStatus.StableOK {
+						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "ActivityWatch unavailable or stale", SourceKind: state.SourceKindLocalRule, IsFromRule: true}
 					}
 					lastScreenChanged = false
 				} else if shouldSample {
@@ -325,15 +331,29 @@ func main() {
 					}
 					lastCaptureTime = t
 
-					// BREAK never invokes AI, but local rules still provide the
-					// bounded evidence needed for an eligible automatic resume.
-					if sysStatus.UserMode == state.UserModeBreak {
-						lastClassRes = ruleEngine.Classify(app, title, domain, stateMgr.GetCurrentTask())
+					currentTask := stateMgr.GetCurrentTask()
+					if shouldSkipAI(sysStatus.UserMode, isAFK, isLocked, awStatus.StableOK, priv) {
+						reason := "ActivityWatch unavailable or stale"
+						if isAFK {
+							reason = "AFK; AI skipped"
+							if !lastAFKAudit {
+								stateMgr.RecordAutomationAudit("AI_SKIPPED_FOR_AFK", nil, 0, "local_interaction")
+								lastAFKAudit = true
+							}
+						} else if isLocked {
+							reason = "locked; AI skipped"
+						} else if priv == state.PrivacySensitive {
+							reason = "sensitive privacy state"
+						}
+						lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: reason, SourceKind: state.SourceKindLocalRule, IsFromRule: true}
+					} else if sysStatus.UserMode == state.UserModeBreak {
+						// BREAK never invokes AI, but local rules still provide the
+						// bounded evidence needed for an eligible automatic resume.
+						lastClassRes = ruleEngine.Classify(app, title, domain, currentTask)
 						if lastClassRes.Relation == state.RelationUnknown {
 							lastClassRes.Reason = "BREAK mode; no local focus evidence"
 						}
 					} else {
-						currentTask := stateMgr.GetCurrentTask()
 						lastClassRes = classifierService.Classify(tickerCtx, app, title, domain, currentTask, lastScreenHash, string(sysStatus.UserMode), "")
 						minConfidence := cfg.AI.MinConfidence
 						if minConfidence <= 0 {
@@ -350,9 +370,16 @@ func main() {
 				} else if sysStatus.UserMode == state.UserModeOff {
 					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "System is OFF"}
 					lastScreenChanged = false
+				} else if isAFK {
+					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "AFK; AI skipped", SourceKind: state.SourceKindLocalRule, IsFromRule: true}
+					if !lastAFKAudit {
+						stateMgr.RecordAutomationAudit("AI_SKIPPED_FOR_AFK", nil, 0, "local_interaction")
+						lastAFKAudit = true
+					}
+				} else if !activitySampleSuccess || !awStatus.StableOK || priv == state.PrivacySensitive || isLocked {
+					lastClassRes = state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "AI unavailable or skipped", SourceKind: state.SourceKindLocalRule, IsFromRule: true}
 				} else {
-					// Between samples, just run rule engine (very cheap) to keep reaction fast if window changes
-					// But we don't do AI or Capture.
+					// Between samples, just run rule engine (very cheap) to keep reaction fast if window changes.
 					ruleRes := ruleEngine.Classify(app, title, domain, stateMgr.GetCurrentTask())
 					if ruleRes.Relation != state.RelationUnknown {
 						lastClassRes = ruleRes
@@ -363,7 +390,9 @@ func main() {
 				motivationService.RecordTick(outcome)
 				postStatus := stateMgr.GetStatus()
 				if intent := automationController.Evaluate(outcome.Now, outcome, postStatus); intent != nil {
+					stateMgr.RecordAutomationAudit("AUTOMATION_CANDIDATE_STARTED", intent, 0, "threshold_reached")
 					if err := stateMgr.ApplyAutomationIntent(*intent); err != nil {
+						stateMgr.RecordAutomationAudit("AUTOMATION_CANDIDATE_CANCELLED", intent, 0, "apply_rejected")
 						log.Printf("[Automation] transition rejected: %v", err)
 					} else {
 						postStatus = stateMgr.GetStatus()
