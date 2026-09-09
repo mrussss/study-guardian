@@ -31,7 +31,7 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
       interaction_state: "ACTIVE", task_relation: scenario === "reminder" ? "DISTRACTED" : "FOCUSED",
       privacy_state: "NORMAL", confidence: scenario === "reminder" ? 0.58 : 0.94,
       task: scenario === "rapid" ? "Go" : "算法", study_seconds: focusMinutes * 60 + 17,
-      break_seconds: 0, active_seconds: focusMinutes * 60 + 17, activitywatch_ok: !activityWatchFailure,
+      break_seconds: 0, active_seconds: focusMinutes * 60 + 17, afk_seconds: 0, activitywatch_ok: !activityWatchFailure,
       screen_sensor_ok: !sensorFailure, last_activity_at: new Date().toISOString(),
       mode_origin: "MANUAL", pause_reason: "NONE", auto_resume_eligible: false,
     },
@@ -57,7 +57,7 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
     automation_settings: {
       enabled: false,
       auto_start: { enabled: true, focused_stable_seconds: 90, min_confidence: .8, allow_unclassified: true, confirm: false },
-      auto_pause: { enabled: true, idle_static_seconds: 300, locked_seconds: 15, confirm: false },
+      auto_pause: { enabled: true, idle_static_seconds: 300, idle_dynamic_seconds: 900, locked_seconds: 15, confirm: false },
       auto_resume: { enabled: true, focused_stable_seconds: 45 },
       transition_cooldown_seconds: 30, manual_override_minutes: 30,
     },

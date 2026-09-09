@@ -17,10 +17,11 @@ import { clampProgress, formatFocusMinutes } from "../shared/models/dashboard";
 import { BrandMark } from "../shared/BrandMark";
 import { deriveSupervisionState } from "../shared/models/supervision-state";
 import { AutomationIntentPrompt } from "../shared/AutomationIntentPrompt";
+import { AutomationPauseStatus } from "../shared/AutomationPauseStatus";
 import { TaskWheel } from "../shared/task-wheel/TaskWheel";
 import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
-import type { NativeSupervisorStatus, NativeTaskPresetList } from "../transport/supervisor";
+import type { NativeAutomationSettings, NativeSupervisorStatus, NativeTaskPresetList } from "../transport/supervisor";
 
 export type QuickPanelMode = "STANDBY" | "STUDY" | "BREAK" | "OFF";
 
@@ -34,6 +35,7 @@ export interface QuickPanelProps {
   balanceAP?: number;
   connected?: boolean;
   status?: NativeSupervisorStatus;
+  automationSettings?: NativeAutomationSettings;
   motivationAvailable?: boolean;
   notice?: string;
   taskPresets?: NativeTaskPresetList;
@@ -72,6 +74,7 @@ export function QuickPanel({
   balanceAP = 12.43,
   connected = true,
   status,
+  automationSettings,
   motivationAvailable = true,
   notice,
   taskPresets,
@@ -134,6 +137,7 @@ export function QuickPanel({
           </div>
           <p className="focus-description">{copy.description}</p>
           <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={onAcceptAutomation} onReject={onRejectAutomation} onExpired={onAutomationExpired} />
+          <AutomationPauseStatus status={status} settings={automationSettings} />
           <div className="task-line"><BookOpen size={15} /><TaskWheel currentTask={task} presets={taskPresets} compact disabled={!connected} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} onUpdatePreset={onUpdateTaskPreset} onDeletePreset={onDeleteTaskPreset} onOptimisticTaskChange={onOptimisticTaskChange} onTaskMutationStarted={onTaskMutationStarted} onResult={onTaskResult} /></div>
         </section>
 

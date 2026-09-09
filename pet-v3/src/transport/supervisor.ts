@@ -91,6 +91,8 @@ export interface NativeSupervisorStatus {
   study_seconds: number;
   break_seconds: number;
   active_seconds: number;
+  afk_seconds?: number;
+  afk_since?: string;
   activitywatch_ok: boolean;
   screen_sensor_ok: boolean;
   activitywatch_last_success_at?: string;
@@ -140,7 +142,7 @@ export interface NativeReminderSettings {
 export interface NativeAutomationSettings {
   enabled: boolean;
   auto_start: { enabled: boolean; focused_stable_seconds: number; min_confidence: number; allow_unclassified: boolean; confirm: boolean };
-  auto_pause: { enabled: boolean; idle_static_seconds: number; locked_seconds: number; confirm: boolean };
+  auto_pause: { enabled: boolean; idle_static_seconds: number; idle_dynamic_seconds?: number; locked_seconds: number; confirm: boolean };
   auto_resume: { enabled: boolean; focused_stable_seconds: number };
   transition_cooldown_seconds: number;
   manual_override_minutes: number;
@@ -315,7 +317,7 @@ function validStatus(value: unknown): value is NativeSupervisorStatus {
     ["NORMAL", "SENSITIVE"].includes(value.privacy_state as string) &&
     boundedRatio(value.confidence) && boundedText(value.task, 4096) &&
     nonNegativeInteger(value.study_seconds) && nonNegativeInteger(value.break_seconds) &&
-    nonNegativeInteger(value.active_seconds) && typeof value.activitywatch_ok === "boolean" &&
+    nonNegativeInteger(value.active_seconds) && (value.afk_seconds === undefined || nonNegativeInteger(value.afk_seconds)) && (value.afk_since === undefined || boundedText(value.afk_since, 128)) && typeof value.activitywatch_ok === "boolean" &&
     typeof value.screen_sensor_ok === "boolean" &&
     (value.activitywatch_last_success_at === undefined || boundedText(value.activitywatch_last_success_at, 128)) &&
     (value.activitywatch_consecutive_failures === undefined || nonNegativeInteger(value.activitywatch_consecutive_failures)) &&
@@ -371,7 +373,7 @@ function validAutomationSettings(value: unknown): value is NativeAutomationSetti
   if (!record(value) || typeof value.enabled !== "boolean" || !record(value.auto_start) || !record(value.auto_pause) || !record(value.auto_resume)) return false;
   const start = value.auto_start; const pause = value.auto_pause; const resume = value.auto_resume;
   return typeof start.enabled === "boolean" && nonNegativeInteger(start.focused_stable_seconds) && boundedRatio(start.min_confidence) && typeof start.allow_unclassified === "boolean" && typeof start.confirm === "boolean" &&
-    typeof pause.enabled === "boolean" && nonNegativeInteger(pause.idle_static_seconds) && nonNegativeInteger(pause.locked_seconds) && typeof pause.confirm === "boolean" &&
+    typeof pause.enabled === "boolean" && nonNegativeInteger(pause.idle_static_seconds) && (pause.idle_dynamic_seconds === undefined || nonNegativeInteger(pause.idle_dynamic_seconds)) && nonNegativeInteger(pause.locked_seconds) && typeof pause.confirm === "boolean" &&
     typeof resume.enabled === "boolean" && nonNegativeInteger(resume.focused_stable_seconds) &&
     nonNegativeInteger(value.transition_cooldown_seconds) && nonNegativeInteger(value.manual_override_minutes);
 }

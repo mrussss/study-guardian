@@ -28,7 +28,16 @@ function Test-StudyGuardianShortcut {
         $shell = New-Object -ComObject WScript.Shell
         $shortcut = $shell.CreateShortcut($ShortcutPath)
         $launcher = Join-Path $RootDir "scripts\launch-studyguardian.ps1"
-        return $shortcut.TargetPath -and $shortcut.Arguments.IndexOf($launcher, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
-            $shortcut.Arguments.IndexOf($LauncherSwitch, [StringComparison]::OrdinalIgnoreCase) -ge 0
+        if (-not (Test-Path -LiteralPath $launcher)) { return $false }
+        $powershellPath = (Get-Command powershell.exe).Source
+        $rootFull = [IO.Path]::GetFullPath($RootDir).TrimEnd("\")
+        $workingDirectory = if ($shortcut.WorkingDirectory) { [IO.Path]::GetFullPath($shortcut.WorkingDirectory).TrimEnd("\") } else { "" }
+        return $shortcut.TargetPath -and
+            [IO.Path]::GetFullPath($shortcut.TargetPath) -ieq [IO.Path]::GetFullPath($powershellPath) -and
+            $shortcut.Arguments.IndexOf($launcher, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $shortcut.Arguments.IndexOf($LauncherSwitch, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $shortcut.Arguments.IndexOf("-RootDir", [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $shortcut.Arguments.IndexOf($rootFull, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+            $workingDirectory -ieq $rootFull
     } catch { return $false }
 }

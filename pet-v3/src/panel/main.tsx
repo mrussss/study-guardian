@@ -137,6 +137,7 @@ function RuntimeQuickPanel(): ReactElement {
     notice={notice}
     taskPresets={snapshot?.task_presets}
     status={status}
+    automationSettings={snapshot?.automation_settings}
     onSelectTask={id => handleTaskResult(control.selectTaskPreset(id))}
     onTemporaryTask={name => handleTaskResult(control.setTask(name))}
     onUpdateTaskPreset={(id, name, pinned, sortOrder) => handleTaskResult(control.updateTaskPreset(id, name, pinned, sortOrder))}

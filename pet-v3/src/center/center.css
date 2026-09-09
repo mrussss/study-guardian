@@ -249,6 +249,7 @@ body:has(.control-center-shell) { min-width: 920px; min-height: 640px; }
 .field-error { color: var(--sg-danger); font-size: 11px; line-height: 1.5; }
 @media (max-width: 760px) { .ai-field-grid, .ai-proxy-grid { grid-template-columns: 1fr; } .ai-field-grid label.wide, .ai-proxy-grid label.wide, .ai-proxy-grid .ai-network-help { grid-column: auto; } .ai-card-heading-actions { align-items: flex-end; flex-direction: column; gap: 7px; } .ai-network-status { text-align: right; } .secret-row { grid-template-columns: 1fr 1fr; } .secret-row input { grid-column: 1 / -1; } }
 
+.automation-pause-status { margin: 9px 0 0; color: #c6c1e4; font-size: 11px; }
 .automation-intent-prompt { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; box-sizing: border-box; margin-top: 16px; padding: 11px 13px; color: var(--sg-text); background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.16); border-radius: 12px; }
 .automation-intent-prompt.is-pause { border-color: rgba(246,210,138,.42); }
 .automation-intent-prompt.is-start { border-color: rgba(169,229,200,.38); }

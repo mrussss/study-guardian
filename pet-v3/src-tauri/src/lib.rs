@@ -846,6 +846,12 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
         "activitywatch_ok": activitywatch_ok,
         "screen_sensor_ok": screen_sensor_ok,
     });
+    if let Some(afk_seconds) = object.get("afk_seconds").and_then(Value::as_i64) {
+        if afk_seconds >= 0 { output["afk_seconds"] = json!(afk_seconds); }
+    }
+    if let Some(afk_since) = optional_text_field(object, "afk_since", 128)? {
+        output["afk_since"] = json!(afk_since);
+    }
     if let Some(last_success_at) = optional_text_field(object, "activitywatch_last_success_at", 128)? {
         output["activitywatch_last_success_at"] = json!(last_success_at);
     }
@@ -1100,6 +1106,8 @@ fn sanitize_automation_settings(value: &Value) -> Result<Value, NativeErrorKind>
     let pause = object.get("auto_pause").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
     let resume = object.get("auto_resume").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
     let confidence = object.get("auto_start").and_then(Value::as_object).and_then(|v| v.get("min_confidence")).and_then(Value::as_f64).filter(|v| v.is_finite() && (0.0..=1.0).contains(v)).ok_or(NativeErrorKind::InvalidResponse)?;
+    let idle_dynamic_seconds = pause.get("idle_dynamic_seconds").and_then(Value::as_i64).unwrap_or(900);
+    if idle_dynamic_seconds < 1 || idle_dynamic_seconds > 86400 { return Err(NativeErrorKind::InvalidResponse); }
     Ok(json!({
         "enabled": bool_field(object, "enabled")?,
         "auto_start": {
@@ -1112,6 +1120,7 @@ fn sanitize_automation_settings(value: &Value) -> Result<Value, NativeErrorKind>
         "auto_pause": {
             "enabled": bool_field(pause, "enabled")?,
             "idle_static_seconds": non_negative_i64_field(pause, "idle_static_seconds")?,
+            "idle_dynamic_seconds": idle_dynamic_seconds,
             "locked_seconds": non_negative_i64_field(pause, "locked_seconds")?,
             "confirm": bool_field(pause, "confirm")?,
         },
@@ -1572,7 +1581,7 @@ struct AISettingsInput { enabled: bool, min_confidence: f64, #[serde(default)] p
 #[derive(Deserialize, Serialize)]
 struct AutomationStartInput { enabled: bool, focused_stable_seconds: i64, min_confidence: f64, allow_unclassified: bool, confirm: bool }
 #[derive(Deserialize, Serialize)]
-struct AutomationPauseInput { enabled: bool, idle_static_seconds: i64, locked_seconds: i64, confirm: bool }
+struct AutomationPauseInput { enabled: bool, idle_static_seconds: i64, idle_dynamic_seconds: i64, locked_seconds: i64, confirm: bool }
 #[derive(Deserialize, Serialize)]
 struct AutomationResumeInput { enabled: bool, focused_stable_seconds: i64 }
 #[derive(Deserialize, Serialize)]
@@ -1636,7 +1645,7 @@ async fn supervisor_save_ai_settings(settings: AISettingsInput) -> SupervisorCon
 #[tauri::command]
 async fn supervisor_save_automation_settings(settings: AutomationSettingsInput) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
-        if !(0.0..=1.0).contains(&settings.auto_start.min_confidence) || settings.auto_start.focused_stable_seconds < 1 || settings.auto_pause.idle_static_seconds < 1 || settings.auto_pause.locked_seconds < 1 || settings.auto_resume.focused_stable_seconds < 1 || settings.transition_cooldown_seconds < 1 || settings.manual_override_minutes < 0 {
+        if !(0.0..=1.0).contains(&settings.auto_start.min_confidence) || settings.auto_start.focused_stable_seconds < 1 || settings.auto_pause.idle_static_seconds < 1 || settings.auto_pause.idle_dynamic_seconds < 1 || settings.auto_pause.idle_dynamic_seconds > 86400 || settings.auto_pause.locked_seconds < 1 || settings.auto_resume.focused_stable_seconds < 1 || settings.transition_cooldown_seconds < 1 || settings.manual_override_minutes < 0 {
             return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
         }
         let body = match serde_json::to_vec(&settings) { Ok(value) => value, Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") } };

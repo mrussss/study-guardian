@@ -28,6 +28,8 @@ test("supervision behavior distinguishes activity and relation", () => {
   assert.equal(deriveSupervisionState(true, base).behaviorLabel, "正在专注");
   assert.equal(deriveSupervisionState(true, { ...base, interaction_state: "IDLE_STATIC" }).behaviorLabel, "暂时离开");
   assert.equal(deriveSupervisionState(true, { ...base, interaction_state: "IDLE_DYNAMIC" }).behaviorLabel, "无输入，屏幕仍活动");
+  assert.equal(deriveSupervisionState(true, { ...base, interaction_state: "IDLE_STATIC", afk_seconds: 360 }).behaviorLabel, "已无输入 6 分钟 · 屏幕静止");
+  assert.equal(deriveSupervisionState(true, { ...base, interaction_state: "IDLE_DYNAMIC", afk_seconds: 901 }).behaviorLabel, "已无输入 15 分钟 · 屏幕仍有变化");
   assert.equal(deriveSupervisionState(true, { ...base, task_relation: "DISTRACTED" }).behaviorLabel, "可能偏离任务");
 });
 
@@ -35,6 +37,7 @@ test("supervision health fails soft without exposing raw service data", () => {
   assert.equal(deriveSupervisionState(false, undefined).behaviorLabel, "监督离线");
   assert.equal(deriveSupervisionState(true, undefined).behaviorLabel, "状态暂不可用");
   assert.equal(deriveSupervisionState(true, undefined).systemLabel, "Supervisor 已连接");
+  assert.equal(deriveSupervisionState(true, base).systemLabel, "采集服务在线");
   assert.equal(deriveSupervisionState(true, { ...base, screen_sensor_ok: false }).systemLabel, "屏幕采集异常");
   assert.equal(deriveSupervisionState(true, { ...base, privacy_state: "SENSITIVE" }).behaviorLabel, "隐私保护中");
 });

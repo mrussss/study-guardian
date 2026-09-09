@@ -63,8 +63,14 @@ export function deriveSupervisionState(connected: boolean, status?: NativeSuperv
     ? "屏幕采集异常"
     : !status.activitywatch_ok
       ? "活动数据异常"
-      : "本地服务正常";
-  const systemTone: SupervisionTone = systemLabel === "本地服务正常" ? "success" : "warning";
+      : "采集服务在线";
+  const systemTone: SupervisionTone = systemLabel === "采集服务在线" ? "success" : "warning";
+  const afkDuration = status.afk_seconds && status.afk_seconds > 0
+    ? status.afk_seconds < 60 ? "不到 1 分钟" : `${Math.floor(status.afk_seconds / 60)} 分钟`
+    : "";
+  const idleLabel = (dynamic: boolean): string => afkDuration
+    ? `已无输入 ${afkDuration} · ${dynamic ? "屏幕仍有变化" : "屏幕静止"}`
+    : dynamic ? "无输入，屏幕仍活动" : "暂时离开";
 
   if (status.user_mode === "STANDBY") return { behaviorLabel: "等待开始", behaviorTone: "neutral", systemLabel, systemTone };
   if (status.user_mode === "BREAK") return { behaviorLabel: "休息中", behaviorTone: "neutral", systemLabel, systemTone };
@@ -72,8 +78,8 @@ export function deriveSupervisionState(connected: boolean, status?: NativeSuperv
   if (status.user_mode === "STUDY" && !status.activitywatch_ok) return { behaviorLabel: "状态暂不可用", behaviorTone: "warning", systemLabel, systemTone };
   if (status.privacy_state === "SENSITIVE") return { behaviorLabel: "隐私保护中", behaviorTone: "neutral", systemLabel, systemTone };
   if (status.interaction_state === "UNKNOWN") return { behaviorLabel: "状态暂不可用", behaviorTone: "warning", systemLabel, systemTone };
-  if (status.interaction_state === "IDLE_STATIC") return { behaviorLabel: "暂时离开", behaviorTone: "reminder", systemLabel, systemTone };
-  if (status.interaction_state === "IDLE_DYNAMIC") return { behaviorLabel: "无输入，屏幕仍活动", behaviorTone: "neutral", systemLabel, systemTone };
+  if (status.interaction_state === "IDLE_STATIC") return { behaviorLabel: idleLabel(false), behaviorTone: "reminder", systemLabel, systemTone };
+  if (status.interaction_state === "IDLE_DYNAMIC") return { behaviorLabel: idleLabel(true), behaviorTone: "neutral", systemLabel, systemTone };
   if (status.task_relation === "DISTRACTED") return { behaviorLabel: "可能偏离任务", behaviorTone: "reminder", systemLabel, systemTone };
   if (status.interaction_state === "ACTIVE" && status.task_relation === "FOCUSED") return { behaviorLabel: "正在专注", behaviorTone: "success", systemLabel, systemTone };
   return { behaviorLabel: "正在观察", behaviorTone: "neutral", systemLabel, systemTone };
