@@ -7,6 +7,8 @@ test("mock scenarios parse only supported values", () => {
   assert.equal(parseMockScenario("?mock=offline"), "offline");
   assert.equal(parseMockScenario("?mock=sensor-failure"), "sensor-failure");
   assert.equal(parseMockScenario("?mock=activitywatch-failure"), "activitywatch-failure");
+  assert.equal(parseMockScenario("?mock=eye-short-due"), "eye-short-due");
+  assert.equal(parseMockScenario("?mock=eye-long-break"), "eye-long-break");
   assert.equal(parseMockScenario("?mock=unknown"), "normal");
 });
 test("normal mock mutates task, mode, target, and settings through production interfaces", async () => {
@@ -69,4 +71,30 @@ test("service failure scenarios expose independent health flags", async () => {
   assert.equal(sensorFailure.status?.activitywatch_ok, true);
   assert.equal(activityWatchFailure.status?.screen_sensor_ok, true);
   assert.equal(activityWatchFailure.status?.activitywatch_ok, false);
+});
+
+test("eye-care mock scenarios cover due, active-rest and wait-for-return states", async () => {
+  for (const [scenario, phase, mode] of [
+    ["eye-short-due", "SHORT_BREAK_DUE", "STUDY"],
+    ["eye-long-due", "LONG_BREAK_DUE", "STUDY"],
+    ["eye-short-break", "SHORT_BREAK", "BREAK"],
+    ["eye-long-break", "LONG_BREAK", "BREAK"],
+    ["eye-waiting-return", "WAITING_RETURN", "BREAK"],
+  ] as const) {
+    const snapshot = await new MockSupervisorRuntime(scenario).poll();
+    assert.equal(snapshot.eye_care_status?.phase, phase);
+    assert.equal(snapshot.status?.user_mode, mode);
+    assert.equal(snapshot.eye_care_settings?.enabled, true);
+  }
+});
+
+test("eye-care mock actions wait for expected revision and return canonical state on poll", async () => {
+  const runtime = new MockSupervisorRuntime("eye-short-due");
+  let snapshot = await runtime.poll();
+  assert.deepEqual(await runtime.eyeCareAction("START_SHORT_BREAK", 0, "wrong-revision"), { ok: false, error_kind: "rejected" });
+  assert.deepEqual(await runtime.eyeCareAction("START_SHORT_BREAK", snapshot.eye_care_status!.revision, "start-1"), { ok: true });
+  snapshot = await runtime.poll();
+  assert.equal(snapshot.eye_care_status?.phase, "SHORT_BREAK");
+  assert.equal(snapshot.status?.user_mode, "BREAK");
+  assert.equal(snapshot.status?.mode_origin, "EYE_CARE");
 });

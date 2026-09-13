@@ -19,6 +19,7 @@ type ModeOrigin string
 const (
 	ModeOriginManual     ModeOrigin = "MANUAL"
 	ModeOriginAutomation ModeOrigin = "AUTOMATION"
+	ModeOriginEyeCare    ModeOrigin = "EYE_CARE"
 )
 
 type PauseReason string
@@ -29,6 +30,8 @@ const (
 	PauseReasonLocked            PauseReason = "LOCKED"
 	PauseReasonSleep             PauseReason = "SLEEP"
 	PauseReasonSensorUnavailable PauseReason = "SENSOR_UNAVAILABLE"
+	PauseReasonEyeCareShort      PauseReason = "EYE_CARE_SHORT"
+	PauseReasonEyeCareLong       PauseReason = "EYE_CARE_LONG"
 )
 
 type AutomationTransition string

@@ -22,6 +22,7 @@ import (
 	"study-guardian/internal/classifier/providers"
 	"study-guardian/internal/config"
 	"study-guardian/internal/distraction"
+	"study-guardian/internal/eyecare"
 	"study-guardian/internal/motivation"
 	"study-guardian/internal/platform/windows"
 	"study-guardian/internal/reminder"
@@ -156,6 +157,10 @@ func main() {
 
 	stateMgr := state.NewPersistentManager(clock, cfg, store, ruleEngine, privacyGate, reminderEng)
 	stateMgr.SetToastNotifier(windows.SendToast)
+	eyeCareService, eyeCareErr := eyecare.New(cfg.EyeCare, cfg.Reminder, store, stateMgr)
+	if eyeCareErr != nil {
+		log.Printf("[EyeCare] settings/state unavailable; feature disabled for this run (%v)", eyeCareErr)
+	}
 	automationController := automation.New(cfg.Automation)
 	automationSettings := automation.NewSettingsService(cfg, store, automationController)
 
@@ -164,6 +169,9 @@ func main() {
 	server.SetAutomationIntentManager(stateMgr)
 	server.SetStorage(store)
 	server.SetReminderSettings(reminderEng)
+	if eyeCareService != nil {
+		server.SetEyeCare(eyeCareService)
+	}
 	reviewService := review.NewService(store, time.Local, filepath.Join(filepath.Dir(targetDB), "reviews"))
 	reviewService.SetLimits(review.ReviewLimits{MaxTurnChars: cfg.Review.Limits.MaxTurnChars, MaxConversationChars: cfg.Review.Limits.MaxConversationChars, MaxFinalInputChars: cfg.Review.Limits.MaxFinalInputChars})
 	if reviewProvider, reviewStatus := review.NewConfiguredProvider(cfg); reviewProvider != nil {
@@ -391,7 +399,12 @@ func main() {
 				}
 
 				outcome := stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes)
-				motivationService.RecordTick(outcome)
+				creditedFocusSeconds := motivationService.RecordTick(outcome)
+				eyeCareStatus := stateMgr.GetStatus()
+				if eyeCareService != nil {
+					eyeCareService.Observe(outcome.Now, eyeCareStatus)
+					eyeCareService.RecordCreditedFocus(creditedFocusSeconds, outcome, eyeCareStatus)
+				}
 				postStatus := stateMgr.GetStatus()
 				if intent := automationController.Evaluate(outcome.Now, outcome, postStatus); intent != nil {
 					stateMgr.RecordAutomationAudit("AUTOMATION_CANDIDATE_STARTED", intent, 0, "threshold_reached")

@@ -82,30 +82,34 @@ func NewServiceWithClock(cfg *config.Config, store *storage.Storage, clock state
 func (s *Service) enabled() bool {
 	return s != nil && s.cfg != nil && s.cfg.Motivation.Enabled && s.store != nil
 }
-func (s *Service) RecordTick(out state.TickOutcome) {
+
+// RecordTick returns the exact focus increment accepted by the motivation
+// ledger. Dependent features (such as eye-care cadence) must consume this
+// value rather than deriving a second duration from mode or wall time.
+func (s *Service) RecordTick(out state.TickOutcome) int64 {
 	if !s.enabled() || out.Now.IsZero() || out.DeltaSeconds <= 0 {
-		return
+		return 0
 	}
 	ctx := context.Background()
 	if out.UserMode == state.UserModeStudy && out.Relation == state.RelationDistracted {
 		_ = s.store.MarkComebackDistraction(ctx, out.Now)
-		return
+		return 0
 	}
 	if out.UserMode != state.UserModeStudy || out.Locked || !out.ActivityValid || !creditEligible(out, s.cfg.Motivation.IdleStaticCreditGraceSeconds) {
 		_ = s.store.ResetComebackFocus(ctx, out.Now)
-		return
+		return 0
 	}
 
 	now := out.Now
 	date := now.Format("2006-01-02")
 	target, err := s.store.GetMotivationTarget(ctx, int64(s.cfg.Motivation.DefaultDailyTargetMinutes*60), now)
 	if err != nil {
-		return
+		return 0
 	}
 	checkin := int64(s.cfg.Motivation.CheckinThresholdMinutes * 60)
 	newCheckin, newTarget, err := s.store.RecordCreditedFocus(ctx, date, out.DeltaSeconds, target, checkin, now)
 	if err != nil {
-		return
+		return 0
 	}
 	_, _ = s.store.AddComebackFocus(ctx, out.DeltaSeconds, now)
 	if newCheckin {
@@ -115,6 +119,7 @@ func (s *Service) RecordTick(out state.TickOutcome) {
 		s.emit("DAILY_TARGET_COMPLETED", "今日有效专注目标完成", now)
 	}
 	s.evaluateAchievements(now)
+	return out.DeltaSeconds
 }
 
 func creditEligible(out state.TickOutcome, graceSeconds int) bool {

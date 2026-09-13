@@ -10,6 +10,8 @@ export interface PetTransportSnapshot {
   semantic: CurrentActivityView;
   last_success_at?: string;
   last_error_kind?: TransportErrorKind;
+  eye_care_settings?: NativeEyeCareSettings;
+  eye_care_status?: NativeEyeCareStatus;
 }
 
 const ERROR_KINDS: TransportErrorKind[] = ["timeout", "unauthorized", "unavailable", "invalid_response"];
@@ -43,7 +45,11 @@ export function normalizeNativeSnapshot(raw: unknown): PetTransportSnapshot {
   const success = typeof value.last_success_at === "string" && Number.isFinite(Date.parse(value.last_success_at))
     ? value.last_success_at
     : undefined;
-  return { connected: true, semantic, ...(success ? { last_success_at: success } : {}) };
+  return {
+    connected: true, semantic, ...(success ? { last_success_at: success } : {}),
+    ...(normalizedEyeCareSettings(value.eye_care_settings) ? { eye_care_settings: normalizedEyeCareSettings(value.eye_care_settings)! } : {}),
+    ...(normalizedEyeCareStatus(value.eye_care_status) ? { eye_care_status: normalizedEyeCareStatus(value.eye_care_status)! } : {}),
+  };
 }
 
 function classifyNativeError(error: unknown): TransportErrorKind {
@@ -101,8 +107,8 @@ export interface NativeSupervisorStatus {
   activitywatch_health_phase?: "AVAILABLE" | "DEGRADED" | "UNAVAILABLE";
   auto_pause_snooze_until?: string;
   last_activity_at?: string;
-  mode_origin?: "MANUAL" | "AUTOMATION";
-  pause_reason?: "NONE" | "IDLE" | "LOCKED" | "SLEEP" | "SENSOR_UNAVAILABLE";
+  mode_origin?: "MANUAL" | "AUTOMATION" | "EYE_CARE";
+  pause_reason?: "NONE" | "IDLE" | "LOCKED" | "SLEEP" | "SENSOR_UNAVAILABLE" | "EYE_CARE_SHORT" | "EYE_CARE_LONG";
   auto_resume_eligible?: boolean;
   pending_automation_intent?: NativeAutomationIntent;
 }
@@ -146,6 +152,38 @@ export interface NativeAutomationSettings {
   auto_resume: { enabled: boolean; focused_stable_seconds: number };
   transition_cooldown_seconds: number;
   manual_override_minutes: number;
+}
+
+export interface NativeEyeCareSettings {
+  enabled: boolean;
+  focus_minutes: number;
+  short_break_minutes: number;
+  long_break_after_focus_minutes: number;
+  long_break_minutes: number;
+  snooze_minutes: number;
+  max_snoozes: number;
+}
+
+export type EyeCarePhase = "DISABLED" | "FOCUSING" | "SHORT_BREAK_DUE" | "SHORT_BREAK" | "LONG_BREAK_DUE" | "LONG_BREAK" | "WAITING_RETURN";
+export type EyeCareAction = "START_SHORT_BREAK" | "START_LONG_BREAK" | "SNOOZE" | "SKIP" | "FINISH_EARLY" | "RESUME_STUDY" | "DISMISS";
+
+export interface NativeEyeCareStatus {
+  enabled: boolean;
+  phase: EyeCarePhase;
+  local_date: string;
+  focus_segment_seconds: number;
+  focus_since_long_break_seconds: number;
+  break_started_at?: string;
+  planned_break_end_at?: string;
+  due_at?: string;
+  snooze_until?: string;
+  snooze_count: number;
+  completed_short_breaks: number;
+  completed_long_breaks: number;
+  retry_focus_after_seconds: number;
+  revision: number;
+  updated_at: string;
+  notification_suppressed: boolean;
 }
 
 export interface NativeAIEndpointSettings {
@@ -276,6 +314,8 @@ export interface SupervisorDashboardSnapshot {
   task_presets?: NativeTaskPresetList;
   reminder_settings?: NativeReminderSettings;
   automation_settings?: NativeAutomationSettings;
+  eye_care_settings?: NativeEyeCareSettings;
+  eye_care_status?: NativeEyeCareStatus;
   ai_settings?: NativeAISettings;
   history?: NativeHistoryDay[];
   achievements?: NativeAchievement[];
@@ -325,8 +365,8 @@ function validStatus(value: unknown): value is NativeSupervisorStatus {
     (value.activitywatch_health_phase === undefined || ["AVAILABLE", "DEGRADED", "UNAVAILABLE"].includes(value.activitywatch_health_phase as string)) &&
     (value.auto_pause_snooze_until === undefined || boundedText(value.auto_pause_snooze_until, 128)) &&
     (value.last_activity_at === undefined || boundedText(value.last_activity_at, 128)) &&
-    (value.mode_origin === undefined || ["MANUAL", "AUTOMATION"].includes(value.mode_origin as string)) &&
-    (value.pause_reason === undefined || ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"].includes(value.pause_reason as string)) &&
+    (value.mode_origin === undefined || ["MANUAL", "AUTOMATION", "EYE_CARE"].includes(value.mode_origin as string)) &&
+    (value.pause_reason === undefined || ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE", "EYE_CARE_SHORT", "EYE_CARE_LONG"].includes(value.pause_reason as string)) &&
     (value.auto_resume_eligible === undefined || typeof value.auto_resume_eligible === "boolean") &&
     (value.pending_automation_intent === undefined || (record(value.pending_automation_intent) &&
       boundedText(value.pending_automation_intent.intent_id, 128) &&
@@ -376,6 +416,53 @@ function validAutomationSettings(value: unknown): value is NativeAutomationSetti
     typeof pause.enabled === "boolean" && nonNegativeInteger(pause.idle_static_seconds) && (pause.idle_dynamic_seconds === undefined || nonNegativeInteger(pause.idle_dynamic_seconds)) && nonNegativeInteger(pause.locked_seconds) && typeof pause.confirm === "boolean" &&
     typeof resume.enabled === "boolean" && nonNegativeInteger(resume.focused_stable_seconds) &&
     nonNegativeInteger(value.transition_cooldown_seconds) && nonNegativeInteger(value.manual_override_minutes);
+}
+
+function validEyeCareSettings(value: unknown): value is NativeEyeCareSettings {
+  return record(value) && typeof value.enabled === "boolean" && Number.isSafeInteger(value.focus_minutes) && Number(value.focus_minutes) >= 20 && Number(value.focus_minutes) <= 90 &&
+    Number.isSafeInteger(value.short_break_minutes) && Number(value.short_break_minutes) >= 1 && Number(value.short_break_minutes) <= 20 &&
+    Number.isSafeInteger(value.long_break_after_focus_minutes) && Number(value.long_break_after_focus_minutes) >= 60 && Number(value.long_break_after_focus_minutes) <= 240 &&
+    Number.isSafeInteger(value.long_break_minutes) && Number(value.long_break_minutes) >= 5 && Number(value.long_break_minutes) <= 60 &&
+    Number.isSafeInteger(value.snooze_minutes) && Number(value.snooze_minutes) >= 1 && Number(value.snooze_minutes) <= 30 &&
+    Number.isSafeInteger(value.max_snoozes) && Number(value.max_snoozes) >= 0 && Number(value.max_snoozes) <= 5;
+}
+
+function validOptionalIso(value: unknown): value is string {
+  return value === undefined || (boundedText(value, 128) && Number.isFinite(Date.parse(value)));
+}
+
+function validEyeCareStatus(value: unknown): value is NativeEyeCareStatus {
+  return record(value) && typeof value.enabled === "boolean" && ["DISABLED", "FOCUSING", "SHORT_BREAK_DUE", "SHORT_BREAK", "LONG_BREAK_DUE", "LONG_BREAK", "WAITING_RETURN"].includes(value.phase as string) &&
+    (value.enabled ? value.phase !== "DISABLED" : value.phase === "DISABLED") &&
+    boundedText(value.local_date, 10) && validReviewDate(value.local_date) && nonNegativeInteger(value.focus_segment_seconds) &&
+    nonNegativeInteger(value.focus_since_long_break_seconds) && validOptionalIso(value.break_started_at) && validOptionalIso(value.planned_break_end_at) &&
+    validOptionalIso(value.due_at) && validOptionalIso(value.snooze_until) && nonNegativeInteger(value.snooze_count) &&
+    nonNegativeInteger(value.completed_short_breaks) && nonNegativeInteger(value.completed_long_breaks) &&
+    nonNegativeInteger(value.retry_focus_after_seconds) && nonNegativeInteger(value.revision) && boundedText(value.updated_at, 128) && Number.isFinite(Date.parse(value.updated_at)) &&
+    typeof value.notification_suppressed === "boolean";
+}
+
+function normalizedEyeCareSettings(value: unknown): NativeEyeCareSettings | undefined {
+  if (!validEyeCareSettings(value)) return undefined;
+  return {
+    enabled: value.enabled, focus_minutes: value.focus_minutes, short_break_minutes: value.short_break_minutes,
+    long_break_after_focus_minutes: value.long_break_after_focus_minutes, long_break_minutes: value.long_break_minutes,
+    snooze_minutes: value.snooze_minutes, max_snoozes: value.max_snoozes,
+  };
+}
+
+function normalizedEyeCareStatus(value: unknown): NativeEyeCareStatus | undefined {
+  if (!validEyeCareStatus(value)) return undefined;
+  return {
+    enabled: value.enabled, phase: value.phase, local_date: value.local_date,
+    focus_segment_seconds: value.focus_segment_seconds, focus_since_long_break_seconds: value.focus_since_long_break_seconds,
+    ...(value.break_started_at ? { break_started_at: value.break_started_at } : {}),
+    ...(value.planned_break_end_at ? { planned_break_end_at: value.planned_break_end_at } : {}),
+    ...(value.due_at ? { due_at: value.due_at } : {}), ...(value.snooze_until ? { snooze_until: value.snooze_until } : {}),
+    snooze_count: value.snooze_count, completed_short_breaks: value.completed_short_breaks,
+    completed_long_breaks: value.completed_long_breaks, retry_focus_after_seconds: value.retry_focus_after_seconds,
+    revision: value.revision, updated_at: value.updated_at, notification_suppressed: value.notification_suppressed,
+  };
 }
 
 function validTaskPresets(value: unknown): value is NativeTaskPresetList {
@@ -493,6 +580,8 @@ export function normalizeNativeDashboardSnapshot(raw: unknown): SupervisorDashbo
     ...(validTaskPresets(raw.task_presets) ? { task_presets: raw.task_presets } : {}),
     ...(validReminderSettings(raw.reminder_settings) ? { reminder_settings: raw.reminder_settings } : {}),
     ...(validAutomationSettings(raw.automation_settings) ? { automation_settings: raw.automation_settings } : {}),
+    ...(normalizedEyeCareSettings(raw.eye_care_settings) ? { eye_care_settings: normalizedEyeCareSettings(raw.eye_care_settings)! } : {}),
+    ...(normalizedEyeCareStatus(raw.eye_care_status) ? { eye_care_status: normalizedEyeCareStatus(raw.eye_care_status)! } : {}),
     ...(aiSettings ? { ai_settings: aiSettings } : {}),
     ...(validHistory(raw.history) ? { history: raw.history } : {}),
     ...(validAchievements(raw.achievements) ? { achievements: raw.achievements } : {}),
@@ -627,6 +716,8 @@ export interface SupervisorControlAdapter {
   deleteTaskPreset(id: string): Promise<ControlResult>;
   setReminderSettings(cooldownMinutes: number, quietPeriods: Array<{ start: string; end: string }>): Promise<ControlResult>;
   saveAutomationSettings?: (settings: NativeAutomationSettings) => Promise<ControlResult>;
+  saveEyeCareSettings?: (settings: NativeEyeCareSettings) => Promise<ControlResult>;
+  eyeCareAction?: (action: EyeCareAction, expectedRevision: number, requestId: string) => Promise<ControlResult>;
   acceptAutomationIntent?: (intentId: string) => Promise<ControlResult>;
   rejectAutomationIntent?: (intentId: string) => Promise<ControlResult>;
   saveAISettings(settings: NativeAISettings): Promise<ControlResult>;
@@ -715,6 +806,14 @@ export class NativeSupervisorControlAdapter implements SupervisorControlAdapter 
 
   saveAutomationSettings(settings: NativeAutomationSettings): Promise<ControlResult> {
     return this.invokeControl("supervisor_save_automation_settings", { settings });
+  }
+
+  saveEyeCareSettings(settings: NativeEyeCareSettings): Promise<ControlResult> {
+    return this.invokeControl("supervisor_save_eye_care_settings", { settings });
+  }
+
+  eyeCareAction(action: EyeCareAction, expectedRevision: number, requestId: string): Promise<ControlResult> {
+    return this.invokeControl("supervisor_eye_care_action", { action, expectedRevision, requestId });
   }
 
   acceptAutomationIntent(intentId: string): Promise<ControlResult> {

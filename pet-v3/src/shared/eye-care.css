@@ -1,0 +1,43 @@
+.eye-care-widget { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 14px; background: var(--sg-surface); border: 1px solid var(--sg-border); border-radius: 12px; box-shadow: var(--sg-shadow-card); }
+.dashboard-page > .eye-care-widget { margin-top: 10px; }
+.eye-care-widget.is-due { border-color: color-mix(in srgb, var(--sg-warning) 48%, var(--sg-border)); background: color-mix(in srgb, var(--sg-warning) 7%, var(--sg-surface)); }
+.eye-care-widget.is-rest { border-color: color-mix(in srgb, var(--sg-accent) 34%, var(--sg-border)); }
+.eye-care-copy { display: flex; min-width: 0; align-items: center; gap: 10px; }
+.eye-care-icon { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; color: var(--sg-accent); background: var(--sg-accent-soft); border-radius: 9px; }
+.eye-care-widget.is-due .eye-care-icon { color: var(--sg-warning); background: color-mix(in srgb, var(--sg-warning) 14%, var(--sg-surface)); }
+.eye-care-copy-main { display: grid; min-width: 0; gap: 3px; }
+.eye-care-copy-main strong { color: var(--sg-text); font-size: 12px; font-weight: 650; }
+.eye-care-copy-main span { color: var(--sg-text-tertiary); font-size: 11px; line-height: 1.4; }
+.eye-care-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.eye-care-actions button, .eye-care-countdown button { min-height: 30px; padding: 0 9px; color: var(--sg-text-secondary); background: var(--sg-surface-raised); border: 1px solid var(--sg-border); border-radius: 8px; cursor: pointer; font: inherit; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.eye-care-actions button:hover, .eye-care-countdown button:hover { color: var(--sg-accent); border-color: var(--sg-accent); }
+.eye-care-actions button.eye-care-primary { color: #fff; background: var(--sg-accent); border-color: var(--sg-accent); }
+.eye-care-actions button.eye-care-primary:hover { filter: brightness(1.06); }
+.eye-care-actions button:disabled, .eye-care-countdown button:disabled { cursor: default; opacity: .55; }
+.eye-care-countdown { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; color: var(--sg-accent); font-size: 16px; font-variant-numeric: tabular-nums; font-weight: 700; }
+.eye-care-offline { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; color: var(--sg-warning); font-size: 11px; }
+.eye-care-notice { flex-basis: 100%; color: var(--sg-warning); font-size: 11px; }
+.eye-care-widget:has(.eye-care-notice) { flex-wrap: wrap; }
+.eye-care-settings-card { min-height: 0; }
+.eye-care-toggle { display: inline-flex; align-items: center; gap: 7px; color: var(--sg-text-secondary); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.eye-care-toggle input { accent-color: var(--sg-accent); }
+.eye-care-settings-summary { display: grid; gap: 5px; margin-top: 16px; padding: 12px 14px; background: var(--sg-surface-muted); border: 1px solid var(--sg-border); border-radius: 10px; }
+.eye-care-settings-summary strong { color: var(--sg-text); font-size: 12px; }
+.eye-care-settings-summary span { color: var(--sg-text-secondary); font-size: 12px; }
+.eye-care-setting-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 12px; }
+.eye-care-setting-grid label { display: grid; gap: 7px; padding: 10px 11px; color: var(--sg-text-secondary); background: var(--sg-surface-muted); border: 1px solid var(--sg-border); border-radius: 9px; font-size: 11px; }
+.eye-care-setting-grid input { width: 100%; min-height: 31px; padding: 0 8px; color: var(--sg-text); background: var(--sg-surface-raised); border: 1px solid var(--sg-border-strong); border-radius: 7px; font: inherit; font-size: 12px; }
+.eye-care-settings-help { margin: 12px 0 0; color: var(--sg-text-tertiary); font-size: 11px; line-height: 1.5; }
+.eye-care-settings-card .setting-actions { margin-top: 14px; }
+.eye-care-widget.is-compact { padding: 8px 9px; gap: 8px; box-shadow: none; }
+.eye-care-widget.is-compact .eye-care-icon { width: 28px; height: 28px; }
+.eye-care-widget.is-compact .eye-care-actions { gap: 4px; }
+.eye-care-widget.is-compact .eye-care-actions button { min-height: 28px; padding-inline: 7px; font-size: 10px; }
+.eye-care-widget.is-compact .eye-care-copy-main strong { font-size: 11px; }
+.eye-care-widget.is-compact .eye-care-copy-main span { font-size: 10px; }
+.eye-care-widget.is-compact .eye-care-countdown { font-size: 13px; }
+@media (max-width: 720px) {
+  .eye-care-widget { align-items: flex-start; flex-direction: column; }
+  .eye-care-actions { flex-wrap: wrap; }
+  .eye-care-setting-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

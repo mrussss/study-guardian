@@ -190,6 +190,12 @@
 - [x] 136. AI 全局代理 transport、网络诊断 API/UI、错误 scope 分类与旧配置兼容
 - [~] 135. 后端 AIHubMix Text/Vision/Review API E2E 部分通过；2026-09-08 Text `coding-glm-5.3-flash-free` 受 `account_rate_limited` 阻断，Vision `minimax-m3-free` 通过，Daily Review 已生成 `READY/FALLBACK` 本地总结（revision 6）；Text 成功和 Control Center 完整 UI E2E 仍待验证
 
+## Phase 14: Eye-care rhythm
+
+- [~] 137. 护眼节奏：使用 Motivation accepted focus 增量驱动 40/5、120/20 独立状态机；持久化、API revision/idempotency、EYE_CARE 模式来源、自动恢复隔离、quiet-hours-aware 状态、Dashboard/Quick Panel/桌宠中文提示与设置 Mock 已实现。生产配置保持默认关闭；隔离短周期实机、锁屏/休眠、免打扰与跨重启人工 E2E 不可用单测替代。
+  - 2026-09-13 自动门禁通过：Go `go test ./...`；Pet 111/111、TypeScript、Vite；Windows Rust 18/18、native、candidate；完整 `build-windows.sh` 与部署通过。
+  - 部署核验：Supervisor 与 StudyGuardian release 文件哈希匹配；Supervisor/Sensor healthz 正常；生产设置 API 显示护眼仍为 `DISABLED`；生产数据库已备份并校验 SHA256。
+
 ### 第二轮监督与复盘修复（2026-09-09）
 
 - 重启恢复会话统一以 UTC 写入；读取和迁移不再依赖 SQLite 文本排序，而是在 Go 中解析真实 instant 排序。`session_duration_repairs` 记录 `original_duration_seconds`、`repaired_duration_seconds`、`repair_reason`、`repair_version`；迁移以 `daily_state` 为事实基准，仅在候选时长总和与日状态差额完全相等时事务修正，重复启动幂等，无法安全归因的 mismatch 只告警不修改。

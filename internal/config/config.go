@@ -24,6 +24,17 @@ type Config struct {
 	Motivation MotivationConfig `yaml:"motivation"`
 	Review     ReviewConfig     `yaml:"review"`
 	Automation AutomationConfig `yaml:"automation"`
+	EyeCare    EyeCareConfig    `yaml:"eye_care"`
+}
+
+type EyeCareConfig struct {
+	Enabled                    bool `yaml:"enabled" json:"enabled"`
+	FocusMinutes               int  `yaml:"focus_minutes" json:"focus_minutes"`
+	ShortBreakMinutes          int  `yaml:"short_break_minutes" json:"short_break_minutes"`
+	LongBreakAfterFocusMinutes int  `yaml:"long_break_after_focus_minutes" json:"long_break_after_focus_minutes"`
+	LongBreakMinutes           int  `yaml:"long_break_minutes" json:"long_break_minutes"`
+	SnoozeMinutes              int  `yaml:"snooze_minutes" json:"snooze_minutes"`
+	MaxSnoozes                 int  `yaml:"max_snoozes" json:"max_snoozes"`
 }
 
 type StandbyConfig struct {
@@ -266,6 +277,7 @@ func DefaultConfig() *Config {
 			TransitionCooldownSeconds: 30,
 			ManualOverrideMinutes:     30,
 		},
+		EyeCare: EyeCareConfig{Enabled: false, FocusMinutes: 40, ShortBreakMinutes: 5, LongBreakAfterFocusMinutes: 120, LongBreakMinutes: 20, SnoozeMinutes: 5, MaxSnoozes: 2},
 	}
 }
 
@@ -287,6 +299,10 @@ func LoadConfig(configPath string, tokenPath string) (*Config, error) {
 	}
 	NormalizeMotivationConfig(cfg)
 	NormalizeAutomationConfig(cfg)
+	NormalizeEyeCareConfig(cfg)
+	if err := ValidateEyeCareConfig(cfg.EyeCare); err != nil {
+		return nil, fmt.Errorf("invalid eye care config: %w", err)
+	}
 	if err := ValidateReminderConfig(cfg); err != nil {
 		return nil, fmt.Errorf("invalid reminder config: %w", err)
 	}
@@ -315,6 +331,48 @@ func NormalizeAutomationConfig(cfg *Config) {
 	if cfg.Automation.AutoPause.LockedSeconds <= 0 {
 		cfg.Automation.AutoPause.LockedSeconds = 15
 	}
+}
+
+// NormalizeEyeCareConfig fills missing values for older YAML files while
+// keeping the feature opt-in. Explicit non-zero values are validated later.
+func NormalizeEyeCareConfig(cfg *Config) {
+	if cfg.EyeCare.FocusMinutes == 0 {
+		cfg.EyeCare.FocusMinutes = 40
+	}
+	if cfg.EyeCare.ShortBreakMinutes == 0 {
+		cfg.EyeCare.ShortBreakMinutes = 5
+	}
+	if cfg.EyeCare.LongBreakAfterFocusMinutes == 0 {
+		cfg.EyeCare.LongBreakAfterFocusMinutes = 120
+	}
+	if cfg.EyeCare.LongBreakMinutes == 0 {
+		cfg.EyeCare.LongBreakMinutes = 20
+	}
+	if cfg.EyeCare.SnoozeMinutes == 0 {
+		cfg.EyeCare.SnoozeMinutes = 5
+	}
+}
+
+func ValidateEyeCareConfig(value EyeCareConfig) error {
+	if value.FocusMinutes < 20 || value.FocusMinutes > 90 {
+		return fmt.Errorf("focus_minutes must be 20-90")
+	}
+	if value.ShortBreakMinutes < 1 || value.ShortBreakMinutes > 20 {
+		return fmt.Errorf("short_break_minutes must be 1-20")
+	}
+	if value.LongBreakAfterFocusMinutes < 60 || value.LongBreakAfterFocusMinutes > 240 {
+		return fmt.Errorf("long_break_after_focus_minutes must be 60-240")
+	}
+	if value.LongBreakMinutes < 5 || value.LongBreakMinutes > 60 {
+		return fmt.Errorf("long_break_minutes must be 5-60")
+	}
+	if value.SnoozeMinutes < 1 || value.SnoozeMinutes > 30 {
+		return fmt.Errorf("snooze_minutes must be 1-30")
+	}
+	if value.MaxSnoozes < 0 || value.MaxSnoozes > 5 {
+		return fmt.Errorf("max_snoozes must be 0-5")
+	}
+	return nil
 }
 
 func NormalizeMotivationConfig(cfg *Config) {

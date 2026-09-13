@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"study-guardian/internal/config"
+	"study-guardian/internal/eyecare"
 	"study-guardian/internal/motivation"
 	"study-guardian/internal/review"
 	"study-guardian/internal/semantic"
@@ -48,6 +49,7 @@ type Server struct {
 	aiSettings         AISettingsManager
 	automationSettings AutomationSettingsManager
 	automationIntent   AutomationIntentManager
+	eyeCare            EyeCareManager
 }
 
 type MotivationManager interface {
@@ -87,6 +89,9 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/settings/ai/test", s.withAuth(s.handleAITest))
 	mux.HandleFunc("/v1/settings/ai/proxy/test", s.withAuth(s.handleAIProxyTest))
 	mux.HandleFunc("/v1/settings/automation", s.withAuth(s.handleAutomationSettings))
+	mux.HandleFunc("/v1/settings/eye-care", s.withAuth(s.handleEyeCareSettings))
+	mux.HandleFunc("/v1/eye-care/status", s.withAuth(s.handleEyeCareStatus))
+	mux.HandleFunc("/v1/eye-care/action", s.withAuth(s.handleEyeCareAction))
 	mux.HandleFunc("/v1/automation/pending", s.withAuth(s.handleAutomationPending))
 	mux.HandleFunc("/v1/automation/pending/accept", s.withAuth(s.handleAutomationAccept))
 	mux.HandleFunc("/v1/automation/pending/reject", s.withAuth(s.handleAutomationReject))
@@ -160,6 +165,15 @@ func (s *Server) SetSemantic(service *semantic.Service)  { s.semantic = service 
 func (s *Server) SetAutomationIntentManager(manager AutomationIntentManager) {
 	s.automationIntent = manager
 }
+
+type EyeCareManager interface {
+	Settings() config.EyeCareConfig
+	SaveSettings(config.EyeCareConfig) (config.EyeCareConfig, error)
+	Status() eyecare.Status
+	Act(eyecare.ActionRequest) (eyecare.Status, error)
+}
+
+func (s *Server) SetEyeCare(manager EyeCareManager) { s.eyeCare = manager }
 
 func (s *Server) Start() error {
 	addr := s.httpServer.Addr

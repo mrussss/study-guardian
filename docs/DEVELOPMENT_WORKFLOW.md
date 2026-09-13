@@ -51,8 +51,21 @@ http://127.0.0.1:1420/quick-panel.html?mock=normal
 | `progress-empty` | 今日尚未开始 |
 | `progress-complete` | 今日目标已完成 |
 | `reminder` | 分心提醒状态 |
+| `eye-short-due` / `eye-long-due` | 短休息/完整休息到期与中文操作文案 |
+| `eye-short-break` / `eye-long-break` | 两种护眼休息倒计时与提前结束 |
+| `eye-waiting-return` | 计时完成后等待用户手动继续 |
 
 Mock 与 native 使用同一组 `SupervisorDashboardAdapter`、`SupervisorControlAdapter` 和 `SystemIntegrationAdapter` 接口。透明窗口、拖动、托盘、single-instance 和真实 Windows 集成仍必须使用 `native/candidate` 构建，并通过下面的原生视觉 Gate 验收。
+
+## 护眼节奏
+
+- 业务状态位于 Go `internal/eyecare`，只累计 Motivation 实际接受的有效专注秒数；ActivityWatch 不可用时不按墙上时间补算。
+- 护眼休息使用独立 `EYE_CARE` 模式来源，禁止自动恢复提前结束。短休息结束后进入等待返回；必须由用户显式点击继续。
+- `eye_care_state`、审计和 action request 幂等记录持久化到 Supervisor SQLite。Tauri/native 与 React transport 只暴露枚举、范围和 RFC3339 校验后的字段。
+- UI 文案不能宣称验证了真实远眺或手机使用。该功能不增加摄像头、截图或 AI 调用；免打扰时桌宠提醒隐藏，状态仍可在 Dashboard/Quick Panel 静默查看。
+- 默认节奏为关闭状态下的 `40/5/120/20`。短周期只在隔离的开发运行时验证，不改写生产用户配置；生产数据库改动前先备份。
+
+最小自动门禁：`go test ./...`、`./scripts/pet-v3.sh check`、`./scripts/pet-v3.sh native`、`./scripts/pet-v3.sh candidate`。此功能包含 Supervisor/API/SQLite 和 Pet，正式发布仍必须完整执行 `scripts/build-windows.sh`、部署与健康/哈希核验。真实锁屏/睡眠、Toast、免打扰跨界和连续长时计时属于目标机人工 Gate，单测与浏览器 Mock 不能替代。
 
 ## Windows 原生视觉 Gate
 

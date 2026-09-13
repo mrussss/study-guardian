@@ -30,10 +30,18 @@ func TestRecordTickCreditPolicy(t *testing.T) {
 	svc, store := testService(t)
 	now := time.Now()
 	base := tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationUnknown})
-	svc.RecordTick(base)
-	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 301, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationFocused}))
-	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationDistracted}))
-	svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: false, Interaction: state.InteractionActive, Relation: state.RelationFocused}))
+	if got := svc.RecordTick(base); got != 60 {
+		t.Fatalf("accepted focus increment=%d, want 60", got)
+	}
+	if got := svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, IdleStaticSeconds: 301, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionIdleStatic, Relation: state.RelationFocused})); got != 0 {
+		t.Fatalf("ineligible static increment=%d, want 0", got)
+	}
+	if got := svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationDistracted})); got != 0 {
+		t.Fatalf("distracted increment=%d, want 0", got)
+	}
+	if got := svc.RecordTick(tickAt(now, state.TickOutcome{DeltaSeconds: 60, UserMode: state.UserModeStudy, ActivityValid: false, Interaction: state.InteractionActive, Relation: state.RelationFocused})); got != 0 {
+		t.Fatalf("unavailable increment=%d, want 0", got)
+	}
 	d, err := store.GetMotivationDaily(context.Background(), now.Format("2006-01-02"))
 	if err != nil {
 		t.Fatal(err)

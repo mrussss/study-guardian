@@ -13,6 +13,7 @@ import { automationDecisionNotice } from "../shared/automation-intent";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
 import "../shared/task-wheel/task-wheel.css";
+import "../shared/eye-care.css";
 import "./panel.css";
 
 const root = document.querySelector<HTMLElement>("#quick-panel");
@@ -108,6 +109,10 @@ function RuntimeQuickPanel(): ReactElement {
     setAutomationBusy(false);
     return latestSnapshotRef.current;
   };
+  const refreshSnapshot = async (): Promise<SupervisorDashboardSnapshot | undefined> => {
+    await pollerRef.current?.refresh();
+    return latestSnapshotRef.current;
+  };
   const refreshAutomation = async (): Promise<void> => {
     await refreshAutomationSnapshot();
   };
@@ -138,6 +143,9 @@ function RuntimeQuickPanel(): ReactElement {
     taskPresets={snapshot?.task_presets}
     status={status}
     automationSettings={snapshot?.automation_settings}
+    eyeCareSettings={snapshot?.eye_care_settings}
+    eyeCareStatus={snapshot?.eye_care_status}
+    onRefresh={refreshSnapshot}
     onSelectTask={id => handleTaskResult(control.selectTaskPreset(id))}
     onTemporaryTask={name => handleTaskResult(control.setTask(name))}
     onUpdateTaskPreset={(id, name, pinned, sortOrder) => handleTaskResult(control.updateTaskPreset(id, name, pinned, sortOrder))}

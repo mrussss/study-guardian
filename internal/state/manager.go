@@ -372,6 +372,73 @@ func (m *Manager) SetModeBreak() error {
 	return nil
 }
 
+// SetModeEyeCareBreak begins a dedicated pause that automatic resume must not
+// shorten. Only a due reminder can call this transition.
+func (m *Manager) SetModeEyeCareBreak(long bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.userMode != UserModeStudy {
+		return errors.New("eye-care break requires STUDY mode")
+	}
+	now := m.clock.Now()
+	m.checkMidnightResetLocked(now)
+	m.closeCurrentSessionLocked(now, "EYE_CARE_BREAK")
+	m.userMode = UserModeBreak
+	m.modeOrigin = ModeOriginEyeCare
+	m.autoResumeEligible = false
+	if long {
+		m.pauseReason = PauseReasonEyeCareLong
+	} else {
+		m.pauseReason = PauseReasonEyeCareShort
+	}
+	m.modeStartTime = now
+	m.currentModeSeconds = 0
+	m.distractedSeconds = 0
+	m.idleStaticSeconds = 0
+	m.afkSeconds = 0
+	m.afkSince = time.Time{}
+	m.clearCurrentReminderLocked()
+	m.pendingAutomationIntent = nil
+	m.autoPauseSnoozeUntil = nil
+	m.currentSessID = newSessionID(now)
+	if m.storage != nil {
+		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
+			ID: m.currentSessID, Mode: string(UserModeBreak), Task: m.task, StartedAt: now,
+			ModeOrigin: string(ModeOriginEyeCare), PauseReason: string(m.pauseReason), AutoResumeEligible: false,
+		})
+	}
+	return nil
+}
+
+func (m *Manager) ResumeEyeCareStudy() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.userMode != UserModeBreak || m.modeOrigin != ModeOriginEyeCare {
+		return errors.New("no active eye-care break")
+	}
+	now := m.clock.Now()
+	m.closeCurrentSessionLocked(now, "EYE_CARE_RESUMED")
+	m.userMode = UserModeStudy
+	m.modeOrigin = ModeOriginManual
+	m.pauseReason = PauseReasonNone
+	m.autoResumeEligible = false
+	m.setManualOverrideLocked(now)
+	m.modeStartTime = now
+	m.currentModeSeconds = 0
+	m.distractedSeconds = 0
+	m.idleStaticSeconds = 0
+	m.afkSeconds = 0
+	m.afkSince = time.Time{}
+	m.currentSessID = newSessionID(now)
+	if m.storage != nil {
+		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
+			ID: m.currentSessID, Mode: string(UserModeStudy), Task: m.task, StartedAt: now,
+			ModeOrigin: string(ModeOriginManual), PauseReason: string(PauseReasonNone), AutoResumeEligible: false,
+		})
+	}
+	return nil
+}
+
 func (m *Manager) SetModeOff() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -915,7 +982,7 @@ func (m *Manager) TickWithClassification(
 	m.clearRecoveredReminderLocked(now)
 
 	// 8. Reminder Engine Evaluation
-	if m.reminderEng != nil {
+	if m.reminderEng != nil && m.modeOrigin != ModeOriginEyeCare {
 		rem := m.reminderEng.Evaluate(ReminderDecisionInput{
 			Now:               now,
 			UserMode:          m.userMode,

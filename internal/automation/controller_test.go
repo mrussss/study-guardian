@@ -41,7 +41,7 @@ func TestControllerOnlyResumesAutomationBreak(t *testing.T) {
 	start := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
 	outcome := focusedOutcome()
 	outcome.UserMode = state.UserModeBreak
-	for _, origin := range []state.ModeOrigin{state.ModeOriginManual, state.ModeOriginAutomation} {
+	for _, origin := range []state.ModeOrigin{state.ModeOriginManual, state.ModeOriginEyeCare, state.ModeOriginAutomation} {
 		status := state.SystemStatus{UserMode: state.UserModeBreak, ModeOrigin: origin, AutoResumeEligible: origin == state.ModeOriginAutomation, PrivacyState: state.PrivacyNormal}
 		if got := c.Evaluate(start, outcome, status); got != nil {
 			t.Fatalf("origin=%s intent=%+v", origin, got)

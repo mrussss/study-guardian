@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     fs::OpenOptions,
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
@@ -15,7 +14,8 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder, Window,
+    WindowEvent,
 };
 
 struct ClickThroughState(Arc<Mutex<bool>>);
@@ -57,11 +57,12 @@ enum LaunchRoute {
 }
 
 fn requested_launch_route(args: &[String]) -> Option<LaunchRoute> {
-    args.windows(2).find_map(|pair| match (pair[0].as_str(), pair[1].as_str()) {
-        ("--show", "quick-panel") => Some(LaunchRoute::QuickPanel),
-        ("--show", "control-center") => Some(LaunchRoute::ControlCenter),
-        _ => None,
-    })
+    args.windows(2)
+        .find_map(|pair| match (pair[0].as_str(), pair[1].as_str()) {
+            ("--show", "quick-panel") => Some(LaunchRoute::QuickPanel),
+            ("--show", "control-center") => Some(LaunchRoute::ControlCenter),
+            _ => None,
+        })
 }
 
 fn launch_without_pet(args: &[String]) -> bool {
@@ -81,13 +82,17 @@ fn activate_launch_request(app: &AppHandle, args: &[String]) {
     }
 }
 
-fn next_click_through(current: bool) -> bool { !current }
+fn next_click_through(current: bool) -> bool {
+    !current
+}
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 const SUPERVISOR_GET_PATHS: &[&str] = &[
     "/v1/activity/current",
     "/v1/status",
+    "/v1/eye-care/status",
+    "/v1/settings/eye-care",
     "/v1/task-presets",
     "/v1/settings/reminder",
     "/v1/settings/ai",
@@ -145,6 +150,10 @@ struct SupervisorSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     last_success_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    eye_care_settings: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eye_care_status: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     last_error_kind: Option<&'static str>,
 }
 
@@ -201,6 +210,10 @@ struct SupervisorDashboardSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     automation_settings: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    eye_care_settings: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eye_care_status: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     ai_settings: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     history: Option<Value>,
@@ -223,6 +236,8 @@ fn disconnected(kind: NativeErrorKind) -> SupervisorSnapshot {
         connected: false,
         semantic: None,
         last_success_at: None,
+        eye_care_settings: None,
+        eye_care_status: None,
         last_error_kind: Some(kind.as_str()),
     }
 }
@@ -236,6 +251,8 @@ fn disconnected_dashboard(kind: NativeErrorKind) -> SupervisorDashboardSnapshot 
         task_presets: None,
         reminder_settings: None,
         automation_settings: None,
+        eye_care_settings: None,
+        eye_care_status: None,
         ai_settings: None,
         history: None,
         achievements: None,
@@ -266,24 +283,27 @@ fn configured_aux_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, 
     }
     let window_for_events = window.clone();
     window.on_window_event(move |event| match event {
-            WindowEvent::CloseRequested { api, .. } => {
-                api.prevent_close();
-                let action = if is_quick_panel {
-                    AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:close-request")
-                } else {
-                    AuxiliaryWindowAction::HideControlCenter
-                };
-                schedule_aux_window(window_for_events.app_handle().clone(), action);
-            }
-            WindowEvent::Focused(true) if is_quick_panel => {
-                record_quick_panel_debug_event("quick-panel:focused-true");
-            }
-            WindowEvent::Focused(false) if is_quick_panel => {
-                record_quick_panel_debug_event("quick-panel:focused-false");
-                schedule_aux_window(window_for_events.app_handle().clone(), AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:focus-lost"));
-            }
-            _ => {}
-        });
+        WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            let action = if is_quick_panel {
+                AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:close-request")
+            } else {
+                AuxiliaryWindowAction::HideControlCenter
+            };
+            schedule_aux_window(window_for_events.app_handle().clone(), action);
+        }
+        WindowEvent::Focused(true) if is_quick_panel => {
+            record_quick_panel_debug_event("quick-panel:focused-true");
+        }
+        WindowEvent::Focused(false) if is_quick_panel => {
+            record_quick_panel_debug_event("quick-panel:focused-false");
+            schedule_aux_window(
+                window_for_events.app_handle().clone(),
+                AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:focus-lost"),
+            );
+        }
+        _ => {}
+    });
     Ok(window)
 }
 
@@ -299,7 +319,10 @@ fn bounded_panel_position(
 ) -> (i32, i32) {
     let max_x = (work_x + work_width - panel_width).max(work_x);
     let max_y = (work_y + work_height - panel_height).max(work_y);
-    (desired_x.clamp(work_x, max_x) as i32, desired_y.clamp(work_y, max_y) as i32)
+    (
+        desired_x.clamp(work_x, max_x) as i32,
+        desired_y.clamp(work_y, max_y) as i32,
+    )
 }
 
 fn position_quick_panel(pet: &WebviewWindow, panel: &WebviewWindow) -> Result<(), String> {
@@ -328,10 +351,29 @@ fn position_quick_panel(pet: &WebviewWindow, panel: &WebviewWindow) -> Result<()
     let above = (pet_x, pet_y - panel_height - gap);
     let work_right = work_x + work_width;
     let work_bottom = work_y + work_height;
-    let fits = |(x, y): (i64, i64)| x >= work_x && y >= work_y && x + panel_width <= work_right && y + panel_height <= work_bottom;
-    let (desired_x, desired_y) = [right, left, below, above].into_iter().find(|candidate| fits(*candidate)).unwrap_or(right);
-    let (x, y) = bounded_panel_position(desired_x, desired_y, work_x, work_y, work_width, work_height, panel_width, panel_height);
-    panel.set_position(PhysicalPosition::new(x, y)).map_err(|error| error.to_string())
+    let fits = |(x, y): (i64, i64)| {
+        x >= work_x
+            && y >= work_y
+            && x + panel_width <= work_right
+            && y + panel_height <= work_bottom
+    };
+    let (desired_x, desired_y) = [right, left, below, above]
+        .into_iter()
+        .find(|candidate| fits(*candidate))
+        .unwrap_or(right);
+    let (x, y) = bounded_panel_position(
+        desired_x,
+        desired_y,
+        work_x,
+        work_y,
+        work_width,
+        work_height,
+        panel_width,
+        panel_height,
+    );
+    panel
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|error| error.to_string())
 }
 
 fn runtime_root() -> PathBuf {
@@ -348,9 +390,19 @@ fn runtime_root() -> PathBuf {
 
 fn bounded_pet_drag_debug_event(event: &str) -> Option<&str> {
     match event {
-        "drag:down" | "drag:move" | "drag:threshold" | "drag:manual-start" | "drag:position-request" | "drag:position-ok"
-        | "drag:quick-panel-called" | "drag:quick-panel-ok" | "drag:quick-panel-failed"
-        | "drag:start-called" | "drag:start-ok" | "drag:click" | "drag:clear"
+        "drag:down"
+        | "drag:move"
+        | "drag:threshold"
+        | "drag:manual-start"
+        | "drag:position-request"
+        | "drag:position-ok"
+        | "drag:quick-panel-called"
+        | "drag:quick-panel-ok"
+        | "drag:quick-panel-failed"
+        | "drag:start-called"
+        | "drag:start-ok"
+        | "drag:click"
+        | "drag:clear"
         | "drag:position-failed:ipc_rejected"
         | "drag:position-failed:window_unavailable"
         | "drag:position-failed:permission_denied"
@@ -364,11 +416,17 @@ fn bounded_pet_drag_debug_event(event: &str) -> Option<&str> {
 }
 
 fn write_pet_drag_debug_event(event: &str) -> Result<(), String> {
-    let bounded = bounded_pet_drag_debug_event(event).ok_or_else(|| "invalid_debug_event".to_string())?;
+    let bounded =
+        bounded_pet_drag_debug_event(event).ok_or_else(|| "invalid_debug_event".to_string())?;
     let path = runtime_root().join("logs").join("pet-v3-drag-debug.log");
-    let parent = path.parent().ok_or_else(|| "debug_log_unavailable".to_string())?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "debug_log_unavailable".to_string())?;
     fs::create_dir_all(parent).map_err(|_| "debug_log_unavailable".to_string())?;
-    if fs::metadata(&path).map(|metadata| metadata.len() > 64 * 1024).unwrap_or(false) {
+    if fs::metadata(&path)
+        .map(|metadata| metadata.len() > 64 * 1024)
+        .unwrap_or(false)
+    {
         fs::write(&path, b"").map_err(|_| "debug_log_unavailable".to_string())?;
     }
     let mut file = OpenOptions::new()
@@ -401,11 +459,19 @@ fn bounded_quick_panel_debug_event(event: &str) -> Option<&str> {
 }
 
 fn write_quick_panel_debug_event(event: &str) -> Result<(), String> {
-    let bounded = bounded_quick_panel_debug_event(event).ok_or_else(|| "invalid_debug_event".to_string())?;
-    let path = runtime_root().join("logs").join("pet-v3-quick-panel-debug.log");
-    let parent = path.parent().ok_or_else(|| "debug_log_unavailable".to_string())?;
+    let bounded =
+        bounded_quick_panel_debug_event(event).ok_or_else(|| "invalid_debug_event".to_string())?;
+    let path = runtime_root()
+        .join("logs")
+        .join("pet-v3-quick-panel-debug.log");
+    let parent = path
+        .parent()
+        .ok_or_else(|| "debug_log_unavailable".to_string())?;
     fs::create_dir_all(parent).map_err(|_| "debug_log_unavailable".to_string())?;
-    if fs::metadata(&path).map(|metadata| metadata.len() > 64 * 1024).unwrap_or(false) {
+    if fs::metadata(&path)
+        .map(|metadata| metadata.len() > 64 * 1024)
+        .unwrap_or(false)
+    {
         fs::write(&path, b"").map_err(|_| "debug_log_unavailable".to_string())?;
     }
     let mut file = OpenOptions::new()
@@ -421,7 +487,10 @@ fn record_quick_panel_debug_event(event: &str) {
 }
 
 fn bounded_control_center_route(route: &str) -> Option<&'static str> {
-    CONTROL_CENTER_ROUTES.iter().copied().find(|allowed| *allowed == route)
+    CONTROL_CENTER_ROUTES
+        .iter()
+        .copied()
+        .find(|allowed| *allowed == route)
 }
 
 fn config_scalar(config: &str, key: &str) -> Option<String> {
@@ -431,7 +500,11 @@ fn config_scalar(config: &str, key: &str) -> Option<String> {
         if value.is_empty() {
             return None;
         }
-        Some(value.trim_matches(|character| character == '"' || character == '\'').to_string())
+        Some(
+            value
+                .trim_matches(|character| character == '"' || character == '\'')
+                .to_string(),
+        )
     })
 }
 
@@ -467,7 +540,9 @@ fn loopback_address(host: &str, port: u16) -> Result<SocketAddr, NativeErrorKind
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn classify_http_status(status: u16) -> Result<(), NativeErrorKind> {
@@ -504,11 +579,15 @@ fn response_parts(response: &[u8]) -> Result<(usize, u16), NativeErrorKind> {
 fn parse_http_response(response: &[u8]) -> Result<Value, NativeErrorKind> {
     let (body_start, status) = response_parts(response)?;
     classify_http_status(status)?;
-    serde_json::from_slice(&response[body_start..])
-        .map_err(|_| NativeErrorKind::InvalidResponse)
+    serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
-fn fetch_supervisor_get(host: &str, port: u16, token: &str, path: &str) -> Result<Value, NativeErrorKind> {
+fn fetch_supervisor_get(
+    host: &str,
+    port: u16,
+    token: &str,
+    path: &str,
+) -> Result<Value, NativeErrorKind> {
     if !SUPERVISOR_GET_PATHS.contains(&path) || host.contains('\r') || host.contains('\n') {
         return Err(NativeErrorKind::Unavailable);
     }
@@ -569,10 +648,19 @@ fn build_mode_request(mode: &str, task: Option<&str>) -> Result<ModeRequest, Nat
             }
             let body = serde_json::to_vec(&json!({ "task": task }))
                 .map_err(|_| NativeErrorKind::InvalidResponse)?;
-            Ok(ModeRequest { path: "/v1/mode/study", body })
+            Ok(ModeRequest {
+                path: "/v1/mode/study",
+                body,
+            })
         }
-        "BREAK" if task.is_none() => Ok(ModeRequest { path: "/v1/mode/break", body: Vec::new() }),
-        "OFF" if task.is_none() => Ok(ModeRequest { path: "/v1/mode/off", body: Vec::new() }),
+        "BREAK" if task.is_none() => Ok(ModeRequest {
+            path: "/v1/mode/break",
+            body: Vec::new(),
+        }),
+        "OFF" if task.is_none() => Ok(ModeRequest {
+            path: "/v1/mode/off",
+            body: Vec::new(),
+        }),
         _ => Err(NativeErrorKind::Rejected),
     }
 }
@@ -585,7 +673,12 @@ fn build_daily_target_body(minutes: i64) -> Result<Vec<u8>, NativeErrorKind> {
         .map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
-fn post_supervisor_mode(host: &str, port: u16, token: &str, request: &ModeRequest) -> Result<Value, NativeErrorKind> {
+fn post_supervisor_mode(
+    host: &str,
+    port: u16,
+    token: &str,
+    request: &ModeRequest,
+) -> Result<Value, NativeErrorKind> {
     if host.contains('\r') || host.contains('\n') {
         return Err(NativeErrorKind::Unavailable);
     }
@@ -629,57 +722,106 @@ fn post_supervisor_mode(host: &str, port: u16, token: &str, request: &ModeReques
     }
     let (body_start, status) = response_parts(&response)?;
     classify_control_status(status)?;
-    serde_json::from_slice(&response[body_start..])
-        .map_err(|_| NativeErrorKind::InvalidResponse)
+    serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
 fn task_preset_path_allowed(path: &str) -> bool {
-    if path == "/v1/task" || path == "/v1/task-presets" || path == "/v1/missions" { return true; }
+    if path == "/v1/task" || path == "/v1/task-presets" || path == "/v1/missions" {
+        return true;
+    }
     if let Some(rest) = path.strip_prefix("/v1/missions/") {
         let mut parts = rest.split('/');
-        let Some(id) = parts.next() else { return false; };
-        if id.is_empty() || id.len() > 128 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') { return false; }
-        return matches!((parts.next(), parts.next()), (Some("complete"), None) | (Some("cancel"), None));
+        let Some(id) = parts.next() else {
+            return false;
+        };
+        if id.is_empty()
+            || id.len() > 128
+            || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        {
+            return false;
+        }
+        return matches!(
+            (parts.next(), parts.next()),
+            (Some("complete"), None) | (Some("cancel"), None)
+        );
     }
-    let Some(rest) = path.strip_prefix("/v1/task-presets/") else { return false; };
+    let Some(rest) = path.strip_prefix("/v1/task-presets/") else {
+        return false;
+    };
     let mut parts = rest.split('/');
-    let Some(id) = parts.next() else { return false; };
-    if id.is_empty() || id.len() > 128 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') { return false; }
+    let Some(id) = parts.next() else {
+        return false;
+    };
+    if id.is_empty()
+        || id.len() > 128
+        || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+    {
+        return false;
+    }
     match (parts.next(), parts.next()) {
         (None, None) | (Some("select"), None) => true,
         _ => false,
     }
 }
 
-fn task_supervisor_request(host: &str, port: u16, token: &str, method: &str, path: &str, body: &[u8]) -> Result<Value, NativeErrorKind> {
-    if !["POST", "PUT", "DELETE"].contains(&method) || !task_preset_path_allowed(path) || host.contains(['\r', '\n']) {
+fn task_supervisor_request(
+    host: &str,
+    port: u16,
+    token: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> Result<Value, NativeErrorKind> {
+    if !["POST", "PUT", "DELETE"].contains(&method)
+        || !task_preset_path_allowed(path)
+        || host.contains(['\r', '\n'])
+    {
         return Err(NativeErrorKind::Rejected);
     }
-    if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
+    if token.is_empty() || token.contains(['\r', '\n']) {
+        return Err(NativeErrorKind::Unauthorized);
+    }
     let address = loopback_address(host, port)?;
-    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).map_err(|error| map_io_error(&error))?;
-    stream.set_read_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
-    stream.set_write_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
+    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
+        .map_err(|error| map_io_error(&error))?;
+    stream
+        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|error| map_io_error(&error))?;
+    stream
+        .set_write_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|error| map_io_error(&error))?;
     let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-    stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body)).map_err(|error| map_io_error(&error))?;
+    stream
+        .write_all(head.as_bytes())
+        .and_then(|_| stream.write_all(body))
+        .map_err(|error| map_io_error(&error))?;
     stream.flush().map_err(|error| map_io_error(&error))?;
     let mut response = Vec::with_capacity(4096);
     let mut chunk = [0_u8; 4096];
     loop {
         match stream.read(&mut chunk) {
             Ok(0) => break,
-            Ok(read) if response.len() + read <= MAX_RESPONSE_BYTES => response.extend_from_slice(&chunk[..read]),
+            Ok(read) if response.len() + read <= MAX_RESPONSE_BYTES => {
+                response.extend_from_slice(&chunk[..read])
+            }
             Ok(_) => return Err(NativeErrorKind::InvalidResponse),
             Err(error) => return Err(map_io_error(&error)),
         }
     }
     let (body_start, status) = response_parts(&response)?;
     classify_control_status(status)?;
-    if status == 204 { return Ok(json!({})); }
+    if status == 204 {
+        return Ok(json!({}));
+    }
     serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
-fn put_daily_target(host: &str, port: u16, token: &str, minutes: i64) -> Result<Value, NativeErrorKind> {
+fn put_daily_target(
+    host: &str,
+    port: u16,
+    token: &str,
+    minutes: i64,
+) -> Result<Value, NativeErrorKind> {
     let body = build_daily_target_body(minutes)?;
     if host.contains('\r') || host.contains('\n') {
         return Err(NativeErrorKind::Unavailable);
@@ -724,7 +866,11 @@ fn put_daily_target(host: &str, port: u16, token: &str, minutes: i64) -> Result<
     serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
-fn enum_field(object: &serde_json::Map<String, Value>, key: &str, allowed: &[&str]) -> Result<String, NativeErrorKind> {
+fn enum_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    allowed: &[&str],
+) -> Result<String, NativeErrorKind> {
     let value = object
         .get(key)
         .and_then(Value::as_str)
@@ -733,7 +879,11 @@ fn enum_field(object: &serde_json::Map<String, Value>, key: &str, allowed: &[&st
     Ok(value.to_string())
 }
 
-fn text_field(object: &serde_json::Map<String, Value>, key: &str, max_bytes: usize) -> Result<String, NativeErrorKind> {
+fn text_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    max_bytes: usize,
+) -> Result<String, NativeErrorKind> {
     object
         .get(key)
         .and_then(Value::as_str)
@@ -742,19 +892,34 @@ fn text_field(object: &serde_json::Map<String, Value>, key: &str, max_bytes: usi
         .ok_or(NativeErrorKind::InvalidResponse)
 }
 
-fn string_array_field(object: &serde_json::Map<String, Value>, key: &str, max_items: usize, max_bytes: usize) -> Result<Vec<String>, NativeErrorKind> {
-    let Some(value) = object.get(key) else { return Ok(Vec::new()); };
+fn string_array_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    max_items: usize,
+    max_bytes: usize,
+) -> Result<Vec<String>, NativeErrorKind> {
+    let Some(value) = object.get(key) else {
+        return Ok(Vec::new());
+    };
     let rows = value.as_array().ok_or(NativeErrorKind::InvalidResponse)?;
-    if rows.len() > max_items { return Err(NativeErrorKind::InvalidResponse); }
-    rows.iter().map(|row| {
-        row.as_str()
-            .filter(|value| !value.trim().is_empty() && value.len() <= max_bytes)
-            .map(str::to_string)
-            .ok_or(NativeErrorKind::InvalidResponse)
-    }).collect()
+    if rows.len() > max_items {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    rows.iter()
+        .map(|row| {
+            row.as_str()
+                .filter(|value| !value.trim().is_empty() && value.len() <= max_bytes)
+                .map(str::to_string)
+                .ok_or(NativeErrorKind::InvalidResponse)
+        })
+        .collect()
 }
 
-fn optional_text_field(object: &serde_json::Map<String, Value>, key: &str, max_bytes: usize) -> Result<Option<String>, NativeErrorKind> {
+fn optional_text_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    max_bytes: usize,
+) -> Result<Option<String>, NativeErrorKind> {
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(value)) if value.len() <= max_bytes => Ok(Some(value.clone())),
@@ -762,7 +927,10 @@ fn optional_text_field(object: &serde_json::Map<String, Value>, key: &str, max_b
     }
 }
 
-fn optional_bool_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<bool>, NativeErrorKind> {
+fn optional_bool_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<bool>, NativeErrorKind> {
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Bool(value)) => Ok(Some(*value)),
@@ -770,7 +938,10 @@ fn optional_bool_field(object: &serde_json::Map<String, Value>, key: &str) -> Re
     }
 }
 
-fn optional_non_negative_i64_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<i64>, NativeErrorKind> {
+fn optional_non_negative_i64_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<i64>, NativeErrorKind> {
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(value)) => value
@@ -784,20 +955,39 @@ fn optional_non_negative_i64_field(object: &serde_json::Map<String, Value>, key:
 
 fn valid_review_date(value: &str) -> bool {
     let bytes = value.as_bytes();
-    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' || !bytes.iter().enumerate().all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit()) {
+    if bytes.len() != 10
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
+    {
         return false;
     }
     let year = value[0..4].parse::<i32>().ok();
     let month = value[5..7].parse::<u32>().ok();
     let day = value[8..10].parse::<u32>().ok();
-    let (Some(year), Some(month), Some(day)) = (year, month, day) else { return false; };
-    if !(1..=12).contains(&month) || day == 0 { return false; }
+    let (Some(year), Some(month), Some(day)) = (year, month, day) else {
+        return false;
+    };
+    if !(1..=12).contains(&month) || day == 0 {
+        return false;
+    }
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let max_day = match month { 2 if leap => 29, 2 => 28, 4 | 6 | 9 | 11 => 30, _ => 31 };
+    let max_day = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
     day <= max_day
 }
 
-fn non_negative_i64_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<i64, NativeErrorKind> {
+fn non_negative_i64_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<i64, NativeErrorKind> {
     object
         .get(key)
         .and_then(Value::as_i64)
@@ -805,7 +995,10 @@ fn non_negative_i64_field(object: &serde_json::Map<String, Value>, key: &str) ->
         .ok_or(NativeErrorKind::InvalidResponse)
 }
 
-fn bounded_progress_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<f64, NativeErrorKind> {
+fn bounded_progress_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<f64, NativeErrorKind> {
     object
         .get(key)
         .and_then(Value::as_f64)
@@ -823,8 +1016,16 @@ fn bool_field(object: &serde_json::Map<String, Value>, key: &str) -> Result<bool
 fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let user_mode = enum_field(object, "user_mode", &["STANDBY", "STUDY", "BREAK", "OFF"])?;
-    let interaction_state = enum_field(object, "interaction_state", &["ACTIVE", "IDLE_STATIC", "IDLE_DYNAMIC", "UNKNOWN"])?;
-    let task_relation = enum_field(object, "task_relation", &["FOCUSED", "DISTRACTED", "UNKNOWN"])?;
+    let interaction_state = enum_field(
+        object,
+        "interaction_state",
+        &["ACTIVE", "IDLE_STATIC", "IDLE_DYNAMIC", "UNKNOWN"],
+    )?;
+    let task_relation = enum_field(
+        object,
+        "task_relation",
+        &["FOCUSED", "DISTRACTED", "UNKNOWN"],
+    )?;
     let privacy_state = enum_field(object, "privacy_state", &["NORMAL", "SENSITIVE"])?;
     let confidence = bounded_progress_field(object, "confidence")?;
     let task = text_field(object, "task", 4096)?;
@@ -847,23 +1048,36 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
         "screen_sensor_ok": screen_sensor_ok,
     });
     if let Some(afk_seconds) = object.get("afk_seconds").and_then(Value::as_i64) {
-        if afk_seconds >= 0 { output["afk_seconds"] = json!(afk_seconds); }
+        if afk_seconds >= 0 {
+            output["afk_seconds"] = json!(afk_seconds);
+        }
     }
     if let Some(afk_since) = optional_text_field(object, "afk_since", 128)? {
         output["afk_since"] = json!(afk_since);
     }
-    if let Some(last_success_at) = optional_text_field(object, "activitywatch_last_success_at", 128)? {
+    if let Some(last_success_at) =
+        optional_text_field(object, "activitywatch_last_success_at", 128)?
+    {
         output["activitywatch_last_success_at"] = json!(last_success_at);
     }
-    if let Some(failures) = object.get("activitywatch_consecutive_failures").and_then(Value::as_i64) {
+    if let Some(failures) = object
+        .get("activitywatch_consecutive_failures")
+        .and_then(Value::as_i64)
+    {
         if failures >= 0 {
             output["activitywatch_consecutive_failures"] = json!(failures);
         }
     }
-    if let Some(stable_ok) = object.get("activitywatch_stable_ok").and_then(Value::as_bool) {
+    if let Some(stable_ok) = object
+        .get("activitywatch_stable_ok")
+        .and_then(Value::as_bool)
+    {
         output["activitywatch_stable_ok"] = json!(stable_ok);
     }
-    if let Some(phase) = object.get("activitywatch_health_phase").and_then(Value::as_str) {
+    if let Some(phase) = object
+        .get("activitywatch_health_phase")
+        .and_then(Value::as_str)
+    {
         if ["AVAILABLE", "DEGRADED", "UNAVAILABLE"].contains(&phase) {
             output["activitywatch_health_phase"] = json!(phase);
         }
@@ -875,27 +1089,52 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
         output["last_activity_at"] = json!(last_activity_at);
     }
     if let Some(mode_origin) = object.get("mode_origin").and_then(Value::as_str) {
-        if ["MANUAL", "AUTOMATION"].contains(&mode_origin) {
+        if ["MANUAL", "AUTOMATION", "EYE_CARE"].contains(&mode_origin) {
             output["mode_origin"] = json!(mode_origin);
         }
     }
     if let Some(pause_reason) = object.get("pause_reason").and_then(Value::as_str) {
-        if ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"].contains(&pause_reason) {
+        if [
+            "NONE",
+            "IDLE",
+            "LOCKED",
+            "SLEEP",
+            "SENSOR_UNAVAILABLE",
+            "EYE_CARE_SHORT",
+            "EYE_CARE_LONG",
+        ]
+        .contains(&pause_reason)
+        {
             output["pause_reason"] = json!(pause_reason);
         }
     }
-    if let Some(auto_resume_eligible) = object.get("auto_resume_eligible").and_then(Value::as_bool) {
+    if let Some(auto_resume_eligible) = object.get("auto_resume_eligible").and_then(Value::as_bool)
+    {
         output["auto_resume_eligible"] = json!(auto_resume_eligible);
     }
-    if let Some(intent) = object.get("pending_automation_intent").and_then(Value::as_object) {
-        let transition = enum_field(intent, "transition", &["AUTO_START", "AUTO_PAUSE", "AUTO_RESUME"])?;
-        let reason = enum_field(intent, "reason", &["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"])?;
+    if let Some(intent) = object
+        .get("pending_automation_intent")
+        .and_then(Value::as_object)
+    {
+        let transition = enum_field(
+            intent,
+            "transition",
+            &["AUTO_START", "AUTO_PAUSE", "AUTO_RESUME"],
+        )?;
+        let reason = enum_field(
+            intent,
+            "reason",
+            &["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE"],
+        )?;
         let intent_id = text_field(intent, "intent_id", 128)?;
         let created_at = text_field(intent, "created_at", 128)?;
         let expires_at = text_field(intent, "expires_at", 128)?;
         let task = optional_text_field(intent, "task", 256)?.unwrap_or_default();
         let requires_confirmation = bool_field(intent, "requires_confirmation")?;
-        let expiry_action = intent.get("expiry_action").and_then(Value::as_str).filter(|value| ["DISMISS", "APPLY"].contains(value));
+        let expiry_action = intent
+            .get("expiry_action")
+            .and_then(Value::as_str)
+            .filter(|value| ["DISMISS", "APPLY"].contains(value));
         let mut intent_output = json!({
             "intent_id": intent_id,
             "transition": transition,
@@ -915,8 +1154,10 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
 
 fn sanitize_motivation(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
-    let today_credited_focus_minutes = non_negative_i64_field(object, "today_credited_focus_minutes")?;
-    let total_credited_focus_minutes = non_negative_i64_field(object, "total_credited_focus_minutes")?;
+    let today_credited_focus_minutes =
+        non_negative_i64_field(object, "today_credited_focus_minutes")?;
+    let total_credited_focus_minutes =
+        non_negative_i64_field(object, "total_credited_focus_minutes")?;
     let today_earned_ap_milli = non_negative_i64_field(object, "today_earned_ap_milli")?;
     let today_spent_ap_milli = non_negative_i64_field(object, "today_spent_ap_milli")?;
     let balance_ap_milli = non_negative_i64_field(object, "balance_ap_milli")?;
@@ -1010,14 +1251,18 @@ fn sanitize_missions(value: &Value) -> Result<Value, NativeErrorKind> {
         if let Some(completed_at) = optional_text_field(object, "completed_at", 128)? {
             item["completed_at"] = json!(completed_at);
         }
-        if let Some(linked_task_preset_id) = optional_text_field(object, "linked_task_preset_id", 128)? {
+        if let Some(linked_task_preset_id) =
+            optional_text_field(object, "linked_task_preset_id", 128)?
+        {
             item["linked_task_preset_id"] = json!(linked_task_preset_id);
         }
         if let Some(linked_task_name) = optional_text_field(object, "linked_task_name", 256)? {
             item["linked_task_name"] = json!(linked_task_name);
         }
         if let Some(link_source) = optional_text_field(object, "link_source", 16)? {
-            if !["MANUAL", "RULE", "AI"].contains(&link_source.as_str()) { return Err(NativeErrorKind::InvalidResponse); }
+            if !["MANUAL", "RULE", "AI"].contains(&link_source.as_str()) {
+                return Err(NativeErrorKind::InvalidResponse);
+            }
             item["link_source"] = json!(link_source);
         }
         if object.get("link_confidence").is_some() {
@@ -1051,7 +1296,10 @@ fn sanitize_rewards(value: &Value) -> Result<Value, NativeErrorKind> {
 fn sanitize_ai_settings(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let endpoint = |key: &str| -> Result<Value, NativeErrorKind> {
-        let row = object.get(key).and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
+        let row = object
+            .get(key)
+            .and_then(Value::as_object)
+            .ok_or(NativeErrorKind::InvalidResponse)?;
         Ok(json!({
             "enabled": bool_field(row, "enabled")?,
             "provider": text_field(row, "provider", 64)?,
@@ -1063,23 +1311,42 @@ fn sanitize_ai_settings(value: &Value) -> Result<Value, NativeErrorKind> {
             "json_mode": text_field(row, "json_mode", 32)?,
         }))
     };
-    let min_confidence = object.get("min_confidence").and_then(Value::as_f64).filter(|value| value.is_finite() && (0.0..=1.0).contains(value)).ok_or(NativeErrorKind::InvalidResponse)?;
-    Ok(json!({ "enabled": bool_field(object, "enabled")?, "min_confidence": min_confidence, "proxy": sanitize_ai_proxy(object.get("proxy"))?, "text": endpoint("text")?, "vision": endpoint("vision")? }))
+    let min_confidence = object
+        .get("min_confidence")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        .ok_or(NativeErrorKind::InvalidResponse)?;
+    Ok(
+        json!({ "enabled": bool_field(object, "enabled")?, "min_confidence": min_confidence, "proxy": sanitize_ai_proxy(object.get("proxy"))?, "text": endpoint("text")?, "vision": endpoint("vision")? }),
+    )
 }
 
 fn valid_manual_proxy_url(value: &str) -> bool {
     let value = value.trim();
-    let Some(authority) = value.strip_prefix("http://").or_else(|| value.strip_prefix("https://")) else { return false; };
-    !authority.is_empty() && !authority.contains(['@', '/', '?', '#']) && authority.chars().all(|character| !character.is_control() && !character.is_whitespace())
+    let Some(authority) = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    !authority.is_empty()
+        && !authority.contains(['@', '/', '?', '#'])
+        && authority
+            .chars()
+            .all(|character| !character.is_control() && !character.is_whitespace())
 }
 
 fn sanitize_ai_proxy(value: Option<&Value>) -> Result<Value, NativeErrorKind> {
-    let Some(row) = value else { return Ok(json!({ "mode": "environment", "url": "" })); };
+    let Some(row) = value else {
+        return Ok(json!({ "mode": "environment", "url": "" }));
+    };
     let object = row.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let mode = enum_field(object, "mode", &["environment", "direct", "manual"])?;
     let url = text_field(object, "url", 2048)?;
     if mode == "manual" {
-        if !valid_manual_proxy_url(&url) { return Err(NativeErrorKind::InvalidResponse); }
+        if !valid_manual_proxy_url(&url) {
+            return Err(NativeErrorKind::InvalidResponse);
+        }
     } else if !url.is_empty() {
         return Err(NativeErrorKind::InvalidResponse);
     }
@@ -1089,25 +1356,54 @@ fn sanitize_ai_proxy(value: Option<&Value>) -> Result<Value, NativeErrorKind> {
 fn sanitize_reminder_settings(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let cooldown = non_negative_i64_field(object, "cooldown_minutes")?;
-    if !(1..=1440).contains(&cooldown) { return Err(NativeErrorKind::InvalidResponse); }
-    let periods = object.get("quiet_periods").and_then(Value::as_array).ok_or(NativeErrorKind::InvalidResponse)?;
-    if periods.len() > 12 { return Err(NativeErrorKind::InvalidResponse); }
+    if !(1..=1440).contains(&cooldown) {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let periods = object
+        .get("quiet_periods")
+        .and_then(Value::as_array)
+        .ok_or(NativeErrorKind::InvalidResponse)?;
+    if periods.len() > 12 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
     let mut safe = Vec::with_capacity(periods.len());
     for period in periods {
         let row = period.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
-        safe.push(json!({ "start": text_field(row, "start", 5)?, "end": text_field(row, "end", 5)? }));
+        safe.push(
+            json!({ "start": text_field(row, "start", 5)?, "end": text_field(row, "end", 5)? }),
+        );
     }
     Ok(json!({ "cooldown_minutes": cooldown, "quiet_periods": safe }))
 }
 
 fn sanitize_automation_settings(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
-    let start = object.get("auto_start").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
-    let pause = object.get("auto_pause").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
-    let resume = object.get("auto_resume").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
-    let confidence = object.get("auto_start").and_then(Value::as_object).and_then(|v| v.get("min_confidence")).and_then(Value::as_f64).filter(|v| v.is_finite() && (0.0..=1.0).contains(v)).ok_or(NativeErrorKind::InvalidResponse)?;
-    let idle_dynamic_seconds = pause.get("idle_dynamic_seconds").and_then(Value::as_i64).unwrap_or(900);
-    if idle_dynamic_seconds < 1 || idle_dynamic_seconds > 86400 { return Err(NativeErrorKind::InvalidResponse); }
+    let start = object
+        .get("auto_start")
+        .and_then(Value::as_object)
+        .ok_or(NativeErrorKind::InvalidResponse)?;
+    let pause = object
+        .get("auto_pause")
+        .and_then(Value::as_object)
+        .ok_or(NativeErrorKind::InvalidResponse)?;
+    let resume = object
+        .get("auto_resume")
+        .and_then(Value::as_object)
+        .ok_or(NativeErrorKind::InvalidResponse)?;
+    let confidence = object
+        .get("auto_start")
+        .and_then(Value::as_object)
+        .and_then(|v| v.get("min_confidence"))
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+        .ok_or(NativeErrorKind::InvalidResponse)?;
+    let idle_dynamic_seconds = pause
+        .get("idle_dynamic_seconds")
+        .and_then(Value::as_i64)
+        .unwrap_or(900);
+    if idle_dynamic_seconds < 1 || idle_dynamic_seconds > 86400 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
     Ok(json!({
         "enabled": bool_field(object, "enabled")?,
         "auto_start": {
@@ -1133,11 +1429,176 @@ fn sanitize_automation_settings(value: &Value) -> Result<Value, NativeErrorKind>
     }))
 }
 
+fn valid_rfc3339_timestamp(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() < 20
+        || !bytes[..10].iter().all(u8::is_ascii)
+        || !valid_review_date(&value[..10])
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || !bytes[11..13].iter().all(u8::is_ascii_digit)
+        || !bytes[14..16].iter().all(u8::is_ascii_digit)
+        || !bytes[17..19].iter().all(u8::is_ascii_digit)
+        || bytes[11..13]
+            .iter()
+            .fold(0_u32, |n, d| n * 10 + u32::from(*d - b'0'))
+            > 23
+        || bytes[14..16]
+            .iter()
+            .fold(0_u32, |n, d| n * 10 + u32::from(*d - b'0'))
+            > 59
+        || bytes[17..19]
+            .iter()
+            .fold(0_u32, |n, d| n * 10 + u32::from(*d - b'0'))
+            > 59
+    {
+        return false;
+    }
+    let mut rest = &bytes[19..];
+    if rest.first() == Some(&b'.') {
+        rest = &rest[1..];
+        let digits = rest.iter().take_while(|byte| byte.is_ascii_digit()).count();
+        if digits == 0 {
+            return false;
+        }
+        rest = &rest[digits..];
+    }
+    if rest == b"Z" {
+        return true;
+    }
+    rest.len() == 6
+        && (rest[0] == b'+' || rest[0] == b'-')
+        && rest[1..3].iter().all(u8::is_ascii_digit)
+        && rest[3] == b':'
+        && rest[4..6].iter().all(u8::is_ascii_digit)
+        && rest[1..3]
+            .iter()
+            .fold(0_u32, |n, d| n * 10 + u32::from(*d - b'0'))
+            <= 23
+        && rest[4..6]
+            .iter()
+            .fold(0_u32, |n, d| n * 10 + u32::from(*d - b'0'))
+            <= 59
+}
+
+fn optional_timestamp(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<Option<String>, NativeErrorKind> {
+    let value = optional_text_field(object, field, 128)?;
+    if value
+        .as_deref()
+        .is_some_and(|timestamp| !valid_rfc3339_timestamp(timestamp))
+    {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    Ok(value)
+}
+
+fn sanitize_eye_care_settings(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let focus = non_negative_i64_field(object, "focus_minutes")?;
+    let short_break = non_negative_i64_field(object, "short_break_minutes")?;
+    let long_after = non_negative_i64_field(object, "long_break_after_focus_minutes")?;
+    let long_break = non_negative_i64_field(object, "long_break_minutes")?;
+    let snooze = non_negative_i64_field(object, "snooze_minutes")?;
+    let max_snoozes = non_negative_i64_field(object, "max_snoozes")?;
+    if !(20..=90).contains(&focus)
+        || !(1..=20).contains(&short_break)
+        || !(60..=240).contains(&long_after)
+        || !(5..=60).contains(&long_break)
+        || !(1..=30).contains(&snooze)
+        || !(0..=5).contains(&max_snoozes)
+    {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    Ok(json!({
+        "enabled": bool_field(object, "enabled")?,
+        "focus_minutes": focus,
+        "short_break_minutes": short_break,
+        "long_break_after_focus_minutes": long_after,
+        "long_break_minutes": long_break,
+        "snooze_minutes": snooze,
+        "max_snoozes": max_snoozes,
+    }))
+}
+
+fn sanitize_eye_care_status(value: &Value) -> Result<Value, NativeErrorKind> {
+    let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let phase = enum_field(
+        object,
+        "phase",
+        &[
+            "DISABLED",
+            "FOCUSING",
+            "SHORT_BREAK_DUE",
+            "SHORT_BREAK",
+            "LONG_BREAK_DUE",
+            "LONG_BREAK",
+            "WAITING_RETURN",
+        ],
+    )?;
+    let enabled = bool_field(object, "enabled")?;
+    if enabled == (phase == "DISABLED") {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let local_date = text_field(object, "local_date", 10)?;
+    if !valid_review_date(&local_date) {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let updated_at = text_field(object, "updated_at", 128)?;
+    if !valid_rfc3339_timestamp(&updated_at) {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let mut output = json!({
+        "enabled": enabled,
+        "phase": phase,
+        "local_date": local_date,
+        "focus_segment_seconds": safe_non_negative_i64_field(object, "focus_segment_seconds")?,
+        "focus_since_long_break_seconds": safe_non_negative_i64_field(object, "focus_since_long_break_seconds")?,
+        "snooze_count": safe_non_negative_i64_field(object, "snooze_count")?,
+        "completed_short_breaks": safe_non_negative_i64_field(object, "completed_short_breaks")?,
+        "completed_long_breaks": safe_non_negative_i64_field(object, "completed_long_breaks")?,
+        "retry_focus_after_seconds": safe_non_negative_i64_field(object, "retry_focus_after_seconds")?,
+        "revision": safe_non_negative_i64_field(object, "revision")?,
+        "updated_at": updated_at,
+        "notification_suppressed": bool_field(object, "notification_suppressed")?,
+    });
+    for field in [
+        "break_started_at",
+        "planned_break_end_at",
+        "due_at",
+        "snooze_until",
+    ] {
+        if let Some(timestamp) = optional_timestamp(object, field)? {
+            output[field] = json!(timestamp);
+        }
+    }
+    Ok(output)
+}
+
+fn safe_non_negative_i64_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<i64, NativeErrorKind> {
+    let value = non_negative_i64_field(object, key)?;
+    if value > 9_007_199_254_740_991 {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    Ok(value)
+}
+
 fn sanitize_task_preset_list(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let sanitize_rows = |key: &str, max: usize| -> Result<Value, NativeErrorKind> {
-        let rows = object.get(key).and_then(Value::as_array).ok_or(NativeErrorKind::InvalidResponse)?;
-        if rows.len() > max { return Err(NativeErrorKind::InvalidResponse); }
+        let rows = object
+            .get(key)
+            .and_then(Value::as_array)
+            .ok_or(NativeErrorKind::InvalidResponse)?;
+        if rows.len() > max {
+            return Err(NativeErrorKind::InvalidResponse);
+        }
         let mut output = Vec::with_capacity(rows.len());
         for row in rows {
             let item = row.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
@@ -1172,19 +1633,31 @@ fn sanitize_ai(value: &Value) -> Result<Value, NativeErrorKind> {
     Ok(output)
 }
 
-fn bounded_text_list(value: &Value, max_items: usize, max_bytes: usize) -> Result<Value, NativeErrorKind> {
+fn bounded_text_list(
+    value: &Value,
+    max_items: usize,
+    max_bytes: usize,
+) -> Result<Value, NativeErrorKind> {
     let values = value.as_array().ok_or(NativeErrorKind::InvalidResponse)?;
     if values.len() > max_items {
         return Err(NativeErrorKind::InvalidResponse);
     }
     values
         .iter()
-        .map(|item| item.as_str().filter(|text| text.len() <= max_bytes).map(Value::from).ok_or(NativeErrorKind::InvalidResponse))
+        .map(|item| {
+            item.as_str()
+                .filter(|text| text.len() <= max_bytes)
+                .map(Value::from)
+                .ok_or(NativeErrorKind::InvalidResponse)
+        })
         .collect::<Result<Vec<_>, _>>()
         .map(Value::Array)
 }
 
-fn optional_array<'a>(object: &'a serde_json::Map<String, Value>, field: &str) -> Result<&'a [Value], NativeErrorKind> {
+fn optional_array<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<&'a [Value], NativeErrorKind> {
     match object.get(field) {
         None | Some(Value::Null) => Ok(&[]),
         Some(Value::Array(items)) => Ok(items),
@@ -1192,7 +1665,12 @@ fn optional_array<'a>(object: &'a serde_json::Map<String, Value>, field: &str) -
     }
 }
 
-fn optional_bounded_text_list(object: &serde_json::Map<String, Value>, field: &str, max_items: usize, max_bytes: usize) -> Result<Value, NativeErrorKind> {
+fn optional_bounded_text_list(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+    max_items: usize,
+    max_bytes: usize,
+) -> Result<Value, NativeErrorKind> {
     match object.get(field) {
         None | Some(Value::Null) => Ok(Value::Array(Vec::new())),
         Some(value) => bounded_text_list(value, max_items, max_bytes),
@@ -1223,13 +1701,18 @@ fn sanitize_review(value: &Value) -> Result<Value, NativeErrorKind> {
     }
     let mut safe_accomplishments = Vec::with_capacity(accomplishments.len());
     for accomplishment in accomplishments {
-        let item = accomplishment.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+        let item = accomplishment
+            .as_object()
+            .ok_or(NativeErrorKind::InvalidResponse)?;
         safe_accomplishments.push(json!({
             "text": text_field(item, "text", 512)?,
             "confidence": bounded_progress_field(item, "confidence")?,
         }));
     }
-    let behavior = object.get("behavior").and_then(Value::as_object).ok_or(NativeErrorKind::InvalidResponse)?;
+    let behavior = object
+        .get("behavior")
+        .and_then(Value::as_object)
+        .ok_or(NativeErrorKind::InvalidResponse)?;
     let safe_behavior = json!({
         "distraction_count": non_negative_i64_field(behavior, "distraction_count")?,
         "largest_distraction_seconds": non_negative_i64_field(behavior, "largest_distraction_seconds")?,
@@ -1292,15 +1775,26 @@ fn sanitize_semantic(value: &Value) -> Result<Value, NativeErrorKind> {
         .filter(|value| value.len() <= 4096)
         .ok_or(NativeErrorKind::InvalidResponse)?
         .to_string();
-    let interaction = enum_field(object, "interaction", &["ACTIVE", "IDLE_STATIC", "IDLE_DYNAMIC", "UNKNOWN"])?;
+    let interaction = enum_field(
+        object,
+        "interaction",
+        &["ACTIVE", "IDLE_STATIC", "IDLE_DYNAMIC", "UNKNOWN"],
+    )?;
     let relation = enum_field(object, "relation", &["FOCUSED", "DISTRACTED", "UNKNOWN"])?;
     let privacy = enum_field(object, "privacy", &["NORMAL", "SENSITIVE"])?;
     let activity = enum_field(
         object,
         "activity",
         &[
-            "CODING", "ALGORITHM", "READING", "WRITING", "WATCHING", "AI_ASSISTED", "BROWSING",
-            "GENERAL_STUDY", "UNKNOWN",
+            "CODING",
+            "ALGORITHM",
+            "READING",
+            "WRITING",
+            "WATCHING",
+            "AI_ASSISTED",
+            "BROWSING",
+            "GENERAL_STUDY",
+            "UNKNOWN",
         ],
     )?;
     let confidence = object
@@ -1327,7 +1821,18 @@ fn sanitize_semantic(value: &Value) -> Result<Value, NativeErrorKind> {
         }
     }
     if let Some(value) = object.get("progress_signal").and_then(Value::as_str) {
-        if ["OBSERVING", "READING", "PRACTICING", "CODING", "WRITING", "DEBUGGING", "REVIEWING", "UNKNOWN"].contains(&value) {
+        if [
+            "OBSERVING",
+            "READING",
+            "PRACTICING",
+            "CODING",
+            "WRITING",
+            "DEBUGGING",
+            "REVIEWING",
+            "UNKNOWN",
+        ]
+        .contains(&value)
+        {
             output["progress_signal"] = json!(value);
         }
     }
@@ -1365,10 +1870,18 @@ fn supervisor_snapshot_blocking() -> SupervisorSnapshot {
         .get("observed_at")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let eye_care_status = fetch_supervisor_get(&host, port, &token, "/v1/eye-care/status")
+        .ok()
+        .and_then(|value| sanitize_eye_care_status(&value).ok());
+    let eye_care_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/eye-care")
+        .ok()
+        .and_then(|value| sanitize_eye_care_settings(&value).ok());
     SupervisorSnapshot {
         connected: true,
         semantic: Some(semantic),
         last_success_at,
+        eye_care_settings,
+        eye_care_status,
         last_error_kind: None,
     }
 }
@@ -1408,6 +1921,12 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
     let automation_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/automation")
         .ok()
         .and_then(|value| sanitize_automation_settings(&value).ok());
+    let eye_care_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/eye-care")
+        .ok()
+        .and_then(|value| sanitize_eye_care_settings(&value).ok());
+    let eye_care_status = fetch_supervisor_get(&host, port, &token, "/v1/eye-care/status")
+        .ok()
+        .and_then(|value| sanitize_eye_care_status(&value).ok());
     let ai_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/ai")
         .ok()
         .and_then(|value| sanitize_ai_settings(&value).ok());
@@ -1437,6 +1956,8 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
         task_presets,
         reminder_settings,
         automation_settings,
+        eye_care_settings,
+        eye_care_status,
         ai_settings,
         history,
         achievements,
@@ -1452,36 +1973,71 @@ fn supervisor_dashboard_snapshot_blocking() -> SupervisorDashboardSnapshot {
 async fn supervisor_set_mode(mode: String, task: Option<String>) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || supervisor_set_mode_blocking(mode, task))
         .await
-        .unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+        .unwrap_or(SupervisorControlResult {
+            ok: false,
+            error_kind: Some("unavailable"),
+        })
 }
 
 fn supervisor_set_mode_blocking(mode: String, task: Option<String>) -> SupervisorControlResult {
     let request = match build_mode_request(&mode, task.as_deref()) {
         Ok(request) => request,
-        Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        Err(kind) => {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            }
+        }
     };
     let (host, port, token) = match supervisor_credentials() {
         Ok(credentials) => credentials,
-        Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        Err(kind) => {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            }
+        }
     };
     match post_supervisor_mode(&host, port, &token, &request) {
-        Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
-        Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        Ok(_) => SupervisorControlResult {
+            ok: true,
+            error_kind: None,
+        },
+        Err(kind) => SupervisorControlResult {
+            ok: false,
+            error_kind: Some(kind.as_str()),
+        },
     }
 }
 
 fn task_control_result(method: &str, path: String, body: Value) -> SupervisorControlResult {
     let body = match serde_json::to_vec(&body) {
         Ok(value) => value,
-        Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") },
+        Err(_) => {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("invalid_response"),
+            }
+        }
     };
     let (host, port, token) = match supervisor_credentials() {
         Ok(credentials) => credentials,
-        Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        Err(kind) => {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            }
+        }
     };
     match task_supervisor_request(&host, port, &token, method, &path, &body) {
-        Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
-        Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        Ok(_) => SupervisorControlResult {
+            ok: true,
+            error_kind: None,
+        },
+        Err(kind) => SupervisorControlResult {
+            ok: false,
+            error_kind: Some(kind.as_str()),
+        },
     }
 }
 
@@ -1502,172 +2058,529 @@ fn bounded_mission_description(description: &str) -> bool {
 #[tauri::command]
 async fn supervisor_set_task(task: String) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
-        if !bounded_task_name(&task) { return SupervisorControlResult { ok: false, error_kind: Some("rejected") }; }
+        if !bounded_task_name(&task) {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("rejected"),
+            };
+        }
         task_control_result("POST", "/v1/task".to_string(), json!({ "task": task }))
-    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
 async fn supervisor_create_task_preset(name: String, pinned: bool) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
-        if !bounded_task_name(&name) { return SupervisorControlResult { ok: false, error_kind: Some("rejected") }; }
-        task_control_result("POST", "/v1/task-presets".to_string(), json!({ "name": name, "pinned": pinned, "sort_order": 0 }))
-    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+        if !bounded_task_name(&name) {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("rejected"),
+            };
+        }
+        task_control_result(
+            "POST",
+            "/v1/task-presets".to_string(),
+            json!({ "name": name, "pinned": pinned, "sort_order": 0 }),
+        )
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
 async fn supervisor_select_task_preset(id: String) -> SupervisorControlResult {
-    tauri::async_runtime::spawn_blocking(move || task_control_result("POST", format!("/v1/task-presets/{id}/select"), json!({})))
-        .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+    tauri::async_runtime::spawn_blocking(move || {
+        task_control_result("POST", format!("/v1/task-presets/{id}/select"), json!({}))
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
-async fn supervisor_update_task_preset(id: String, name: String, pinned: bool, sort_order: i64) -> SupervisorControlResult {
+async fn supervisor_update_task_preset(
+    id: String,
+    name: String,
+    pinned: bool,
+    sort_order: i64,
+) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
-        if !bounded_task_name(&name) { return SupervisorControlResult { ok: false, error_kind: Some("rejected") }; }
-        task_control_result("PUT", format!("/v1/task-presets/{id}"), json!({ "name": name, "pinned": pinned, "sort_order": sort_order }))
-    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+        if !bounded_task_name(&name) {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("rejected"),
+            };
+        }
+        task_control_result(
+            "PUT",
+            format!("/v1/task-presets/{id}"),
+            json!({ "name": name, "pinned": pinned, "sort_order": sort_order }),
+        )
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
 async fn supervisor_delete_task_preset(id: String) -> SupervisorControlResult {
-    tauri::async_runtime::spawn_blocking(move || task_control_result("DELETE", format!("/v1/task-presets/{id}"), json!({})))
-        .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+    tauri::async_runtime::spawn_blocking(move || {
+        task_control_result("DELETE", format!("/v1/task-presets/{id}"), json!({}))
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
-async fn supervisor_create_mission(title: String, description: String, due_date: Option<String>, linked_task_name: Option<String>, linked_task_preset_id: Option<String>) -> SupervisorControlResult {
+async fn supervisor_create_mission(
+    title: String,
+    description: String,
+    due_date: Option<String>,
+    linked_task_name: Option<String>,
+    linked_task_preset_id: Option<String>,
+) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
-        if !bounded_mission_title(&title) || !bounded_mission_description(&description) || due_date.as_ref().is_some_and(|value| value.len() > 32) || linked_task_name.as_ref().is_some_and(|value| value.len() > 256) || linked_task_preset_id.as_ref().is_some_and(|value| value.len() > 128) {
-            return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
+        if !bounded_mission_title(&title)
+            || !bounded_mission_description(&description)
+            || due_date.as_ref().is_some_and(|value| value.len() > 32)
+            || linked_task_name
+                .as_ref()
+                .is_some_and(|value| value.len() > 256)
+            || linked_task_preset_id
+                .as_ref()
+                .is_some_and(|value| value.len() > 128)
+        {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("rejected"),
+            };
         }
-        task_control_result("POST", "/v1/missions".to_string(), json!({
-            "title": title.trim(),
-            "description": description.trim(),
-            "reward_milli_ap": 0,
-            "due_date": due_date,
-            "linked_task_name": linked_task_name,
-            "linked_task_preset_id": linked_task_preset_id,
-            "link_source": "MANUAL",
-        }))
-    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+        task_control_result(
+            "POST",
+            "/v1/missions".to_string(),
+            json!({
+                "title": title.trim(),
+                "description": description.trim(),
+                "reward_milli_ap": 0,
+                "due_date": due_date,
+                "linked_task_name": linked_task_name,
+                "linked_task_preset_id": linked_task_preset_id,
+                "link_source": "MANUAL",
+            }),
+        )
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
 async fn supervisor_complete_mission(id: String) -> SupervisorControlResult {
-    tauri::async_runtime::spawn_blocking(move || task_control_result("POST", format!("/v1/missions/{id}/complete"), json!({})))
-        .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+    tauri::async_runtime::spawn_blocking(move || {
+        task_control_result("POST", format!("/v1/missions/{id}/complete"), json!({}))
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
 async fn supervisor_cancel_mission(id: String) -> SupervisorControlResult {
-    tauri::async_runtime::spawn_blocking(move || task_control_result("POST", format!("/v1/missions/{id}/cancel"), json!({})))
-        .await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+    tauri::async_runtime::spawn_blocking(move || {
+        task_control_result("POST", format!("/v1/missions/{id}/cancel"), json!({}))
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[derive(Deserialize, Serialize)]
 struct AIEndpointInput {
-    enabled: bool, provider: String, model: String, base_url: String,
+    enabled: bool,
+    provider: String,
+    model: String,
+    base_url: String,
     fallback_models: Vec<String>,
-    api_key_configured: bool, timeout_seconds: i64, json_mode: String,
+    api_key_configured: bool,
+    timeout_seconds: i64,
+    json_mode: String,
 }
 
 #[derive(Default, Deserialize, Serialize)]
-struct AIProxyInput { mode: String, url: String }
+struct AIProxyInput {
+    mode: String,
+    url: String,
+}
 
 #[derive(Deserialize, Serialize)]
-struct AISettingsInput { enabled: bool, min_confidence: f64, #[serde(default)] proxy: AIProxyInput, text: AIEndpointInput, vision: AIEndpointInput }
+struct AISettingsInput {
+    enabled: bool,
+    min_confidence: f64,
+    #[serde(default)]
+    proxy: AIProxyInput,
+    text: AIEndpointInput,
+    vision: AIEndpointInput,
+}
 
 #[derive(Deserialize, Serialize)]
-struct AutomationStartInput { enabled: bool, focused_stable_seconds: i64, min_confidence: f64, allow_unclassified: bool, confirm: bool }
+struct AutomationStartInput {
+    enabled: bool,
+    focused_stable_seconds: i64,
+    min_confidence: f64,
+    allow_unclassified: bool,
+    confirm: bool,
+}
 #[derive(Deserialize, Serialize)]
-struct AutomationPauseInput { enabled: bool, idle_static_seconds: i64, idle_dynamic_seconds: i64, locked_seconds: i64, confirm: bool }
+struct AutomationPauseInput {
+    enabled: bool,
+    idle_static_seconds: i64,
+    idle_dynamic_seconds: i64,
+    locked_seconds: i64,
+    confirm: bool,
+}
 #[derive(Deserialize, Serialize)]
-struct AutomationResumeInput { enabled: bool, focused_stable_seconds: i64 }
+struct AutomationResumeInput {
+    enabled: bool,
+    focused_stable_seconds: i64,
+}
 #[derive(Deserialize, Serialize)]
-struct AutomationSettingsInput { enabled: bool, auto_start: AutomationStartInput, auto_pause: AutomationPauseInput, auto_resume: AutomationResumeInput, transition_cooldown_seconds: i64, manual_override_minutes: i64 }
+struct AutomationSettingsInput {
+    enabled: bool,
+    auto_start: AutomationStartInput,
+    auto_pause: AutomationPauseInput,
+    auto_resume: AutomationResumeInput,
+    transition_cooldown_seconds: i64,
+    manual_override_minutes: i64,
+}
+
+#[derive(Deserialize, Serialize)]
+struct EyeCareSettingsInput {
+    enabled: bool,
+    focus_minutes: i64,
+    short_break_minutes: i64,
+    long_break_after_focus_minutes: i64,
+    long_break_minutes: i64,
+    snooze_minutes: i64,
+    max_snoozes: i64,
+}
 
 fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value, NativeErrorKind> {
-    let allowed = matches!((method, path), ("PUT", "/v1/settings/ai") | ("PUT", "/v1/settings/ai/secret") | ("DELETE", "/v1/settings/ai/secret") | ("PUT", "/v1/settings/automation") | ("POST", "/v1/settings/ai/test") | ("POST", "/v1/settings/ai/proxy/test") | ("POST", "/v1/review/generate") | ("POST", "/v1/automation/pending/accept") | ("POST", "/v1/automation/pending/reject"));
-    if !allowed { return Err(NativeErrorKind::Rejected); }
+    let allowed = matches!(
+        (method, path),
+        ("PUT", "/v1/settings/ai")
+            | ("PUT", "/v1/settings/ai/secret")
+            | ("DELETE", "/v1/settings/ai/secret")
+            | ("PUT", "/v1/settings/automation")
+            | ("PUT", "/v1/settings/eye-care")
+            | ("POST", "/v1/eye-care/action")
+            | ("POST", "/v1/settings/ai/test")
+            | ("POST", "/v1/settings/ai/proxy/test")
+            | ("POST", "/v1/review/generate")
+            | ("POST", "/v1/automation/pending/accept")
+            | ("POST", "/v1/automation/pending/reject")
+    );
+    if !allowed {
+        return Err(NativeErrorKind::Rejected);
+    }
     let (host, port, token) = supervisor_credentials()?;
-    if token.is_empty() || token.contains(['\r', '\n']) { return Err(NativeErrorKind::Unauthorized); }
+    if token.is_empty() || token.contains(['\r', '\n']) {
+        return Err(NativeErrorKind::Unauthorized);
+    }
     let address = loopback_address(&host, port)?;
-    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT).map_err(|error| map_io_error(&error))?;
-    let read_timeout = if path == "/v1/review/generate/sync" { Duration::from_secs(130) } else { REQUEST_TIMEOUT };
-    stream.set_read_timeout(Some(read_timeout)).map_err(|error| map_io_error(&error))?;
-    stream.set_write_timeout(Some(REQUEST_TIMEOUT)).map_err(|error| map_io_error(&error))?;
+    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
+        .map_err(|error| map_io_error(&error))?;
+    let read_timeout = if path == "/v1/review/generate/sync" {
+        Duration::from_secs(130)
+    } else {
+        REQUEST_TIMEOUT
+    };
+    stream
+        .set_read_timeout(Some(read_timeout))
+        .map_err(|error| map_io_error(&error))?;
+    stream
+        .set_write_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|error| map_io_error(&error))?;
     let head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-    stream.write_all(head.as_bytes()).and_then(|_| stream.write_all(body)).map_err(|error| map_io_error(&error))?;
+    stream
+        .write_all(head.as_bytes())
+        .and_then(|_| stream.write_all(body))
+        .map_err(|error| map_io_error(&error))?;
     stream.flush().map_err(|error| map_io_error(&error))?;
-    let mut response = Vec::new(); stream.take(MAX_RESPONSE_BYTES as u64 + 1).read_to_end(&mut response).map_err(|error| map_io_error(&error))?;
-    if response.len() > MAX_RESPONSE_BYTES { return Err(NativeErrorKind::InvalidResponse); }
+    let mut response = Vec::new();
+    stream
+        .take(MAX_RESPONSE_BYTES as u64 + 1)
+        .read_to_end(&mut response)
+        .map_err(|error| map_io_error(&error))?;
+    if response.len() > MAX_RESPONSE_BYTES {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
     let (body_start, status) = response_parts(&response)?;
     if path.ends_with("/test") {
-        if status != 200 && status != 502 { classify_control_status(status)?; }
-    } else { classify_control_status(status)?; }
+        if status != 200 && status != 502 {
+            classify_control_status(status)?;
+        }
+    } else {
+        classify_control_status(status)?;
+    }
     serde_json::from_slice(&response[body_start..]).map_err(|_| NativeErrorKind::InvalidResponse)
 }
 
 fn automation_decision_request(path: &'static str, intent_id: String) -> SupervisorControlResult {
     if intent_id.len() > 128 || intent_id.chars().any(|ch| ch == '\r' || ch == '\n') {
-        return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
+        return SupervisorControlResult {
+            ok: false,
+            error_kind: Some("rejected"),
+        };
     }
     let body = serde_json::to_vec(&json!({ "intent_id": intent_id })).unwrap_or_default();
     match ai_supervisor_request("POST", path, &body) {
-        Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
-        Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        Ok(_) => SupervisorControlResult {
+            ok: true,
+            error_kind: None,
+        },
+        Err(kind) => SupervisorControlResult {
+            ok: false,
+            error_kind: Some(kind.as_str()),
+        },
     }
 }
 
 #[tauri::command]
 async fn supervisor_accept_automation_intent(intent_id: String) -> SupervisorControlResult {
-    tauri::async_runtime::spawn_blocking(move || automation_decision_request("/v1/automation/pending/accept", intent_id))
-        .await
-        .unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+    tauri::async_runtime::spawn_blocking(move || {
+        automation_decision_request("/v1/automation/pending/accept", intent_id)
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
 async fn supervisor_reject_automation_intent(intent_id: String) -> SupervisorControlResult {
-    tauri::async_runtime::spawn_blocking(move || automation_decision_request("/v1/automation/pending/reject", intent_id))
-        .await
-        .unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+    tauri::async_runtime::spawn_blocking(move || {
+        automation_decision_request("/v1/automation/pending/reject", intent_id)
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
 async fn supervisor_save_ai_settings(settings: AISettingsInput) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
-        let body = match serde_json::to_vec(&settings) { Ok(value) => value, Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") } };
-        match ai_supervisor_request("PUT", "/v1/settings/ai", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
-    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+        let body = match serde_json::to_vec(&settings) {
+            Ok(value) => value,
+            Err(_) => {
+                return SupervisorControlResult {
+                    ok: false,
+                    error_kind: Some("invalid_response"),
+                }
+            }
+        };
+        match ai_supervisor_request("PUT", "/v1/settings/ai", &body) {
+            Ok(_) => SupervisorControlResult {
+                ok: true,
+                error_kind: None,
+            },
+            Err(kind) => SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            },
+        }
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
-async fn supervisor_save_automation_settings(settings: AutomationSettingsInput) -> SupervisorControlResult {
+async fn supervisor_save_automation_settings(
+    settings: AutomationSettingsInput,
+) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
-        if !(0.0..=1.0).contains(&settings.auto_start.min_confidence) || settings.auto_start.focused_stable_seconds < 1 || settings.auto_pause.idle_static_seconds < 1 || settings.auto_pause.idle_dynamic_seconds < 1 || settings.auto_pause.idle_dynamic_seconds > 86400 || settings.auto_pause.locked_seconds < 1 || settings.auto_resume.focused_stable_seconds < 1 || settings.transition_cooldown_seconds < 1 || settings.manual_override_minutes < 0 {
+        if !(0.0..=1.0).contains(&settings.auto_start.min_confidence)
+            || settings.auto_start.focused_stable_seconds < 1
+            || settings.auto_pause.idle_static_seconds < 1
+            || settings.auto_pause.idle_dynamic_seconds < 1
+            || settings.auto_pause.idle_dynamic_seconds > 86400
+            || settings.auto_pause.locked_seconds < 1
+            || settings.auto_resume.focused_stable_seconds < 1
+            || settings.transition_cooldown_seconds < 1
+            || settings.manual_override_minutes < 0
+        {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("rejected"),
+            };
+        }
+        let body = match serde_json::to_vec(&settings) {
+            Ok(value) => value,
+            Err(_) => {
+                return SupervisorControlResult {
+                    ok: false,
+                    error_kind: Some("invalid_response"),
+                }
+            }
+        };
+        match ai_supervisor_request("PUT", "/v1/settings/automation", &body) {
+            Ok(_) => SupervisorControlResult {
+                ok: true,
+                error_kind: None,
+            },
+            Err(kind) => SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            },
+        }
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
+}
+
+#[tauri::command]
+async fn supervisor_save_eye_care_settings(
+    settings: EyeCareSettingsInput,
+) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !(20..=90).contains(&settings.focus_minutes)
+            || !(1..=20).contains(&settings.short_break_minutes)
+            || !(60..=240).contains(&settings.long_break_after_focus_minutes)
+            || !(5..=60).contains(&settings.long_break_minutes)
+            || !(1..=30).contains(&settings.snooze_minutes)
+            || !(0..=5).contains(&settings.max_snoozes)
+        {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("rejected"),
+            };
+        }
+        let body = match serde_json::to_vec(&settings) {
+            Ok(value) => value,
+            Err(_) => {
+                return SupervisorControlResult {
+                    ok: false,
+                    error_kind: Some("invalid_response"),
+                }
+            }
+        };
+        match ai_supervisor_request("PUT", "/v1/settings/eye-care", &body) {
+            Ok(_) => SupervisorControlResult {
+                ok: true,
+                error_kind: None,
+            },
+            Err(kind) => SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            },
+        }
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
+}
+
+#[tauri::command]
+async fn supervisor_eye_care_action(
+    action: String,
+    expected_revision: i64,
+    request_id: String,
+) -> SupervisorControlResult {
+    tauri::async_runtime::spawn_blocking(move || {
+        let valid_action = ["START_SHORT_BREAK", "START_LONG_BREAK", "SNOOZE", "SKIP", "FINISH_EARLY", "RESUME_STUDY", "DISMISS"].contains(&action.as_str());
+        if !valid_action || expected_revision < 0 || request_id.is_empty() || request_id.len() > 128
+            || !request_id.chars().all(|character| character.is_ascii_alphanumeric() || "._:-".contains(character))
+        {
             return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
         }
-        let body = match serde_json::to_vec(&settings) { Ok(value) => value, Err(_) => return SupervisorControlResult { ok: false, error_kind: Some("invalid_response") } };
-        match ai_supervisor_request("PUT", "/v1/settings/automation", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
+        let body = serde_json::to_vec(&json!({ "action": action, "expected_revision": expected_revision, "request_id": request_id })).unwrap_or_default();
+        match ai_supervisor_request("POST", "/v1/eye-care/action", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
     }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
 }
 
 #[tauri::command]
 async fn supervisor_put_ai_secret(target: String, api_key: String) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
-        if !["text", "vision"].contains(&target.as_str()) || api_key.trim().is_empty() || api_key.len() > 8192 { return SupervisorControlResult { ok: false, error_kind: Some("rejected") }; }
-        let body = serde_json::to_vec(&json!({ "target": target, "api_key": api_key })).unwrap_or_default();
-        match ai_supervisor_request("PUT", "/v1/settings/ai/secret", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
-    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+        if !["text", "vision"].contains(&target.as_str())
+            || api_key.trim().is_empty()
+            || api_key.len() > 8192
+        {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("rejected"),
+            };
+        }
+        let body = serde_json::to_vec(&json!({ "target": target, "api_key": api_key }))
+            .unwrap_or_default();
+        match ai_supervisor_request("PUT", "/v1/settings/ai/secret", &body) {
+            Ok(_) => SupervisorControlResult {
+                ok: true,
+                error_kind: None,
+            },
+            Err(kind) => SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            },
+        }
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
 async fn supervisor_delete_ai_secret(target: String) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
         let body = serde_json::to_vec(&json!({ "target": target })).unwrap_or_default();
-        match ai_supervisor_request("DELETE", "/v1/settings/ai/secret", &body) { Ok(_) => SupervisorControlResult { ok: true, error_kind: None }, Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) } }
-    }).await.unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+        match ai_supervisor_request("DELETE", "/v1/settings/ai/secret", &body) {
+            Ok(_) => SupervisorControlResult {
+                ok: true,
+                error_kind: None,
+            },
+            Err(kind) => SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            },
+        }
+    })
+    .await
+    .unwrap_or(SupervisorControlResult {
+        ok: false,
+        error_kind: Some("unavailable"),
+    })
 }
 
 #[tauri::command]
@@ -1684,7 +2597,24 @@ async fn supervisor_test_ai_connection(target: String) -> Value {
 }
 
 fn valid_ai_error_kind(value: &str) -> bool {
-    matches!(value, "authentication_failed" | "model_not_found" | "model_unavailable" | "model_rate_limited" | "account_rate_limited" | "timeout" | "network_unavailable" | "proxy_unreachable" | "tls_failed" | "invalid_response" | "invalid_output" | "provider_unavailable" | "storage_unavailable" | "unavailable" | "rate_limited")
+    matches!(
+        value,
+        "authentication_failed"
+            | "model_not_found"
+            | "model_unavailable"
+            | "model_rate_limited"
+            | "account_rate_limited"
+            | "timeout"
+            | "network_unavailable"
+            | "proxy_unreachable"
+            | "tls_failed"
+            | "invalid_response"
+            | "invalid_output"
+            | "provider_unavailable"
+            | "storage_unavailable"
+            | "unavailable"
+            | "rate_limited"
+    )
 }
 
 #[tauri::command]
@@ -1703,28 +2633,52 @@ async fn supervisor_test_ai_proxy() -> Value {
 #[tauri::command]
 async fn supervisor_generate_review() -> SupervisorReviewResult {
     tauri::async_runtime::spawn_blocking(move || {
-        match ai_supervisor_request("POST", "/v1/review/generate/sync", b"{}").and_then(|value| sanitize_review_generation_result(&value)) {
+        match ai_supervisor_request("POST", "/v1/review/generate/sync", b"{}")
+            .and_then(|value| sanitize_review_generation_result(&value))
+        {
             Ok(result) => result,
-            Err(kind) => SupervisorReviewResult { ok: false, status: None, generation_mode: None, error_kind: Some(kind.as_str()) },
+            Err(kind) => SupervisorReviewResult {
+                ok: false,
+                status: None,
+                generation_mode: None,
+                error_kind: Some(kind.as_str()),
+            },
         }
-    }).await.unwrap_or(SupervisorReviewResult { ok: false, status: None, generation_mode: None, error_kind: Some("unavailable") })
+    })
+    .await
+    .unwrap_or(SupervisorReviewResult {
+        ok: false,
+        status: None,
+        generation_mode: None,
+        error_kind: Some("unavailable"),
+    })
 }
 
 fn review_generation_error(kind: NativeErrorKind) -> SupervisorReviewGenerationStatus {
     SupervisorReviewGenerationStatus {
-        accepted: Some(false), already_running: None, generation_id: None, date: None,
-        state: "FAILED".to_string(), generation_mode: None, error_kind: Some(kind.as_str()), revision: None,
+        accepted: Some(false),
+        already_running: None,
+        generation_id: None,
+        date: None,
+        state: "FAILED".to_string(),
+        generation_mode: None,
+        error_kind: Some(kind.as_str()),
+        revision: None,
     }
 }
 
 #[tauri::command]
 async fn supervisor_start_review_generation() -> SupervisorReviewGenerationStatus {
     tauri::async_runtime::spawn_blocking(move || {
-        match ai_supervisor_request("POST", "/v1/review/generate", b"{}").and_then(|value| sanitize_review_generation_status(&value)) {
+        match ai_supervisor_request("POST", "/v1/review/generate", b"{}")
+            .and_then(|value| sanitize_review_generation_status(&value))
+        {
             Ok(result) => result,
             Err(kind) => review_generation_error(kind),
         }
-    }).await.unwrap_or_else(|_| review_generation_error(NativeErrorKind::Unavailable))
+    })
+    .await
+    .unwrap_or_else(|_| review_generation_error(NativeErrorKind::Unavailable))
 }
 
 #[tauri::command]
@@ -1740,14 +2694,20 @@ async fn supervisor_review_generation_status() -> SupervisorReviewGenerationStat
             Ok(result) => result,
             Err(kind) => review_generation_error(kind),
         }
-    }).await.unwrap_or_else(|_| review_generation_error(NativeErrorKind::Unavailable))
+    })
+    .await
+    .unwrap_or_else(|_| review_generation_error(NativeErrorKind::Unavailable))
 }
 
-fn sanitize_review_generation_status(value: &Value) -> Result<SupervisorReviewGenerationStatus, NativeErrorKind> {
+fn sanitize_review_generation_status(
+    value: &Value,
+) -> Result<SupervisorReviewGenerationStatus, NativeErrorKind> {
     let row = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let state = enum_field(row, "state", &["IDLE", "PENDING", "READY", "FAILED"])?;
     let date = text_field(row, "date", 32)?;
-    if !valid_review_date(&date) { return Err(NativeErrorKind::InvalidResponse); }
+    if !valid_review_date(&date) {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
     let accepted = optional_bool_field(row, "accepted")?;
     let already_running = optional_bool_field(row, "already_running")?;
     let generation_id = optional_text_field(row, "generation_id", 128)?;
@@ -1758,17 +2718,35 @@ fn sanitize_review_generation_status(value: &Value) -> Result<SupervisorReviewGe
     };
     let raw_error = optional_text_field(row, "error_kind", 64)?;
     let error_kind = raw_error.as_deref().and_then(review_error_kind);
-    if raw_error.is_some() && error_kind.is_none() { return Err(NativeErrorKind::InvalidResponse); }
+    if raw_error.is_some() && error_kind.is_none() {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
     let revision = optional_non_negative_i64_field(row, "revision")?;
-    Ok(SupervisorReviewGenerationStatus { accepted, already_running, generation_id, date: Some(date), state, generation_mode, error_kind, revision })
+    Ok(SupervisorReviewGenerationStatus {
+        accepted,
+        already_running,
+        generation_id,
+        date: Some(date),
+        state,
+        generation_mode,
+        error_kind,
+        revision,
+    })
 }
 
-fn sanitize_review_generation_result(value: &Value) -> Result<SupervisorReviewResult, NativeErrorKind> {
+fn sanitize_review_generation_result(
+    value: &Value,
+) -> Result<SupervisorReviewResult, NativeErrorKind> {
     let row = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
     let status = enum_field(row, "status", &["READY", "STALE", "FAILED"])?;
     let generation_mode = enum_field(row, "generation_mode", &["AI", "FALLBACK", ""])?;
     let error_code = optional_text_field(row, "error_code", 64)?;
-    Ok(SupervisorReviewResult { ok: true, status: Some(status), generation_mode: Some(generation_mode), error_kind: error_code.as_deref().and_then(review_error_kind) })
+    Ok(SupervisorReviewResult {
+        ok: true,
+        status: Some(status),
+        generation_mode: Some(generation_mode),
+        error_kind: error_code.as_deref().and_then(review_error_kind),
+    })
 }
 
 fn review_error_kind(value: &str) -> Option<&'static str> {
@@ -1783,7 +2761,9 @@ fn review_error_kind(value: &str) -> Option<&'static str> {
         "network" | "network_unreachable" => Some("network_unavailable"),
         "tls_failed" => Some("tls_failed"),
         "timeout" | "provider_timeout" | "model_timeout" => Some("timeout"),
-        "invalid_output" | "invalid_json" | "schema_invalid" | "unsupported_version" => Some("invalid_output"),
+        "invalid_output" | "invalid_json" | "schema_invalid" | "unsupported_version" => {
+            Some("invalid_output")
+        }
         "provider_not_configured" | "not_configured" => Some("provider_not_configured"),
         "compaction_failed" => Some("compaction_failed"),
         "input_hash_failed" => Some("input_hash_failed"),
@@ -1797,10 +2777,16 @@ fn review_error_kind(value: &str) -> Option<&'static str> {
 }
 
 #[derive(Deserialize, Serialize)]
-struct QuietPeriodInput { start: String, end: String }
+struct QuietPeriodInput {
+    start: String,
+    end: String,
+}
 
 #[tauri::command]
-async fn supervisor_set_reminder_settings(cooldown_minutes: i64, quiet_periods: Vec<QuietPeriodInput>) -> SupervisorControlResult {
+async fn supervisor_set_reminder_settings(
+    cooldown_minutes: i64,
+    quiet_periods: Vec<QuietPeriodInput>,
+) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
         if !(1..=1440).contains(&cooldown_minutes) || quiet_periods.len() > 12 {
             return SupervisorControlResult { ok: false, error_kind: Some("rejected") };
@@ -1833,17 +2819,31 @@ async fn supervisor_set_reminder_settings(cooldown_minutes: i64, quiet_periods: 
 async fn supervisor_set_daily_target(minutes: i64) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || supervisor_set_daily_target_blocking(minutes))
         .await
-        .unwrap_or(SupervisorControlResult { ok: false, error_kind: Some("unavailable") })
+        .unwrap_or(SupervisorControlResult {
+            ok: false,
+            error_kind: Some("unavailable"),
+        })
 }
 
 fn supervisor_set_daily_target_blocking(minutes: i64) -> SupervisorControlResult {
     let (host, port, token) = match supervisor_credentials() {
         Ok(credentials) => credentials,
-        Err(kind) => return SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        Err(kind) => {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some(kind.as_str()),
+            }
+        }
     };
     match put_daily_target(&host, port, &token, minutes) {
-        Ok(_) => SupervisorControlResult { ok: true, error_kind: None },
-        Err(kind) => SupervisorControlResult { ok: false, error_kind: Some(kind.as_str()) },
+        Ok(_) => SupervisorControlResult {
+            ok: true,
+            error_kind: None,
+        },
+        Err(kind) => SupervisorControlResult {
+            ok: false,
+            error_kind: Some(kind.as_str()),
+        },
     }
 }
 
@@ -1856,7 +2856,9 @@ where
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = gate.lock().map_err(|_| "auxiliary_window_state_poisoned".to_string())?;
+        let _guard = gate
+            .lock()
+            .map_err(|_| "auxiliary_window_state_poisoned".to_string())?;
         operation()
     })
     .await
@@ -1872,11 +2874,14 @@ async fn dispatch_aux_window(app: AppHandle, action: AuxiliaryWindowAction) -> R
         AuxiliaryWindowAction::HideQuickPanel(reason) => hide_quick_panel_with_reason(&app, reason),
         AuxiliaryWindowAction::HideControlCenter => {
             if let Some(center) = app.get_webview_window("control-center") {
-                center.hide().map_err(|_| "control_center_hide_failed".to_string())?;
+                center
+                    .hide()
+                    .map_err(|_| "control_center_hide_failed".to_string())?;
             }
             Ok(())
         }
-    }).await
+    })
+    .await
 }
 
 fn schedule_aux_window(app: AppHandle, action: AuxiliaryWindowAction) {
@@ -1927,7 +2932,11 @@ fn hide_quick_panel_with_reason(app: &AppHandle, reason: &'static str) -> Result
 
 #[tauri::command]
 async fn hide_quick_panel(app: AppHandle) -> Result<(), String> {
-    dispatch_aux_window(app, AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:explicit")).await
+    dispatch_aux_window(
+        app,
+        AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:explicit"),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1941,7 +2950,9 @@ async fn open_control_center(app: AppHandle, route: Option<String>) -> Result<()
 fn show_control_center(app: &AppHandle, route: &str) -> Result<(), String> {
     // Drop the route lock before any window call: getters marshal to the UI
     // thread, which also handles the control_center_route IPC command.
-    *app.state::<ControlCenterRouteState>().0.lock()
+    *app.state::<ControlCenterRouteState>()
+        .0
+        .lock()
         .map_err(|_| "control center route state poisoned".to_string())? = route.to_string();
     hide_quick_panel_with_reason(app, "quick-panel:hide-reason:open-control-center")?;
     let center = app
@@ -1969,22 +2980,41 @@ async fn pet_window_diagnostics(app: AppHandle) -> Result<PetWindowDiagnostics, 
                 NativeWindowDiagnostic {
                     label,
                     exists: true,
-                    visible: window.is_visible().map_err(|_| "window_state_unavailable".to_string())?,
-                    focused: window.is_focused().map_err(|_| "window_state_unavailable".to_string())?,
+                    visible: window
+                        .is_visible()
+                        .map_err(|_| "window_state_unavailable".to_string())?,
+                    focused: window
+                        .is_focused()
+                        .map_err(|_| "window_state_unavailable".to_string())?,
                 }
             } else {
-                NativeWindowDiagnostic { label, exists: false, visible: false, focused: false }
+                NativeWindowDiagnostic {
+                    label,
+                    exists: false,
+                    visible: false,
+                    focused: false,
+                }
             };
             windows.push(status);
         }
-        let control_center_route = app.state::<ControlCenterRouteState>().0.lock()
-            .map_err(|_| "control_center_route_unavailable".to_string())?.clone();
-        Ok(PetWindowDiagnostics { windows, control_center_route })
-    }).await
+        let control_center_route = app
+            .state::<ControlCenterRouteState>()
+            .0
+            .lock()
+            .map_err(|_| "control_center_route_unavailable".to_string())?
+            .clone();
+        Ok(PetWindowDiagnostics {
+            windows,
+            control_center_route,
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-fn control_center_route(state: tauri::State<'_, ControlCenterRouteState>) -> Result<String, String> {
+fn control_center_route(
+    state: tauri::State<'_, ControlCenterRouteState>,
+) -> Result<String, String> {
     state
         .0
         .lock()
@@ -1993,9 +3023,18 @@ fn control_center_route(state: tauri::State<'_, ControlCenterRouteState>) -> Res
 }
 
 #[tauri::command]
-fn set_click_through(window: Window, state: tauri::State<'_, ClickThroughState>, enabled: bool) -> Result<bool, String> {
-    window.set_ignore_cursor_events(enabled).map_err(|err| err.to_string())?;
-    *state.0.lock().map_err(|_| "click-through state poisoned".to_string())? = enabled;
+fn set_click_through(
+    window: Window,
+    state: tauri::State<'_, ClickThroughState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    window
+        .set_ignore_cursor_events(enabled)
+        .map_err(|err| err.to_string())?;
+    *state
+        .0
+        .lock()
+        .map_err(|_| "click-through state poisoned".to_string())? = enabled;
     Ok(enabled)
 }
 
@@ -2011,7 +3050,10 @@ fn integration_script() -> Option<(PathBuf, PathBuf)> {
             candidates.push(root.to_path_buf());
         }
     }
-    if let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent) {
+    if let Some(root) = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+    {
         candidates.push(root.to_path_buf());
     }
     candidates.into_iter().find_map(|root| {
@@ -2024,7 +3066,8 @@ fn integration_script() -> Option<(PathBuf, PathBuf)> {
 fn run_autostart_script(argument: &str) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let (root, script) = integration_script().ok_or_else(|| "integration_unavailable".to_string())?;
+    let (root, script) =
+        integration_script().ok_or_else(|| "integration_unavailable".to_string())?;
     let output = Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -2058,14 +3101,20 @@ fn get_autostart_state() -> AutostartState {
             enabled: output.trim().eq_ignore_ascii_case("enabled"),
             available: true,
         },
-        Err(_) => AutostartState { enabled: false, available: false },
+        Err(_) => AutostartState {
+            enabled: false,
+            available: false,
+        },
     }
 }
 
 #[tauri::command]
 fn set_autostart_enabled(enabled: bool) -> Result<AutostartState, String> {
     run_autostart_script(if enabled { "-Enable" } else { "-Disable" })?;
-    Ok(AutostartState { enabled, available: true })
+    Ok(AutostartState {
+        enabled,
+        available: true,
+    })
 }
 
 pub fn run() {
@@ -2076,7 +3125,9 @@ pub fn run() {
             activate_launch_request(app, &args);
         }))
         .manage(ClickThroughState(Arc::new(Mutex::new(false))))
-        .manage(ControlCenterRouteState(Arc::new(Mutex::new("overview".to_string()))))
+        .manage(ControlCenterRouteState(Arc::new(Mutex::new(
+            "overview".to_string(),
+        ))))
         .manage(AuxiliaryWindowState(Arc::new(Mutex::new(()))))
         .invoke_handler(tauri::generate_handler![
             set_click_through,
@@ -2095,6 +3146,8 @@ pub fn run() {
             supervisor_set_reminder_settings,
             supervisor_save_ai_settings,
             supervisor_save_automation_settings,
+            supervisor_save_eye_care_settings,
+            supervisor_eye_care_action,
             supervisor_accept_automation_intent,
             supervisor_reject_automation_intent,
             supervisor_put_ai_secret,
@@ -2114,7 +3167,9 @@ pub fn run() {
             set_autostart_enabled,
         ])
         .setup(|app| {
-            let window = app.get_webview_window("main").ok_or("main window missing")?;
+            let window = app
+                .get_webview_window("main")
+                .ok_or("main window missing")?;
             // A previous dev-panel toggle can leave the native window click-through
             // until the process exits; always start the Pet in an interactive state.
             window.set_ignore_cursor_events(false)?;
@@ -2126,34 +3181,58 @@ pub fn run() {
             } else {
                 window.show()?;
             }
-            let toggle = MenuItem::with_id(app, "toggle-click-through", "切换鼠标穿透", true, None::<&str>)?;
+            let toggle = MenuItem::with_id(
+                app,
+                "toggle-click-through",
+                "切换鼠标穿透",
+                true,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "退出 Pet", true, None::<&str>)?;
-            let quick_panel = MenuItem::with_id(app, "open-quick-panel", "打开快捷面板", true, None::<&str>)?;
-            let control_center = MenuItem::with_id(app, "open-control-center", "打开控制中心", true, None::<&str>)?;
+            let quick_panel =
+                MenuItem::with_id(app, "open-quick-panel", "打开快捷面板", true, None::<&str>)?;
+            let control_center = MenuItem::with_id(
+                app,
+                "open-control-center",
+                "打开控制中心",
+                true,
+                None::<&str>,
+            )?;
             let settings = MenuItem::with_id(app, "open-settings", "打开设置", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&quick_panel, &control_center, &settings, &toggle, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[&quick_panel, &control_center, &settings, &toggle, &quit],
+            )?;
             let tray_state = app.state::<ClickThroughState>().inner().0.clone();
             let mut tray_builder = TrayIconBuilder::new().menu(&menu);
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
             let _tray = tray_builder
-                .on_menu_event(move |app, event| {
-                    match event.id.as_ref() {
-                        "open-quick-panel" => schedule_aux_window(app.clone(), AuxiliaryWindowAction::QuickPanel),
-                        "open-control-center" => schedule_aux_window(app.clone(), AuxiliaryWindowAction::ControlCenter("overview".to_string())),
-                        "open-settings" => schedule_aux_window(app.clone(), AuxiliaryWindowAction::ControlCenter("settings".to_string())),
-                        "toggle-click-through" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                if let Ok(mut current) = tray_state.lock() {
-                                    let next = next_click_through(*current);
-                                    if window.set_ignore_cursor_events(next).is_ok() { *current = next; }
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    "open-quick-panel" => {
+                        schedule_aux_window(app.clone(), AuxiliaryWindowAction::QuickPanel)
+                    }
+                    "open-control-center" => schedule_aux_window(
+                        app.clone(),
+                        AuxiliaryWindowAction::ControlCenter("overview".to_string()),
+                    ),
+                    "open-settings" => schedule_aux_window(
+                        app.clone(),
+                        AuxiliaryWindowAction::ControlCenter("settings".to_string()),
+                    ),
+                    "toggle-click-through" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            if let Ok(mut current) = tray_state.lock() {
+                                let next = next_click_through(*current);
+                                if window.set_ignore_cursor_events(next).is_ok() {
+                                    *current = next;
                                 }
                             }
                         }
-                        "quit" => app.exit(0),
-                        _ => {}
                     }
+                    "quit" => app.exit(0),
+                    _ => {}
                 })
                 .build(app)?;
             activate_launch_request(app.handle(), &args);
@@ -2170,49 +3249,86 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        bounded_control_center_route, bounded_panel_position, bounded_quick_panel_debug_event, build_daily_target_body, build_mode_request, classify_control_status, classify_http_status,
-        disconnected, fetch_supervisor_get, map_io_error, next_click_through, parse_http_response,
-        sanitize_ai_settings, sanitize_missions, sanitize_motivation, sanitize_review, sanitize_review_generation_result, sanitize_review_generation_status, sanitize_semantic, sanitize_status, bounded_pet_drag_debug_event, task_preset_path_allowed,
-        launch_without_pet, requested_launch_route, LaunchRoute, NativeErrorKind,
-        SupervisorSnapshot,
+        bounded_control_center_route, bounded_panel_position, bounded_pet_drag_debug_event,
+        bounded_quick_panel_debug_event, build_daily_target_body, build_mode_request,
+        classify_control_status, classify_http_status, disconnected, fetch_supervisor_get,
+        launch_without_pet, map_io_error, next_click_through, parse_http_response,
+        requested_launch_route, sanitize_ai_settings, sanitize_missions, sanitize_motivation,
+        sanitize_eye_care_settings, sanitize_eye_care_status, sanitize_review,
+        sanitize_review_generation_result, sanitize_review_generation_status, sanitize_semantic,
+        sanitize_status, task_preset_path_allowed, valid_rfc3339_timestamp, LaunchRoute,
+        NativeErrorKind, SupervisorSnapshot,
     };
 
     #[test]
     fn launcher_arguments_are_bounded() {
-        let quick = vec!["StudyGuardian.exe".to_string(), "--show".to_string(), "quick-panel".to_string()];
-        let center = vec!["StudyGuardian.exe".to_string(), "--show".to_string(), "control-center".to_string()];
-        let unknown = vec!["StudyGuardian.exe".to_string(), "--show".to_string(), "javascript:alert(1)".to_string()];
-        assert_eq!(requested_launch_route(&quick), Some(LaunchRoute::QuickPanel));
-        assert_eq!(requested_launch_route(&center), Some(LaunchRoute::ControlCenter));
+        let quick = vec![
+            "StudyGuardian.exe".to_string(),
+            "--show".to_string(),
+            "quick-panel".to_string(),
+        ];
+        let center = vec![
+            "StudyGuardian.exe".to_string(),
+            "--show".to_string(),
+            "control-center".to_string(),
+        ];
+        let unknown = vec![
+            "StudyGuardian.exe".to_string(),
+            "--show".to_string(),
+            "javascript:alert(1)".to_string(),
+        ];
+        assert_eq!(
+            requested_launch_route(&quick),
+            Some(LaunchRoute::QuickPanel)
+        );
+        assert_eq!(
+            requested_launch_route(&center),
+            Some(LaunchRoute::ControlCenter)
+        );
         assert_eq!(requested_launch_route(&unknown), None);
-        assert!(launch_without_pet(&["StudyGuardian.exe".to_string(), "--no-pet".to_string()]));
+        assert!(launch_without_pet(&[
+            "StudyGuardian.exe".to_string(),
+            "--no-pet".to_string()
+        ]));
     }
 
     #[test]
     fn auxiliary_window_operations_run_off_caller_and_do_not_overlap() {
-        use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        };
 
         let gate = Arc::new(Mutex::new(()));
         let active = Arc::new(AtomicUsize::new(0));
         let completed = Arc::new(AtomicUsize::new(0));
         let caller = std::thread::current().id();
-        let operations: Vec<_> = (0..12).map(|index| {
-            let gate = gate.clone();
-            let active = active.clone();
-            let completed = completed.clone();
-            tauri::async_runtime::spawn(super::run_aux_window_operation(gate, move || {
-                assert_ne!(std::thread::current().id(), caller);
-                assert_eq!(active.fetch_add(1, Ordering::SeqCst), 0, "window operations overlapped");
-                // Give another queued operation an opportunity to race the
-                // simulated create/show sequence if serialization is removed.
-                std::thread::sleep(std::time::Duration::from_millis(2));
-                assert_eq!(active.fetch_sub(1, Ordering::SeqCst), 1);
-                completed.fetch_add(1, Ordering::SeqCst);
-                Ok(index)
-            }))
-        }).collect();
+        let operations: Vec<_> = (0..12)
+            .map(|index| {
+                let gate = gate.clone();
+                let active = active.clone();
+                let completed = completed.clone();
+                tauri::async_runtime::spawn(super::run_aux_window_operation(gate, move || {
+                    assert_ne!(std::thread::current().id(), caller);
+                    assert_eq!(
+                        active.fetch_add(1, Ordering::SeqCst),
+                        0,
+                        "window operations overlapped"
+                    );
+                    // Give another queued operation an opportunity to race the
+                    // simulated create/show sequence if serialization is removed.
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    assert_eq!(active.fetch_sub(1, Ordering::SeqCst), 1);
+                    completed.fetch_add(1, Ordering::SeqCst);
+                    Ok(index)
+                }))
+            })
+            .collect();
         for (index, operation) in operations.into_iter().enumerate() {
-            assert_eq!(tauri::async_runtime::block_on(operation).unwrap().unwrap(), index);
+            assert_eq!(
+                tauri::async_runtime::block_on(operation).unwrap().unwrap(),
+                index
+            );
         }
         assert_eq!(completed.load(Ordering::SeqCst), 12);
     }
@@ -2220,11 +3336,13 @@ mod tests {
     #[test]
     fn auxiliary_window_failure_does_not_block_next_open() {
         let gate = std::sync::Arc::new(std::sync::Mutex::new(()));
-        let failure = tauri::async_runtime::block_on(super::run_aux_window_operation(gate.clone(), || {
-            Err::<(), _>("window_creation_failed".to_string())
-        }));
+        let failure =
+            tauri::async_runtime::block_on(super::run_aux_window_operation(gate.clone(), || {
+                Err::<(), _>("window_creation_failed".to_string())
+            }));
         assert_eq!(failure, Err("window_creation_failed".to_string()));
-        let retry = tauri::async_runtime::block_on(super::run_aux_window_operation(gate, || Ok("shown")));
+        let retry =
+            tauri::async_runtime::block_on(super::run_aux_window_operation(gate, || Ok("shown")));
         assert_eq!(retry, Ok("shown"));
     }
 
@@ -2254,6 +3372,8 @@ mod tests {
             connected: true,
             semantic: Some(semantic),
             last_success_at: Some("2026-09-04T00:00:00Z".to_string()),
+            eye_care_settings: None,
+            eye_care_status: None,
             last_error_kind: None,
         };
         let encoded = serde_json::to_string(&snapshot).expect("snapshot serializes");
@@ -2275,28 +3395,65 @@ mod tests {
         })).expect("valid AI settings");
         assert_eq!(sanitized["text"]["fallback_models"], json!(["paid-model"]));
         assert_eq!(sanitized["vision"]["fallback_models"], json!([]));
-        assert_eq!(sanitized["proxy"], json!({"mode": "environment", "url": ""}));
+        assert_eq!(
+            sanitized["proxy"],
+            json!({"mode": "environment", "url": ""})
+        );
     }
 
     #[test]
     fn ai_proxy_sanitizer_accepts_modes_and_rejects_secret_bearing_urls() {
-        assert_eq!(super::sanitize_ai_proxy(Some(&json!({"mode": "direct", "url": ""}))).unwrap(), json!({"mode": "direct", "url": ""}));
-        assert_eq!(super::sanitize_ai_proxy(Some(&json!({"mode": "manual", "url": "http://127.0.0.1:7890"}))).unwrap(), json!({"mode": "manual", "url": "http://127.0.0.1:7890"}));
-        for url in ["http://user:secret@127.0.0.1:7890", "http://127.0.0.1:7890/path", "socks5://127.0.0.1:7890"] {
-            assert!(super::sanitize_ai_proxy(Some(&json!({"mode": "manual", "url": url}))).is_err(), "accepted unsafe URL {url}");
+        assert_eq!(
+            super::sanitize_ai_proxy(Some(&json!({"mode": "direct", "url": ""}))).unwrap(),
+            json!({"mode": "direct", "url": ""})
+        );
+        assert_eq!(
+            super::sanitize_ai_proxy(Some(
+                &json!({"mode": "manual", "url": "http://127.0.0.1:7890"})
+            ))
+            .unwrap(),
+            json!({"mode": "manual", "url": "http://127.0.0.1:7890"})
+        );
+        for url in [
+            "http://user:secret@127.0.0.1:7890",
+            "http://127.0.0.1:7890/path",
+            "socks5://127.0.0.1:7890",
+        ] {
+            assert!(
+                super::sanitize_ai_proxy(Some(&json!({"mode": "manual", "url": url}))).is_err(),
+                "accepted unsafe URL {url}"
+            );
         }
     }
 
     #[test]
     fn native_http_error_mapping_is_bounded() {
-        assert_eq!(classify_http_status(401), Err(NativeErrorKind::Unauthorized));
+        assert_eq!(
+            classify_http_status(401),
+            Err(NativeErrorKind::Unauthorized)
+        );
         assert_eq!(classify_http_status(504), Err(NativeErrorKind::Unavailable));
         assert_eq!(classify_control_status(400), Err(NativeErrorKind::Rejected));
         assert_eq!(classify_control_status(409), Err(NativeErrorKind::Rejected));
-        assert_eq!(classify_control_status(401), Err(NativeErrorKind::Unauthorized));
-        assert_eq!(classify_control_status(403), Err(NativeErrorKind::Unauthorized));
-        assert_eq!(map_io_error(&io::Error::new(io::ErrorKind::TimedOut, "hidden detail")), NativeErrorKind::Timeout);
-        assert_eq!(map_io_error(&io::Error::new(io::ErrorKind::ConnectionRefused, "hidden detail")), NativeErrorKind::Unavailable);
+        assert_eq!(
+            classify_control_status(401),
+            Err(NativeErrorKind::Unauthorized)
+        );
+        assert_eq!(
+            classify_control_status(403),
+            Err(NativeErrorKind::Unauthorized)
+        );
+        assert_eq!(
+            map_io_error(&io::Error::new(io::ErrorKind::TimedOut, "hidden detail")),
+            NativeErrorKind::Timeout
+        );
+        assert_eq!(
+            map_io_error(&io::Error::new(
+                io::ErrorKind::ConnectionRefused,
+                "hidden detail"
+            )),
+            NativeErrorKind::Unavailable
+        );
     }
 
     #[test]
@@ -2309,32 +3466,72 @@ mod tests {
             "state": "PENDING",
             "token": "must-not-cross-boundary",
             "prompt": "must-not-cross-boundary",
-        })).expect("valid generation status");
+        }))
+        .expect("valid generation status");
         let encoded = serde_json::to_string(&status).expect("status serializes");
         assert!(encoded.contains("PENDING"));
         assert!(!encoded.contains("must-not-cross-boundary"));
-        assert!(sanitize_review_generation_status(&json!({"date":"2026-02-30","state":"IDLE"})).is_err());
-        assert!(sanitize_review_generation_status(&json!({"date":"2026-09-07","state":"UNKNOWN"})).is_err());
-        assert!(sanitize_review_generation_status(&json!({"date":"2026-09-07","state":"READY","error_kind":"raw-provider-error"})).is_err());
+        assert!(
+            sanitize_review_generation_status(&json!({"date":"2026-02-30","state":"IDLE"}))
+                .is_err()
+        );
+        assert!(
+            sanitize_review_generation_status(&json!({"date":"2026-09-07","state":"UNKNOWN"}))
+                .is_err()
+        );
+        assert!(sanitize_review_generation_status(
+            &json!({"date":"2026-09-07","state":"READY","error_kind":"raw-provider-error"})
+        )
+        .is_err());
     }
 
     #[test]
     fn pet_drag_debug_events_are_bounded() {
         assert_eq!(bounded_pet_drag_debug_event("drag:down"), Some("drag:down"));
-        assert_eq!(bounded_pet_drag_debug_event("drag:manual-start"), Some("drag:manual-start"));
-        assert_eq!(bounded_pet_drag_debug_event("drag:position-failed:unknown"), Some("drag:position-failed:unknown"));
-        assert_eq!(bounded_pet_drag_debug_event("drag:quick-panel-failed"), Some("drag:quick-panel-failed"));
-        assert_eq!(bounded_pet_drag_debug_event("drag:start-failed:permission_denied"), Some("drag:start-failed:permission_denied"));
-        assert_eq!(bounded_pet_drag_debug_event("drag:start-failed:raw-secret"), None);
+        assert_eq!(
+            bounded_pet_drag_debug_event("drag:manual-start"),
+            Some("drag:manual-start")
+        );
+        assert_eq!(
+            bounded_pet_drag_debug_event("drag:position-failed:unknown"),
+            Some("drag:position-failed:unknown")
+        );
+        assert_eq!(
+            bounded_pet_drag_debug_event("drag:quick-panel-failed"),
+            Some("drag:quick-panel-failed")
+        );
+        assert_eq!(
+            bounded_pet_drag_debug_event("drag:start-failed:permission_denied"),
+            Some("drag:start-failed:permission_denied")
+        );
+        assert_eq!(
+            bounded_pet_drag_debug_event("drag:start-failed:raw-secret"),
+            None
+        );
     }
 
     #[test]
     fn quick_panel_lifecycle_events_are_bounded() {
-        assert_eq!(bounded_quick_panel_debug_event("quick-panel:created"), Some("quick-panel:created"));
-        assert_eq!(bounded_quick_panel_debug_event("quick-panel:open-command"), Some("quick-panel:open-command"));
-        assert_eq!(bounded_quick_panel_debug_event("quick-panel:hide-reason:explicit"), Some("quick-panel:hide-reason:explicit"));
-        assert_eq!(bounded_quick_panel_debug_event("quick-panel:hide-reason:focus-lost"), Some("quick-panel:hide-reason:focus-lost"));
-        assert_eq!(bounded_quick_panel_debug_event("quick-panel:focus-failed:raw-secret"), None);
+        assert_eq!(
+            bounded_quick_panel_debug_event("quick-panel:created"),
+            Some("quick-panel:created")
+        );
+        assert_eq!(
+            bounded_quick_panel_debug_event("quick-panel:open-command"),
+            Some("quick-panel:open-command")
+        );
+        assert_eq!(
+            bounded_quick_panel_debug_event("quick-panel:hide-reason:explicit"),
+            Some("quick-panel:hide-reason:explicit")
+        );
+        assert_eq!(
+            bounded_quick_panel_debug_event("quick-panel:hide-reason:focus-lost"),
+            Some("quick-panel:hide-reason:focus-lost")
+        );
+        assert_eq!(
+            bounded_quick_panel_debug_event("quick-panel:focus-failed:raw-secret"),
+            None
+        );
     }
 
     #[test]
@@ -2348,7 +3545,10 @@ mod tests {
     #[test]
     fn malformed_http_json_is_invalid_response() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\n{broken}";
-        assert_eq!(parse_http_response(response), Err(NativeErrorKind::InvalidResponse));
+        assert_eq!(
+            parse_http_response(response),
+            Err(NativeErrorKind::InvalidResponse)
+        );
     }
 
     #[test]
@@ -2369,27 +3569,50 @@ mod tests {
         let sanitized = sanitize_semantic(&raw).expect("valid semantic contract");
         assert!(sanitized.get("secret").is_none());
         assert_eq!(sanitized.as_object().expect("object").len(), 10);
-        assert_eq!(disconnected(NativeErrorKind::Timeout).last_error_kind, Some("timeout"));
+        assert_eq!(
+            disconnected(NativeErrorKind::Timeout).last_error_kind,
+            Some("timeout")
+        );
     }
 
     #[test]
     fn mode_requests_use_fixed_paths_and_json_encoding() {
-        let study = build_mode_request("STUDY", Some("quote \" and newline\n"))
-            .expect("study request");
+        let study =
+            build_mode_request("STUDY", Some("quote \" and newline\n")).expect("study request");
         assert_eq!(study.path, "/v1/mode/study");
         let body: Value = serde_json::from_slice(&study.body).expect("study JSON");
         assert_eq!(body["task"], "quote \" and newline\n");
 
-        assert_eq!(build_mode_request("BREAK", None).expect("break request").path, "/v1/mode/break");
-        assert_eq!(build_mode_request("OFF", None).expect("off request").path, "/v1/mode/off");
-        assert_eq!(build_mode_request("NOPE", None), Err(NativeErrorKind::Rejected));
-        assert_eq!(build_mode_request("BREAK", Some("unexpected")), Err(NativeErrorKind::Rejected));
-        assert_eq!(build_mode_request("STUDY", Some(&"x".repeat(257))), Err(NativeErrorKind::Rejected));
+        assert_eq!(
+            build_mode_request("BREAK", None)
+                .expect("break request")
+                .path,
+            "/v1/mode/break"
+        );
+        assert_eq!(
+            build_mode_request("OFF", None).expect("off request").path,
+            "/v1/mode/off"
+        );
+        assert_eq!(
+            build_mode_request("NOPE", None),
+            Err(NativeErrorKind::Rejected)
+        );
+        assert_eq!(
+            build_mode_request("BREAK", Some("unexpected")),
+            Err(NativeErrorKind::Rejected)
+        );
+        assert_eq!(
+            build_mode_request("STUDY", Some(&"x".repeat(257))),
+            Err(NativeErrorKind::Rejected)
+        );
         let daily_target = build_daily_target_body(120).expect("daily target JSON");
         let target: Value = serde_json::from_slice(&daily_target).expect("daily target body");
         assert_eq!(target["daily_target_minutes"], 120);
         assert_eq!(build_daily_target_body(0), Err(NativeErrorKind::Rejected));
-        assert_eq!(build_daily_target_body(1441), Err(NativeErrorKind::Rejected));
+        assert_eq!(
+            build_daily_target_body(1441),
+            Err(NativeErrorKind::Rejected)
+        );
     }
 
     #[test]
@@ -2447,7 +3670,8 @@ mod tests {
             "link_source": "MANUAL",
             "link_confidence": 1.0,
             "token": "must be dropped",
-        }])).expect("valid linked mission");
+        }]))
+        .expect("valid linked mission");
         assert_eq!(linked[0]["link_source"], "MANUAL");
         assert!(linked[0].get("token").is_none());
         assert!(sanitize_missions(&json!([{
@@ -2458,12 +3682,19 @@ mod tests {
             "status": "OPEN",
             "created_at": "2026-09-04T00:00:00Z",
             "link_source": "UNTRUSTED",
-        }])).is_err());
+        }]))
+        .is_err());
         assert!(task_preset_path_allowed("/v1/missions"));
         assert!(task_preset_path_allowed("/v1/missions/m-2/complete"));
         assert!(!task_preset_path_allowed("/v1/missions/../../complete"));
-        assert_eq!(fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/private"), Err(NativeErrorKind::Unavailable));
-        assert_eq!(fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/status"), Err(NativeErrorKind::Unauthorized));
+        assert_eq!(
+            fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/private"),
+            Err(NativeErrorKind::Unavailable)
+        );
+        assert_eq!(
+            fetch_supervisor_get("127.0.0.1", 17321, "", "/v1/status"),
+            Err(NativeErrorKind::Unauthorized)
+        );
 
         let review = sanitize_review(&json!({
             "schema_version": 1,
@@ -2497,9 +3728,20 @@ mod tests {
         legacy_review["unfinished"] = Value::Null;
         legacy_review["difficulties"] = Value::Null;
         legacy_review["warnings"] = Value::Null;
-        let normalized = sanitize_review(&legacy_review).expect("legacy null review lists should normalize");
-        for field in ["topics", "accomplishments", "unfinished", "difficulties", "warnings"] {
-            assert_eq!(normalized[field], json!([]), "{field} should be an empty array");
+        let normalized =
+            sanitize_review(&legacy_review).expect("legacy null review lists should normalize");
+        for field in [
+            "topics",
+            "accomplishments",
+            "unfinished",
+            "difficulties",
+            "warnings",
+        ] {
+            assert_eq!(
+                normalized[field],
+                json!([]),
+                "{field} should be an empty array"
+            );
         }
         legacy_review["topics"] = json!({"not": "an array"});
         assert!(sanitize_review(&legacy_review).is_err());
@@ -2509,18 +3751,78 @@ mod tests {
             "generation_mode": "FALLBACK",
             "error_code": "timeout",
             "markdown": "must never cross the native command boundary",
-        })).expect("valid generation result");
+        }))
+        .expect("valid generation result");
         assert!(generation.ok);
         assert_eq!(generation.status.as_deref(), Some("READY"));
         assert_eq!(generation.generation_mode.as_deref(), Some("FALLBACK"));
         assert_eq!(generation.error_kind, Some("timeout"));
-        assert!(sanitize_review_generation_result(&json!({"status": "READY", "generation_mode": "FALLBACK", "error_code": {}})).is_err());
+        assert!(sanitize_review_generation_result(
+            &json!({"status": "READY", "generation_mode": "FALLBACK", "error_code": {}})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn eye_care_dtos_enforce_ranges_enums_dates_and_drop_untrusted_fields() {
+        let settings = sanitize_eye_care_settings(&json!({
+            "enabled": true, "focus_minutes": 40, "short_break_minutes": 5,
+            "long_break_after_focus_minutes": 120, "long_break_minutes": 20,
+            "snooze_minutes": 5, "max_snoozes": 2, "secret": "drop"
+        }))
+        .expect("valid settings");
+        assert_eq!(settings["focus_minutes"], 40);
+        assert!(settings.get("secret").is_none());
+        assert!(sanitize_eye_care_settings(&json!({"enabled":true,"focus_minutes":10,"short_break_minutes":5,"long_break_after_focus_minutes":120,"long_break_minutes":20,"snooze_minutes":5,"max_snoozes":2})).is_err());
+        let raw_status = json!({
+            "enabled": true, "phase": "SHORT_BREAK", "local_date": "2026-09-13",
+            "focus_segment_seconds": 0, "focus_since_long_break_seconds": 2400,
+            "break_started_at": "2026-09-13T10:00:00.123Z", "planned_break_end_at": "2026-09-13T10:05:00+08:00",
+            "snooze_count": 0, "completed_short_breaks": 1, "completed_long_breaks": 0,
+            "retry_focus_after_seconds": 0, "revision": 4, "updated_at": "2026-09-13T10:00:00Z",
+            "notification_suppressed": false, "screenshot": "must not cross native boundary"
+        });
+        let status = sanitize_eye_care_status(&raw_status).expect("valid status");
+        assert_eq!(status["phase"], "SHORT_BREAK");
+        assert!(status.get("screenshot").is_none());
+        let mut invalid_phase = raw_status.clone();
+        invalid_phase["phase"] = json!("EYE_BREAK");
+        assert!(sanitize_eye_care_status(&invalid_phase).is_err());
+        let mut invalid_date = raw_status.clone();
+        invalid_date["local_date"] = json!("2026-02-30");
+        assert!(sanitize_eye_care_status(&invalid_date).is_err());
+        let mut inconsistent = raw_status.clone();
+        inconsistent["enabled"] = json!(false);
+        assert!(sanitize_eye_care_status(&inconsistent).is_err());
+        let mut unsafe_counter = raw_status.clone();
+        unsafe_counter["revision"] = json!(9_007_199_254_740_992_i64);
+        assert!(sanitize_eye_care_status(&unsafe_counter).is_err());
+        let malformed_time = json!({
+            "enabled":true,"phase":"FOCUSING","local_date":"2026-09-13","focus_segment_seconds":0,
+            "focus_since_long_break_seconds":0,"snooze_count":0,"completed_short_breaks":0,
+            "completed_long_breaks":0,"retry_focus_after_seconds":0,"revision":0,
+            "updated_at":"not-a-time","notification_suppressed":false
+        });
+        assert!(sanitize_eye_care_status(&malformed_time).is_err());
+        assert!(valid_rfc3339_timestamp(
+            "2026-09-13T10:00:00.123456789+08:00"
+        ));
+        assert!(!valid_rfc3339_timestamp("2026-09-13T25:00:00Z"));
     }
 
     #[test]
     fn quick_panel_position_stays_inside_negative_or_positive_work_areas() {
-        assert_eq!(bounded_panel_position(1900, 900, 0, 0, 1920, 1080, 380, 430), (1540, 650));
-        assert_eq!(bounded_panel_position(-600, -400, -1280, 0, 1280, 1024, 380, 430), (-600, 0));
-        assert_eq!(bounded_panel_position(-2000, 1200, -1280, 0, 1280, 1024, 380, 430), (-1280, 594));
+        assert_eq!(
+            bounded_panel_position(1900, 900, 0, 0, 1920, 1080, 380, 430),
+            (1540, 650)
+        );
+        assert_eq!(
+            bounded_panel_position(-600, -400, -1280, 0, 1280, 1024, 380, 430),
+            (-600, 0)
+        );
+        assert_eq!(
+            bounded_panel_position(-2000, 1200, -1280, 0, 1280, 1024, 380, 430),
+            (-1280, 594)
+        );
     }
 }

@@ -10,6 +10,7 @@ import { MockScenarioToolbar } from "../mock/MockScenarioToolbar";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
 import "../shared/task-wheel/task-wheel.css";
+import "../shared/eye-care.css";
 import "../shared/help-drawer.css";
 import "./center.css";
 import "./focus-clock.css";

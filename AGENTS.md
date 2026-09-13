@@ -7,6 +7,8 @@
 - **Build 与 Deploy 分离**：Pet 日常构建缓存与候选产物位于 `D:\\StudyGuardianBuild`；完整发布产物位于 WSL `dist/windows/`，部署目标为 `D:\\StudyGuardianDev`。
 - **持久数据保护**：部署严禁删除或覆盖 `D:\StudyGuardianDev` 下的 `config/`、`data/`、`logs/`、`run/`、`handoff/` 目录。
 - **三维系统观察解耦**：严格拆分 `InteractionState`（ACTIVE/IDLE_STATIC/IDLE_DYNAMIC/UNKNOWN）、`TaskRelation`（FOCUSED/DISTRACTED/UNKNOWN）、`PrivacyState`（NORMAL/SENSITIVE），禁止合并为单一枚举。
+- **护眼节奏**：只消费 Motivation 已接受的有效专注秒数；禁止使用 STUDY 墙上时间补算。护眼休息必须保持 `mode_origin=EYE_CARE` 且 `auto_resume_eligible=false`，不能被 AFK 自动恢复打断。不得新增摄像头采集、截图或 AI 请求，也不得声称已验证用户看远/未刷手机。
+- **护眼生产设置**：护眼默认关闭；开发用缩短周期只允许隔离的测试运行时，正式 `D:\StudyGuardianDev` 不得遗留测试节奏或改变用户模式。发布前备份生产数据库并保护配置、密钥和历史数据。
 - **小步提交与推送**：每完成一个独立模块/功能并验证后立即 Git commit，并在远端可用时 push。
 - **汇报语言**：所有面向用户的开发汇报、阶段总结与审计材料均使用中文。
 

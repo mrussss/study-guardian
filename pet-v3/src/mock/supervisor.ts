@@ -1,5 +1,5 @@
 import type {
-  AutostartState, ControlResult, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeAutomationSettings, NativeMission, NativeTaskPreset, ReviewGenerationResult, ReviewGenerationStatusSnapshot,
+  AutostartState, ControlResult, EyeCareAction, NativeAIConnectionResult, NativeAIProxyTestResult, NativeAISettings, NativeAutomationSettings, NativeEyeCareSettings, NativeEyeCareStatus, NativeMission, NativeTaskPreset, ReviewGenerationResult, ReviewGenerationStatusSnapshot,
   SupervisorControlAdapter, SupervisorDashboardAdapter, SupervisorDashboardSnapshot, SystemIntegrationAdapter,
 } from "../transport/supervisor";
 
@@ -9,6 +9,9 @@ export const MOCK_SCENARIOS = [
   { id: "rapid", label: "快速任务切换" }, { id: "progress-empty", label: "尚未开始" },
   { id: "progress-complete", label: "目标已完成" }, { id: "reminder", label: "提醒状态" },
   { id: "sensor-failure", label: "屏幕采集异常" }, { id: "activitywatch-failure", label: "活动数据异常" },
+  { id: "eye-short-due", label: "护眼：远眺提醒" }, { id: "eye-long-due", label: "护眼：完整休息提醒" },
+  { id: "eye-short-break", label: "护眼：远眺休息中" }, { id: "eye-long-break", label: "护眼：完整休息中" },
+  { id: "eye-waiting-return", label: "护眼：等待继续" },
 ] as const;
 export type MockScenarioId = typeof MOCK_SCENARIOS[number]["id"];
 
@@ -24,16 +27,21 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
   const focusMinutes = Math.round(120 * progress);
   const sensorFailure = scenario === "sensor-failure";
   const activityWatchFailure = scenario === "activitywatch-failure";
+  const eyeCareEnabled = scenario.startsWith("eye-");
+  const eyePhase: NativeEyeCareStatus["phase"] = scenario === "eye-short-due" ? "SHORT_BREAK_DUE" : scenario === "eye-long-due" ? "LONG_BREAK_DUE" : scenario === "eye-short-break" ? "SHORT_BREAK" : scenario === "eye-long-break" ? "LONG_BREAK" : scenario === "eye-waiting-return" ? "WAITING_RETURN" : "DISABLED";
+  const eyeBreak = eyePhase === "SHORT_BREAK" || eyePhase === "LONG_BREAK" || eyePhase === "WAITING_RETURN";
+  const now = new Date();
+  const breakEnd = new Date(now.getTime() + (eyePhase === "LONG_BREAK" ? 20 : 5) * 60_000).toISOString();
   return {
     connected: scenario !== "offline",
     status: {
-      user_mode: scenario === "progress-empty" ? "STANDBY" : "STUDY",
+      user_mode: scenario === "progress-empty" ? "STANDBY" : eyeBreak ? "BREAK" : "STUDY",
       interaction_state: "ACTIVE", task_relation: scenario === "reminder" ? "DISTRACTED" : "FOCUSED",
       privacy_state: "NORMAL", confidence: scenario === "reminder" ? 0.58 : 0.94,
       task: scenario === "rapid" ? "Go" : "算法", study_seconds: focusMinutes * 60 + 17,
       break_seconds: 0, active_seconds: focusMinutes * 60 + 17, afk_seconds: 0, activitywatch_ok: !activityWatchFailure,
       screen_sensor_ok: !sensorFailure, last_activity_at: new Date().toISOString(),
-      mode_origin: "MANUAL", pause_reason: "NONE", auto_resume_eligible: false,
+      mode_origin: eyeBreak ? "EYE_CARE" : "MANUAL", pause_reason: scenario === "eye-short-break" ? "EYE_CARE_SHORT" : scenario === "eye-long-break" ? "EYE_CARE_LONG" : "NONE", auto_resume_eligible: false,
     },
     semantic: { schema_version: 1, observed_at: new Date().toISOString(), fresh: !activityWatchFailure, user_mode: "STUDY", task: scenario === "rapid" ? "Go" : "算法", interaction: "ACTIVE", relation: scenario === "reminder" ? "DISTRACTED" : "FOCUSED", privacy: "NORMAL", activity: "CODING", confidence: scenario === "reminder" ? .58 : .94, progress_signal: "CODING", source_kind: "LOCAL_RULE" },
     motivation: {
@@ -60,6 +68,17 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
       auto_pause: { enabled: true, idle_static_seconds: 300, idle_dynamic_seconds: 900, locked_seconds: 15, confirm: false },
       auto_resume: { enabled: true, focused_stable_seconds: 45 },
       transition_cooldown_seconds: 30, manual_override_minutes: 30,
+    },
+    eye_care_settings: { enabled: eyeCareEnabled, focus_minutes: 40, short_break_minutes: 5, long_break_after_focus_minutes: 120, long_break_minutes: 20, snooze_minutes: 5, max_snoozes: 2 },
+    eye_care_status: {
+      enabled: eyeCareEnabled, phase: eyePhase, local_date: now.toISOString().slice(0, 10),
+      focus_segment_seconds: eyePhase === "LONG_BREAK_DUE" ? 7200 : eyeCareEnabled ? 2400 : focusMinutes * 60,
+      focus_since_long_break_seconds: eyePhase === "LONG_BREAK_DUE" ? 7200 : 2400,
+      ...(eyeBreak && eyePhase !== "WAITING_RETURN" ? { break_started_at: now.toISOString(), planned_break_end_at: breakEnd } : {}),
+      ...(eyePhase === "WAITING_RETURN" ? { break_started_at: new Date(now.getTime() - 5 * 60_000).toISOString(), planned_break_end_at: new Date(now.getTime() - 1000).toISOString() } : {}),
+      ...(eyePhase.endsWith("_DUE") ? { due_at: now.toISOString() } : {}),
+      snooze_count: 0, completed_short_breaks: 0, completed_long_breaks: 0, retry_focus_after_seconds: 0,
+      revision: 1, updated_at: now.toISOString(), notification_suppressed: false,
     },
     ai_settings: {
       enabled: false, min_confidence: 0.75,
@@ -163,6 +182,32 @@ export class MockSupervisorRuntime implements SupervisorDashboardAdapter, Superv
   }); }
   saveAutomationSettings(settings: NativeAutomationSettings): Promise<ControlResult> { return this.mutate(() => {
     this.snapshot.automation_settings = clone(settings); return { ok: true };
+  }); }
+  saveEyeCareSettings(settings: NativeEyeCareSettings): Promise<ControlResult> { return this.mutate(() => {
+    this.snapshot.eye_care_settings = clone(settings);
+    if (this.snapshot.eye_care_status) {
+      this.snapshot.eye_care_status.enabled = settings.enabled;
+      this.snapshot.eye_care_status.phase = settings.enabled ? "FOCUSING" : "DISABLED";
+      this.snapshot.eye_care_status.revision += 1;
+      this.snapshot.eye_care_status.updated_at = new Date().toISOString();
+    }
+    return { ok: true };
+  }); }
+  eyeCareAction(action: EyeCareAction, expectedRevision: number, requestId: string): Promise<ControlResult> { return this.mutate(() => {
+    void requestId;
+    const status = this.snapshot.eye_care_status;
+    if (!status || !this.snapshot.status || expectedRevision !== status.revision) return { ok: false, error_kind: "rejected" };
+    const current = new Date();
+    const settings = this.snapshot.eye_care_settings;
+    switch (action) {
+      case "START_SHORT_BREAK": status.phase = "SHORT_BREAK"; status.break_started_at = current.toISOString(); status.planned_break_end_at = new Date(current.getTime() + (settings?.short_break_minutes ?? 5) * 60_000).toISOString(); this.snapshot.status.user_mode = "BREAK"; this.snapshot.status.mode_origin = "EYE_CARE"; this.snapshot.status.pause_reason = "EYE_CARE_SHORT"; break;
+      case "START_LONG_BREAK": status.phase = "LONG_BREAK"; status.break_started_at = current.toISOString(); status.planned_break_end_at = new Date(current.getTime() + (settings?.long_break_minutes ?? 20) * 60_000).toISOString(); this.snapshot.status.user_mode = "BREAK"; this.snapshot.status.mode_origin = "EYE_CARE"; this.snapshot.status.pause_reason = "EYE_CARE_LONG"; break;
+      case "SNOOZE": status.snooze_count += 1; status.snooze_until = new Date(current.getTime() + (settings?.snooze_minutes ?? 5) * 60_000).toISOString(); break;
+      case "SKIP": case "DISMISS": status.phase = "FOCUSING"; status.retry_focus_after_seconds = status.focus_segment_seconds + 600; status.due_at = undefined; status.snooze_until = undefined; break;
+      case "FINISH_EARLY": case "RESUME_STUDY": status.phase = "FOCUSING"; status.break_started_at = undefined; status.planned_break_end_at = undefined; status.due_at = undefined; this.snapshot.status.user_mode = "STUDY"; this.snapshot.status.mode_origin = "MANUAL"; this.snapshot.status.pause_reason = "NONE"; break;
+    }
+    status.revision += 1; status.updated_at = current.toISOString();
+    return { ok: true };
   }); }
   saveAISettings(settings: NativeAISettings): Promise<ControlResult> { return this.mutate(() => {
     this.snapshot.ai_settings = clone(settings);

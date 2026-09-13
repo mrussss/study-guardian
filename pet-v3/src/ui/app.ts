@@ -11,6 +11,8 @@ import {
   NativeSupervisorAdapter,
   NativeSupervisorControlAdapter,
   SupervisorPollLoop,
+  type NativeEyeCareSettings,
+  type NativeEyeCareStatus,
   type ControlErrorKind,
 } from "../transport/supervisor";
 import legacyManifest from "../skins/studyguardian-pixel/manifest.json";
@@ -25,6 +27,12 @@ const colors: Record<VisualState, string> = {
   IDLE: "#8aa0b8", CODING: "#50d890", ALGORITHM: "#5fc6ff", READING: "#f1d36b", WRITING: "#d39aff",
   WATCHING: "#ff9e72", LEARNING: "#7fe7df", DISTRACTED: "#ff6978", RESTING: "#b4a7d6", OFFLINE: "#66717e",
   THINKING: "#b4d7ff", CELEBRATE: "#ffe36e", TALKING: "#ffa8df",
+};
+
+const visualStateLabels: Record<VisualState, string> = {
+  IDLE: "等待开始", CODING: "编程中", ALGORITHM: "算法学习", READING: "阅读中", WRITING: "写作中",
+  WATCHING: "观看学习资料", LEARNING: "学习中", DISTRACTED: "可能分心", RESTING: "休息中", OFFLINE: "服务离线",
+  THINKING: "思考中", CELEBRATE: "完成啦", TALKING: "正在交流",
 };
 
 const skin = loadSkinManifest(legacyManifest);
@@ -67,6 +75,8 @@ export function mountApp(root: HTMLElement): void {
   const emergencyFrames = splitHorizontal(96, 96, 24, 96);
   let semantic: CurrentActivityView = mockSemantic({});
   let connected = true;
+  let eyeCareSettings: NativeEyeCareSettings | undefined;
+  let eyeCareStatus: NativeEyeCareStatus | undefined;
   let clickThrough = false;
   let lastFrame = performance.now();
   let requestedState: VisualState | null = null;
@@ -75,7 +85,8 @@ export function mountApp(root: HTMLElement): void {
   let panelOpen = false;
   root.innerHTML = `<section class="pet-shell">
     <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet，按住拖动" title="按住桌宠拖动；点击下方面板按钮打开控制"></canvas>
-    <div class="pet-state" data-state>LEARNING</div>
+    <div class="pet-state" data-state>学习中</div>
+    <div class="pet-eye-care-bubble" data-eye-care-bubble role="status" aria-live="polite" hidden></div>
     <div class="pet-task" data-task></div>
     <button class="pet-panel-entry" data-open-panel type="button" aria-label="打开 StudyGuardian 快捷面板">学习面板 <span aria-hidden="true">↗</span></button>
     <div class="pet-entry-error" data-entry-error role="status" hidden></div>
@@ -100,6 +111,7 @@ export function mountApp(root: HTMLElement): void {
   const entryError = root.querySelector<HTMLElement>("[data-entry-error]")!;
   const canvas = root.querySelector<HTMLCanvasElement>("canvas")!;
   const stateLabel = root.querySelector<HTMLElement>("[data-state]")!;
+  const eyeCareBubble = root.querySelector<HTMLElement>("[data-eye-care-bubble]")!;
   const taskLabel = root.querySelector<HTMLElement>("[data-task]")!;
   const controlPanel = root.querySelector<HTMLElement>("[data-control-panel]")!;
   const controlTitle = root.querySelector<HTMLElement>("[data-control-title]")!;
@@ -112,6 +124,36 @@ export function mountApp(root: HTMLElement): void {
   const renderPanel = (): void => {
     controlTitle.textContent = !connected ? "Supervisor 离线" : `当前：${modeLabel(semantic.user_mode)}`;
     if (document.activeElement !== taskInput) taskInput.value = semantic.task;
+  };
+
+  const renderEyeCareBubble = (): void => {
+    const current = eyeCareStatus;
+    const relevant = current?.enabled === true && ["SHORT_BREAK_DUE", "LONG_BREAK_DUE", "SHORT_BREAK", "LONG_BREAK", "WAITING_RETURN"].includes(current.phase);
+    if (!relevant || !current) { eyeCareBubble.hidden = true; eyeCareBubble.textContent = ""; root.querySelector(".pet-shell")?.classList.remove("has-eye-care"); return; }
+    if (!connected) {
+      if (eyeCareBubble.textContent !== "护眼状态暂不可用\n连接恢复后确认提醒") eyeCareBubble.textContent = "护眼状态暂不可用\n连接恢复后确认提醒";
+      eyeCareBubble.hidden = false;
+      root.querySelector(".pet-shell")?.classList.add("has-eye-care");
+      return;
+    }
+    if ((current.phase === "SHORT_BREAK_DUE" || current.phase === "LONG_BREAK_DUE") && semantic.user_mode !== "STUDY") {
+      eyeCareBubble.hidden = true;
+      eyeCareBubble.textContent = "";
+      root.querySelector(".pet-shell")?.classList.remove("has-eye-care");
+      return;
+    }
+    if (current.notification_suppressed) { eyeCareBubble.hidden = true; eyeCareBubble.textContent = ""; root.querySelector(".pet-shell")?.classList.remove("has-eye-care"); return; }
+    const copy: Record<string, string> = {
+      SHORT_BREAK_DUE: `该看看远处啦\n休息 ${eyeCareSettings?.short_break_minutes ?? 5} 分钟再回来吧`,
+      LONG_BREAK_DUE: `该安排一次完整休息啦\n休息 ${eyeCareSettings?.long_break_minutes ?? 20} 分钟再回来吧`,
+      SHORT_BREAK: "远眺休息中\n准备好后再回来",
+      LONG_BREAK: "完整休息中\n准备好后再回来",
+      WAITING_RETURN: "本轮休息计时完成\n点面板继续学习",
+    };
+    const message = copy[current.phase] ?? "";
+    if (eyeCareBubble.textContent !== message) eyeCareBubble.textContent = message;
+    eyeCareBubble.hidden = message.length === 0;
+    root.querySelector(".pet-shell")?.classList.toggle("has-eye-care", !eyeCareBubble.hidden);
   };
 
   const setPanelOpen = (open: boolean): void => {
@@ -223,7 +265,7 @@ export function mountApp(root: HTMLElement): void {
       void selectAnimation(state);
     }
     animation.update(now - lastFrame);
-    stateLabel.textContent = state;
+    stateLabel.textContent = visualStateLabels[state];
     stateLabel.style.color = colors[state];
     taskLabel.textContent = getPetTaskLabel(connected, semantic.task);
     if (panelOpen) renderPanel();
@@ -260,6 +302,9 @@ export function mountApp(root: HTMLElement): void {
   supervisorPoll?.start(snapshot => {
     connected = snapshot.connected;
     semantic = snapshot.semantic;
+    if (snapshot.eye_care_settings) eyeCareSettings = snapshot.eye_care_settings;
+    if (snapshot.eye_care_status) eyeCareStatus = snapshot.eye_care_status;
+    renderEyeCareBubble();
     if (panelOpen) renderPanel();
   });
   requestAnimationFrame(refresh);

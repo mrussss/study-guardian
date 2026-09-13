@@ -84,6 +84,31 @@ test("native snapshot accepts only a complete sanitized semantic contract", () =
   assert.equal(normalizeNativeSnapshot({ connected: false, last_error_kind: "token-value" }).last_error_kind, "unavailable");
 });
 
+test("eye-care transport accepts bounded canonical states and drops invalid or extra fields", () => {
+  const semantic = mockSemantic({}, "2026-09-13T00:00:00.000Z");
+  const eyeCareStatus = {
+    enabled: true, phase: "SHORT_BREAK_DUE", local_date: "2026-09-13", focus_segment_seconds: 2400,
+    focus_since_long_break_seconds: 2400, due_at: "2026-09-13T10:00:00Z", snooze_count: 0,
+    completed_short_breaks: 0, completed_long_breaks: 0, retry_focus_after_seconds: 0,
+    revision: 4, updated_at: "2026-09-13T10:00:00Z", notification_suppressed: false,
+    screenshot: "must be dropped",
+  };
+  const petSnapshot = normalizeNativeSnapshot({ connected: true, semantic, eye_care_status: eyeCareStatus });
+  assert.equal(petSnapshot.eye_care_status?.phase, "SHORT_BREAK_DUE");
+  assert.equal("screenshot" in (petSnapshot.eye_care_status ?? {}), false);
+  const status = { user_mode: "STUDY", interaction_state: "ACTIVE", task_relation: "FOCUSED", privacy_state: "NORMAL", confidence: 0.9, task: "Go", study_seconds: 2400, break_seconds: 0, active_seconds: 2400, activitywatch_ok: true, screen_sensor_ok: true } as const;
+  const normalized = normalizeNativeDashboardSnapshot({
+    connected: true, status,
+    eye_care_settings: { enabled: true, focus_minutes: 40, short_break_minutes: 5, long_break_after_focus_minutes: 120, long_break_minutes: 20, snooze_minutes: 5, max_snoozes: 2, api_key: "drop" },
+    eye_care_status: eyeCareStatus,
+  });
+  assert.equal(normalized.eye_care_settings?.focus_minutes, 40);
+  assert.equal("api_key" in (normalized.eye_care_settings ?? {}), false);
+  assert.equal(normalizeNativeDashboardSnapshot({ connected: true, status, eye_care_settings: { ...normalized.eye_care_settings, focus_minutes: 999 } }).eye_care_settings, undefined);
+  assert.equal(normalizeNativeDashboardSnapshot({ connected: true, status, eye_care_status: { ...eyeCareStatus, phase: "EYE_BREAK" } }).eye_care_status, undefined);
+  assert.equal(normalizeNativeDashboardSnapshot({ connected: true, status, eye_care_status: { ...eyeCareStatus, updated_at: "bad" } }).eye_care_status, undefined);
+});
+
 test("dashboard snapshot accepts canonical data and drops invalid optional sections", () => {
   const status = {
     user_mode: "STUDY",

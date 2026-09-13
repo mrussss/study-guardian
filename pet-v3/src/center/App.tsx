@@ -39,6 +39,7 @@ import type { TaskPickerActionResult } from "../shared/task-mutation";
 import { HelpDrawer } from "../shared/HelpDrawer";
 import { AutomationIntentPrompt } from "../shared/AutomationIntentPrompt";
 import { AutomationPauseStatus } from "../shared/AutomationPauseStatus";
+import { EyeCareSettingsCard, EyeCareWidget } from "../shared/EyeCare";
 import { automationDecisionNotice } from "../shared/automation-intent";
 import { FocusClock } from "./FocusClock";
 import type { AutostartState, ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeAutomationIntent, NativeAutomationSettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot, SystemIntegrationAdapter } from "../transport/supervisor";
@@ -217,6 +218,8 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
       </div>
       <FocusClock connected={liveData} status={status} motivation={motivation} />
     </section>
+
+    <EyeCareWidget connected={Boolean(snapshot?.connected)} settings={snapshot?.eye_care_settings} eyeCareStatus={snapshot?.eye_care_status} supervisorStatus={status} userMode={currentMode} onRefresh={onRefresh} />
 
     <section className="metric-strip" aria-label="今日概览">
       <div className="metric-cell"><span className="metric-label">连续</span><strong><Flame size={16} />{motivation ? `${motivation.streak_days} 天` : liveData ? "—" : "5 天"}</strong><span className="metric-help">保持中</span></div>
@@ -768,6 +771,7 @@ function SettingsPage({ snapshot, onRefresh }: { snapshot?: SupervisorDashboardS
       <div className="setting-actions"><button className="secondary-button" type="button" disabled={quietPeriods.length >= 12} onClick={() => setQuietDraft([...quietPeriods, { start: "09:00", end: "10:00" }])}><Plus size={16} />添加时段</button><button className="primary-button" type="button" onClick={() => void saveQuiet()}>保存免打扰</button></div>
     </section>
     <AutomationSettingsCard settings={snapshot?.automation_settings} pending={snapshot?.status?.pending_automation_intent} onRefresh={onRefresh} />
+    <EyeCareSettingsCard settings={snapshot?.eye_care_settings} connected={snapshot?.connected === true} onRefresh={onRefresh} />
     <AISettingsPanel settings={snapshot?.ai_settings} onRefresh={onRefresh} />
     {notice && <span className="settings-notice" role="status">{notice}</span>}
   </div></DataPage>;

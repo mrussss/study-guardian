@@ -191,6 +191,34 @@ func (s *Storage) migrate() error {
 			value TEXT NOT NULL,
 			updated_at TIMESTAMP NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS eye_care_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			local_date TEXT NOT NULL,
+			phase TEXT NOT NULL,
+			focus_segment_seconds INTEGER NOT NULL DEFAULT 0,
+			focus_since_long_break_seconds INTEGER NOT NULL DEFAULT 0,
+			break_started_at TIMESTAMP,
+			planned_break_end_at TIMESTAMP,
+			due_at TIMESTAMP,
+			snooze_until TIMESTAMP,
+			snooze_count INTEGER NOT NULL DEFAULT 0,
+			completed_short_breaks INTEGER NOT NULL DEFAULT 0,
+			completed_long_breaks INTEGER NOT NULL DEFAULT 0,
+			retry_focus_after_seconds INTEGER NOT NULL DEFAULT 0,
+			revision INTEGER NOT NULL DEFAULT 0,
+			updated_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS eye_care_audit (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			local_date TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			phase TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS eye_care_requests (
+			request_id TEXT PRIMARY KEY,
+			created_at TIMESTAMP NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS motivation_daily (
 			date TEXT PRIMARY KEY,
 			credited_focus_seconds INTEGER NOT NULL DEFAULT 0,

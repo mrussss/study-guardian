@@ -18,10 +18,11 @@ import { BrandMark } from "../shared/BrandMark";
 import { deriveSupervisionState } from "../shared/models/supervision-state";
 import { AutomationIntentPrompt } from "../shared/AutomationIntentPrompt";
 import { AutomationPauseStatus } from "../shared/AutomationPauseStatus";
+import { EyeCareWidget } from "../shared/EyeCare";
 import { TaskWheel } from "../shared/task-wheel/TaskWheel";
 import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
-import type { NativeAutomationSettings, NativeSupervisorStatus, NativeTaskPresetList } from "../transport/supervisor";
+import type { NativeAutomationSettings, NativeEyeCareSettings, NativeEyeCareStatus, NativeSupervisorStatus, NativeTaskPresetList, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 export type QuickPanelMode = "STANDBY" | "STUDY" | "BREAK" | "OFF";
 
@@ -36,6 +37,9 @@ export interface QuickPanelProps {
   connected?: boolean;
   status?: NativeSupervisorStatus;
   automationSettings?: NativeAutomationSettings;
+  eyeCareSettings?: NativeEyeCareSettings;
+  eyeCareStatus?: NativeEyeCareStatus;
+  onRefresh?: () => Promise<SupervisorDashboardSnapshot | void>;
   motivationAvailable?: boolean;
   notice?: string;
   taskPresets?: NativeTaskPresetList;
@@ -75,6 +79,9 @@ export function QuickPanel({
   connected = true,
   status,
   automationSettings,
+  eyeCareSettings,
+  eyeCareStatus,
+  onRefresh,
   motivationAvailable = true,
   notice,
   taskPresets,
@@ -140,6 +147,8 @@ export function QuickPanel({
           <AutomationPauseStatus status={status} settings={automationSettings} />
           <div className="task-line"><BookOpen size={15} /><TaskWheel currentTask={task} presets={taskPresets} compact disabled={!connected} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} onUpdatePreset={onUpdateTaskPreset} onDeletePreset={onDeleteTaskPreset} onOptimisticTaskChange={onOptimisticTaskChange} onTaskMutationStarted={onTaskMutationStarted} onResult={onTaskResult} /></div>
         </section>
+
+        <EyeCareWidget compact connected={connected} settings={eyeCareSettings} eyeCareStatus={eyeCareStatus} supervisorStatus={status} userMode={mode} onRefresh={onRefresh} />
 
         <div className="quick-actions">
           {mode === "BREAK" ? (
