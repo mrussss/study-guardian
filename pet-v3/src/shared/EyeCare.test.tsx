@@ -75,6 +75,15 @@ test("disconnection retains last known phase without continuing to offer actions
   assert.equal(screen.queryByRole("button", { name: "开始远眺" }), null);
 });
 
+test("snoozed reminders hide active actions and degraded persistence is visible", () => {
+  const snoozed = { ...eyeStatus("SHORT_BREAK_DUE"), snooze_until: new Date(Date.now() + 60_000).toISOString(), snooze_count: 1 };
+  const view = render(<EyeCareWidget connected settings={settings} eyeCareStatus={snoozed} supervisorStatus={supervisorStatus} userMode="STUDY" control={fakeControl()} />);
+  assert.ok(screen.getByText("护眼提醒已延后"));
+  assert.equal(screen.queryByRole("button", { name: "开始远眺" }), null);
+  view.rerender(<EyeCareWidget connected settings={settings} eyeCareStatus={{ ...eyeStatus("SHORT_BREAK_DUE"), storage_degraded: true }} supervisorStatus={supervisorStatus} userMode="STUDY" control={fakeControl()} />);
+  assert.ok(screen.getByText("护眼状态暂未保存，服务正在重试"));
+});
+
 test("settings protect a dirty draft from stale snapshots and retain it on failure", async () => {
   const control = fakeControl({ saveEyeCareSettings: async () => ({ ok: false, error_kind: "rejected" }) });
   const view = render(<EyeCareSettingsCard connected settings={settings} control={control} />);
@@ -87,14 +96,50 @@ test("settings protect a dirty draft from stale snapshots and retain it on failu
   assert.equal((focus as HTMLInputElement).value, "55");
 });
 
-test("settings show the canonical values returned by refresh after save", async () => {
-  const canonical = { ...settings, focus_minutes: 50 };
-  const refreshed: SupervisorDashboardSnapshot = { connected: true, eye_care_settings: canonical };
+test("settings keep a dirty draft when refresh still returns a stale value", async () => {
+  const stale: SupervisorDashboardSnapshot = { connected: true, eye_care_settings: { ...settings, focus_minutes: 45 } };
   const control = fakeControl({ saveEyeCareSettings: async () => ({ ok: true }) });
-  render(<EyeCareSettingsCard connected settings={settings} control={control} onRefresh={async () => refreshed} />);
+  render(<EyeCareSettingsCard connected settings={settings} control={control} onRefresh={async () => stale} />);
   const focus = screen.getByRole("spinbutton", { name: "有效专注间隔（分钟）" });
   fireEvent.change(focus, { target: { value: "55" } });
   fireEvent.click(screen.getByRole("button", { name: "保存护眼设置" }));
-  await waitFor(() => assert.equal((focus as HTMLInputElement).value, "50"));
-  assert.ok(screen.getByText("护眼设置已保存"));
+  await waitFor(() => assert.ok(screen.getByText("已提交，等待服务确认")));
+  assert.equal((focus as HTMLInputElement).value, "55");
+  assert.equal((screen.getByRole("button", { name: "保存护眼设置" }) as HTMLButtonElement).disabled, false);
+});
+
+test("later canonical confirmation clears dirty only when it matches the submitted draft", async () => {
+  const control = fakeControl({ saveEyeCareSettings: async () => ({ ok: true }) });
+  const view = render(<EyeCareSettingsCard connected settings={settings} control={control} onRefresh={async () => ({ connected: true, eye_care_settings: { ...settings, focus_minutes: 55 } })} />);
+  const focus = screen.getByRole("spinbutton", { name: "有效专注间隔（分钟）" });
+  fireEvent.change(focus, { target: { value: "55" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存护眼设置" }));
+  await waitFor(() => assert.ok(screen.getByText("护眼设置已保存")));
+  assert.equal((screen.getByRole("button", { name: "保存护眼设置" }) as HTMLButtonElement).disabled, true);
+  view.rerender(<EyeCareSettingsCard connected settings={{ ...settings, focus_minutes: 60 }} control={control} />);
+  await waitFor(() => assert.equal((focus as HTMLInputElement).value, "60"));
+});
+
+test("a late canonical response cannot overwrite a newer edit made during save", async () => {
+  let completeSave: ((value: { ok: boolean }) => void) | undefined;
+  const control = fakeControl({ saveEyeCareSettings: async () => new Promise(resolve => { completeSave = resolve; }) });
+  render(<EyeCareSettingsCard connected settings={settings} control={control} onRefresh={async () => ({ connected: true, eye_care_settings: { ...settings, focus_minutes: 55 } })} />);
+  const focus = screen.getByRole("spinbutton", { name: "有效专注间隔（分钟）" });
+  fireEvent.change(focus, { target: { value: "55" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存护眼设置" }));
+  fireEvent.change(focus, { target: { value: "60" } });
+  completeSave?.({ ok: true });
+  await waitFor(() => assert.ok(screen.getByText("服务已确认先前提交；当前草稿仍待保存")));
+  assert.equal((focus as HTMLInputElement).value, "60");
+  assert.equal((screen.getByRole("button", { name: "保存护眼设置" }) as HTMLButtonElement).disabled, false);
+});
+
+test("disconnect preserves an unsaved settings draft and disables saving", () => {
+  const control = fakeControl();
+  const view = render(<EyeCareSettingsCard connected settings={settings} control={control} />);
+  const focus = screen.getByRole("spinbutton", { name: "有效专注间隔（分钟）" });
+  fireEvent.change(focus, { target: { value: "55" } });
+  view.rerender(<EyeCareSettingsCard connected={false} settings={{ ...settings, focus_minutes: 45 }} control={control} />);
+  assert.equal((focus as HTMLInputElement).value, "55");
+  assert.equal((screen.getByRole("button", { name: "保存护眼设置" }) as HTMLButtonElement).disabled, true);
 });

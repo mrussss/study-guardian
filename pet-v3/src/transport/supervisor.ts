@@ -107,6 +107,16 @@ export interface NativeSupervisorStatus {
   activitywatch_health_phase?: "AVAILABLE" | "DEGRADED" | "UNAVAILABLE";
   auto_pause_snooze_until?: string;
   last_activity_at?: string;
+  automation_diagnostics?: {
+    state: "DISABLED" | "INACTIVE" | "ACCUMULATING" | "GRACE" | "READY" | "BLOCKED" | "SUPPRESSED";
+    signal_kind: "" | "STRONG_FOCUS" | "CANDIDATE_STUDY" | "NEUTRAL_GAP" | "HARD_BLOCKED";
+    accumulated_seconds: number;
+    required_seconds: number;
+    grace_remaining_seconds: number;
+    blocker: string;
+    manual_override_until?: string;
+    updated_at: string;
+  };
   mode_origin?: "MANUAL" | "AUTOMATION" | "EYE_CARE";
   pause_reason?: "NONE" | "IDLE" | "LOCKED" | "SLEEP" | "SENSOR_UNAVAILABLE" | "EYE_CARE_SHORT" | "EYE_CARE_LONG";
   auto_resume_eligible?: boolean;
@@ -147,7 +157,7 @@ export interface NativeReminderSettings {
 
 export interface NativeAutomationSettings {
   enabled: boolean;
-  auto_start: { enabled: boolean; focused_stable_seconds: number; min_confidence: number; allow_unclassified: boolean; confirm: boolean };
+  auto_start: { enabled: boolean; focused_stable_seconds: number; unclassified_stable_seconds: number; evidence_grace_seconds: number; min_confidence: number; allow_unclassified: boolean; confirm: boolean };
   auto_pause: { enabled: boolean; idle_static_seconds: number; idle_dynamic_seconds?: number; locked_seconds: number; confirm: boolean };
   auto_resume: { enabled: boolean; focused_stable_seconds: number };
   transition_cooldown_seconds: number;
@@ -184,6 +194,8 @@ export interface NativeEyeCareStatus {
   revision: number;
   updated_at: string;
   notification_suppressed: boolean;
+  storage_degraded?: boolean;
+  storage_error_kind?: string;
 }
 
 export interface NativeAIEndpointSettings {
@@ -349,6 +361,16 @@ function boundedRatio(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
+function validAutomationDiagnostics(value: unknown): boolean {
+  if (!record(value)) return false;
+  return ["DISABLED", "INACTIVE", "ACCUMULATING", "GRACE", "READY", "BLOCKED", "SUPPRESSED"].includes(value.state as string) &&
+    ["", "STRONG_FOCUS", "CANDIDATE_STUDY", "NEUTRAL_GAP", "HARD_BLOCKED"].includes(value.signal_kind as string) &&
+    nonNegativeInteger(value.accumulated_seconds) && nonNegativeInteger(value.required_seconds) &&
+    nonNegativeInteger(value.grace_remaining_seconds) && boundedText(value.blocker, 64) &&
+    boundedText(value.updated_at, 128) &&
+    (value.manual_override_until === undefined || boundedText(value.manual_override_until, 128));
+}
+
 function validStatus(value: unknown): value is NativeSupervisorStatus {
   if (!record(value)) return false;
   return VALID_USER_MODES.includes(value.user_mode as NativeSupervisorStatus["user_mode"]) &&
@@ -364,7 +386,7 @@ function validStatus(value: unknown): value is NativeSupervisorStatus {
     (value.activitywatch_stable_ok === undefined || typeof value.activitywatch_stable_ok === "boolean") &&
     (value.activitywatch_health_phase === undefined || ["AVAILABLE", "DEGRADED", "UNAVAILABLE"].includes(value.activitywatch_health_phase as string)) &&
     (value.auto_pause_snooze_until === undefined || boundedText(value.auto_pause_snooze_until, 128)) &&
-    (value.last_activity_at === undefined || boundedText(value.last_activity_at, 128)) &&
+    (value.last_activity_at === undefined || boundedText(value.last_activity_at, 128)) && (value.automation_diagnostics === undefined || validAutomationDiagnostics(value.automation_diagnostics)) &&
     (value.mode_origin === undefined || ["MANUAL", "AUTOMATION", "EYE_CARE"].includes(value.mode_origin as string)) &&
     (value.pause_reason === undefined || ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE", "EYE_CARE_SHORT", "EYE_CARE_LONG"].includes(value.pause_reason as string)) &&
     (value.auto_resume_eligible === undefined || typeof value.auto_resume_eligible === "boolean") &&
@@ -412,7 +434,7 @@ function validReminderSettings(value: unknown): value is NativeReminderSettings 
 function validAutomationSettings(value: unknown): value is NativeAutomationSettings {
   if (!record(value) || typeof value.enabled !== "boolean" || !record(value.auto_start) || !record(value.auto_pause) || !record(value.auto_resume)) return false;
   const start = value.auto_start; const pause = value.auto_pause; const resume = value.auto_resume;
-  return typeof start.enabled === "boolean" && nonNegativeInteger(start.focused_stable_seconds) && boundedRatio(start.min_confidence) && typeof start.allow_unclassified === "boolean" && typeof start.confirm === "boolean" &&
+  return typeof start.enabled === "boolean" && nonNegativeInteger(start.focused_stable_seconds) && nonNegativeInteger(start.unclassified_stable_seconds) && nonNegativeInteger(start.evidence_grace_seconds) && boundedRatio(start.min_confidence) && typeof start.allow_unclassified === "boolean" && typeof start.confirm === "boolean" &&
     typeof pause.enabled === "boolean" && nonNegativeInteger(pause.idle_static_seconds) && (pause.idle_dynamic_seconds === undefined || nonNegativeInteger(pause.idle_dynamic_seconds)) && nonNegativeInteger(pause.locked_seconds) && typeof pause.confirm === "boolean" &&
     typeof resume.enabled === "boolean" && nonNegativeInteger(resume.focused_stable_seconds) &&
     nonNegativeInteger(value.transition_cooldown_seconds) && nonNegativeInteger(value.manual_override_minutes);
@@ -439,7 +461,9 @@ function validEyeCareStatus(value: unknown): value is NativeEyeCareStatus {
     validOptionalIso(value.due_at) && validOptionalIso(value.snooze_until) && nonNegativeInteger(value.snooze_count) &&
     nonNegativeInteger(value.completed_short_breaks) && nonNegativeInteger(value.completed_long_breaks) &&
     nonNegativeInteger(value.retry_focus_after_seconds) && nonNegativeInteger(value.revision) && boundedText(value.updated_at, 128) && Number.isFinite(Date.parse(value.updated_at)) &&
-    typeof value.notification_suppressed === "boolean";
+    typeof value.notification_suppressed === "boolean" &&
+    (value.storage_degraded === undefined || typeof value.storage_degraded === "boolean") &&
+    (value.storage_error_kind === undefined || boundedText(value.storage_error_kind, 64));
 }
 
 function normalizedEyeCareSettings(value: unknown): NativeEyeCareSettings | undefined {
@@ -462,6 +486,8 @@ function normalizedEyeCareStatus(value: unknown): NativeEyeCareStatus | undefine
     snooze_count: value.snooze_count, completed_short_breaks: value.completed_short_breaks,
     completed_long_breaks: value.completed_long_breaks, retry_focus_after_seconds: value.retry_focus_after_seconds,
     revision: value.revision, updated_at: value.updated_at, notification_suppressed: value.notification_suppressed,
+    ...(value.storage_degraded === true ? { storage_degraded: true } : {}),
+    ...(value.storage_error_kind ? { storage_error_kind: value.storage_error_kind } : {}),
   };
 }
 

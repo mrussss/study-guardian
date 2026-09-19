@@ -123,6 +123,26 @@ func TestReminderEngineResetsBaselineWhenEnteringStudy(t *testing.T) {
 	}
 }
 
+func TestReminderEngineUsesCrossMidnightQuietPeriodAndLiveSettings(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Reminder.QuietPeriods = []config.QuietPeriodConfig{{Start: "22:00", End: "02:00"}}
+	engine := NewEngine(cfg)
+	if !engine.isQuiet(time.Date(2026, 9, 13, 23, 30, 0, 0, time.Local)) || !engine.isQuiet(time.Date(2026, 9, 14, 1, 30, 0, 0, time.Local)) {
+		t.Fatal("cross-midnight quiet hours were not applied on both sides of midnight")
+	}
+	if engine.isQuiet(time.Date(2026, 9, 14, 2, 0, 0, 0, time.Local)) {
+		t.Fatal("quiet period end must remain exclusive")
+	}
+	settings := engine.GetSettings()
+	settings.QuietPeriods = nil
+	if err := engine.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if engine.isQuiet(time.Date(2026, 9, 14, 1, 30, 0, 0, time.Local)) {
+		t.Fatal("live settings update was not reflected by the reminder engine")
+	}
+}
+
 func TestReminderEngineStaticIdleThresholds(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Reminder.QuietPeriods = nil

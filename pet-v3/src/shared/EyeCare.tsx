@@ -128,6 +128,7 @@ export function EyeCareWidget({
     </div>}
     {authoritative && rest && <div className="eye-care-countdown" aria-live="off">{restRemaining === undefined ? "--:--" : formatDuration(restRemaining)}<button type="button" disabled={busy} onClick={() => void runAction("FINISH_EARLY")}>提前结束</button></div>}
     {authoritative && phase === "WAITING_RETURN" && <div className="eye-care-actions"><button className="eye-care-primary" type="button" disabled={busy} onClick={() => void runAction("RESUME_STUDY")}>继续学习</button></div>}
+    {currentStatus.storage_degraded && <span className="eye-care-notice" role="status">护眼状态暂未保存，服务正在重试</span>}
     {!authoritative && <span className="eye-care-offline"><RefreshCw size={13} />状态未连接</span>}
     {notice && <span className="eye-care-notice" role="status">{notice}</span>}
   </section>;
@@ -143,50 +144,89 @@ export function EyeCareSettingsCard({ settings: source, connected, onRefresh, co
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const editRevision = useRef(0);
+  const dirtyRef = useRef(false);
+  const submittedRef = useRef<{ draft: NativeEyeCareSettings; revision: number } | undefined>(undefined);
   const sourceFingerprint = useRef(source ? JSON.stringify(source) : undefined);
   useEffect(() => {
     const fingerprint = source ? JSON.stringify(source) : undefined;
-    if (fingerprint && fingerprint !== sourceFingerprint.current) {
-      sourceFingerprint.current = fingerprint;
-      if (!dirty) setDraft({ ...defaultSettings, ...source });
+    if (!fingerprint || fingerprint === sourceFingerprint.current) return;
+    sourceFingerprint.current = fingerprint;
+    const canonical = { ...defaultSettings, ...source };
+    const submitted = submittedRef.current;
+    if (submitted && sameSettings(canonical, submitted.draft)) {
+      submittedRef.current = undefined;
+      if (editRevision.current === submitted.revision) {
+        dirtyRef.current = false;
+        setDirty(false);
+        setDraft(canonical);
+        setNotice("护眼设置已保存");
+      } else {
+        setNotice("服务已确认先前提交；当前草稿仍待保存");
+      }
+      return;
     }
-  }, [source, dirty]);
+    if (!dirtyRef.current) setDraft(canonical);
+  }, [source]);
 
   const update = <K extends keyof NativeEyeCareSettings>(key: K, value: NativeEyeCareSettings[K]): void => {
     setDraft(current => ({ ...current, [key]: value }));
+    editRevision.current++;
+    dirtyRef.current = true;
     setDirty(true);
     setNotice("");
   };
   const save = async (): Promise<void> => {
     if (busy || !connected || !control.saveEyeCareSettings) return;
+    const submittedDraft = { ...draft };
+    const submittedRevision = editRevision.current;
     setBusy(true);
     setNotice("");
-    const result = await control.saveEyeCareSettings(draft);
+    const result = await control.saveEyeCareSettings(submittedDraft);
     if (!result.ok) {
       setNotice(result.error_kind === "rejected" ? "设置未通过校验，请检查数值" : "保存失败，已保留当前草稿");
       setBusy(false);
       return;
     }
+    submittedRef.current = { draft: submittedDraft, revision: submittedRevision };
     const refreshed = await onRefresh?.();
     const canonical = refreshed?.eye_care_settings;
-    if (canonical) setDraft({ ...canonical });
-    setDirty(false);
-    setNotice(canonical ? "护眼设置已保存" : "已保存，正在等待服务确认");
+    if (canonical && sameSettings(canonical, submittedDraft)) {
+      submittedRef.current = undefined;
+      if (editRevision.current === submittedRevision) {
+        dirtyRef.current = false;
+        setDirty(false);
+        setDraft({ ...canonical });
+        setNotice("护眼设置已保存");
+      } else {
+        setNotice("服务已确认先前提交；当前草稿仍待保存");
+      }
+    } else {
+      setNotice("已提交，等待服务确认");
+    }
     setBusy(false);
   };
 
   return <section className="surface-section eye-care-settings-card" aria-labelledby="eye-care-settings-title">
-    <div className="section-header"><div><h2 id="eye-care-settings-title">护眼节奏</h2><p>按有效专注时间提醒，休息结束后由你决定何时继续</p></div><label className="eye-care-toggle"><input type="checkbox" checked={draft.enabled} disabled={!connected || busy} onChange={event => update("enabled", event.target.checked)} /><span>开启</span></label></div>
+    <div className="section-header"><div><h2 id="eye-care-settings-title">护眼节奏</h2><p>按有效专注时间提醒，休息结束后由你决定何时继续</p></div><label className="eye-care-toggle"><input type="checkbox" checked={draft.enabled} disabled={!connected} onChange={event => update("enabled", event.target.checked)} /><span>开启</span></label></div>
     <div className="eye-care-settings-summary"><strong>推荐节奏</strong><span>有效专注 {draft.focus_minutes} 分钟 → 远眺 {draft.short_break_minutes} 分钟</span><span>累计专注 {draft.long_break_after_focus_minutes} 分钟 → 完整休息 {draft.long_break_minutes} 分钟</span></div>
     <div className="eye-care-setting-grid">
-      <label>有效专注间隔（分钟）<input aria-label="有效专注间隔（分钟）" type="number" min={20} max={90} step={1} value={draft.focus_minutes} disabled={!connected || busy} onChange={event => update("focus_minutes", Number(event.target.value))} /></label>
-      <label>远眺休息（分钟）<input aria-label="远眺休息（分钟）" type="number" min={1} max={20} step={1} value={draft.short_break_minutes} disabled={!connected || busy} onChange={event => update("short_break_minutes", Number(event.target.value))} /></label>
-      <label>完整休息间隔（分钟）<input aria-label="完整休息间隔（分钟）" type="number" min={60} max={240} step={1} value={draft.long_break_after_focus_minutes} disabled={!connected || busy} onChange={event => update("long_break_after_focus_minutes", Number(event.target.value))} /></label>
-      <label>完整休息时长（分钟）<input aria-label="完整休息时长（分钟）" type="number" min={5} max={60} step={1} value={draft.long_break_minutes} disabled={!connected || busy} onChange={event => update("long_break_minutes", Number(event.target.value))} /></label>
-      <label>延后时长（分钟）<input aria-label="延后时长（分钟）" type="number" min={1} max={30} step={1} value={draft.snooze_minutes} disabled={!connected || busy} onChange={event => update("snooze_minutes", Number(event.target.value))} /></label>
-      <label>最多延后次数<input aria-label="最多延后次数" type="number" min={0} max={5} step={1} value={draft.max_snoozes} disabled={!connected || busy} onChange={event => update("max_snoozes", Number(event.target.value))} /></label>
+      <label>有效专注间隔（分钟）<input aria-label="有效专注间隔（分钟）" type="number" min={20} max={90} step={1} value={draft.focus_minutes} disabled={!connected} onChange={event => update("focus_minutes", Number(event.target.value))} /></label>
+      <label>远眺休息（分钟）<input aria-label="远眺休息（分钟）" type="number" min={1} max={20} step={1} value={draft.short_break_minutes} disabled={!connected} onChange={event => update("short_break_minutes", Number(event.target.value))} /></label>
+      <label>完整休息间隔（分钟）<input aria-label="完整休息间隔（分钟）" type="number" min={60} max={240} step={1} value={draft.long_break_after_focus_minutes} disabled={!connected} onChange={event => update("long_break_after_focus_minutes", Number(event.target.value))} /></label>
+      <label>完整休息时长（分钟）<input aria-label="完整休息时长（分钟）" type="number" min={5} max={60} step={1} value={draft.long_break_minutes} disabled={!connected} onChange={event => update("long_break_minutes", Number(event.target.value))} /></label>
+      <label>延后时长（分钟）<input aria-label="延后时长（分钟）" type="number" min={1} max={30} step={1} value={draft.snooze_minutes} disabled={!connected} onChange={event => update("snooze_minutes", Number(event.target.value))} /></label>
+      <label>最多延后次数<input aria-label="最多延后次数" type="number" min={0} max={5} step={1} value={draft.max_snoozes} disabled={!connected} onChange={event => update("max_snoozes", Number(event.target.value))} /></label>
     </div>
     <p className="eye-care-settings-help">护眼节奏只依据系统已确认的有效专注累计；不会验证你是否看远，也不会新增摄像头采集、截图或 AI 请求。</p>
     <div className="setting-actions"><button className="primary-button" type="button" disabled={!connected || busy || !dirty} onClick={() => void save()}>{busy ? "正在保存…" : "保存护眼设置"}</button>{notice && <span role="status">{notice}</span>}</div>
   </section>;
+}
+
+function sameSettings(left: NativeEyeCareSettings, right: NativeEyeCareSettings): boolean {
+  return left.enabled === right.enabled && left.focus_minutes === right.focus_minutes &&
+    left.short_break_minutes === right.short_break_minutes &&
+    left.long_break_after_focus_minutes === right.long_break_after_focus_minutes &&
+    left.long_break_minutes === right.long_break_minutes && left.snooze_minutes === right.snooze_minutes &&
+    left.max_snoozes === right.max_snoozes;
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -280,8 +281,14 @@ func (s *Server) handleModeStudy(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.stateMgr.SetModeStudy(req.Task); err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		statusCode := http.StatusBadRequest
+		kind := "rejected"
+		if errors.Is(err, state.ErrEyeCareActionRequired) {
+			statusCode = http.StatusConflict
+			kind = "eye_care_action_required"
+		}
+		w.WriteHeader(statusCode)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": kind, "error_kind": kind})
 		return
 	}
 	if s.reviewTrigger != nil {

@@ -1112,6 +1112,60 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
     {
         output["auto_resume_eligible"] = json!(auto_resume_eligible);
     }
+    if let Some(diagnostic) = object
+        .get("automation_diagnostics")
+        .and_then(Value::as_object)
+    {
+        let state = enum_field(
+            diagnostic,
+            "state",
+            &["DISABLED", "INACTIVE", "ACCUMULATING", "GRACE", "READY", "BLOCKED", "SUPPRESSED"],
+        )?;
+        let signal_kind = enum_field(
+            diagnostic,
+            "signal_kind",
+            &["", "STRONG_FOCUS", "CANDIDATE_STUDY", "NEUTRAL_GAP", "HARD_BLOCKED"],
+        )?;
+        let blocker = enum_field(
+            diagnostic,
+            "blocker",
+            &[
+                "",
+                "AUTOMATION_DISABLED",
+                "AUTO_START_DISABLED",
+                "NOT_STANDBY",
+                "NO_TASK",
+                "MANUAL_OVERRIDE",
+                "ACTIVITYWATCH_UNAVAILABLE",
+                "LOCKED",
+                "AFK",
+                "PRIVACY_SENSITIVE",
+                "DISTRACTED",
+                "INSUFFICIENT_EVIDENCE",
+                "PENDING_INTENT",
+            ],
+        )?;
+        let accumulated_seconds = non_negative_i64_field(diagnostic, "accumulated_seconds")?;
+        let required_seconds = non_negative_i64_field(diagnostic, "required_seconds")?;
+        let grace_remaining_seconds =
+            non_negative_i64_field(diagnostic, "grace_remaining_seconds")?;
+        let updated_at = text_field(diagnostic, "updated_at", 128)?;
+        let mut diagnostic_output = json!({
+            "state": state,
+            "signal_kind": signal_kind,
+            "accumulated_seconds": accumulated_seconds,
+            "required_seconds": required_seconds,
+            "grace_remaining_seconds": grace_remaining_seconds,
+            "blocker": blocker,
+            "updated_at": updated_at,
+        });
+        if let Some(manual_override_until) =
+            optional_text_field(diagnostic, "manual_override_until", 128)?
+        {
+            diagnostic_output["manual_override_until"] = json!(manual_override_until);
+        }
+        output["automation_diagnostics"] = diagnostic_output;
+    }
     if let Some(intent) = object
         .get("pending_automation_intent")
         .and_then(Value::as_object)
@@ -1409,6 +1463,8 @@ fn sanitize_automation_settings(value: &Value) -> Result<Value, NativeErrorKind>
         "auto_start": {
             "enabled": bool_field(start, "enabled")?,
             "focused_stable_seconds": non_negative_i64_field(start, "focused_stable_seconds")?,
+            "unclassified_stable_seconds": non_negative_i64_field(start, "unclassified_stable_seconds")?,
+            "evidence_grace_seconds": non_negative_i64_field(start, "evidence_grace_seconds")?,
             "min_confidence": confidence,
             "allow_unclassified": bool_field(start, "allow_unclassified")?,
             "confirm": bool_field(start, "confirm")?,

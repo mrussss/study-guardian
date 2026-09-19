@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -108,6 +109,96 @@ func TestManagerTickAndMidnightReset(t *testing.T) {
 	// Study seconds for the new day should be reset
 	if st.StudySeconds != 0 {
 		t.Fatalf("expected 0 study seconds for new day, got %d", st.StudySeconds)
+	}
+}
+
+func TestGenericStudyTransitionCannotBypassEyeCareBreak(t *testing.T) {
+	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.Local)
+	manager := NewManager(NewFakeClock(now))
+	if err := manager.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetModeEyeCareBreak(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetModeStudy("Go"); !errors.Is(err, ErrEyeCareActionRequired) {
+		t.Fatalf("generic study transition err=%v", err)
+	}
+	if got := manager.GetStatus(); got.UserMode != UserModeBreak || got.ModeOrigin != ModeOriginEyeCare {
+		t.Fatalf("generic route bypassed eye-care mode: %+v", got)
+	}
+}
+
+func TestEyeCareModeTransitionDoesNotMutateBeforeSessionTransactionCommits(t *testing.T) {
+	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.Local)
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	manager := NewPersistentManager(NewFakeClock(now), config.DefaultConfig(), store, mockRuleClassifier{}, mockPrivacyEvaluator{}, mockReminderEvaluator{})
+	if err := manager.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetModeEyeCareBreak(false); err == nil {
+		t.Fatal("closed storage did not reject session transition")
+	}
+	if got := manager.GetStatus(); got.UserMode != UserModeStudy || got.ModeOrigin != ModeOriginManual {
+		t.Fatalf("failed transaction mutated canonical mode: %+v", got)
+	}
+}
+
+func TestRestoreEyeCareBreakPreservesPauseTypeWithoutDuplicateEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		long bool
+		want PauseReason
+	}{
+		{name: "short", want: PauseReasonEyeCareShort},
+		{name: "long", long: true, want: PauseReasonEyeCareLong},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.Local)
+			store, err := storage.OpenSQLite(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+
+			manager := NewPersistentManager(NewFakeClock(now), config.DefaultConfig(), store, mockRuleClassifier{}, mockPrivacyEvaluator{}, mockReminderEvaluator{})
+			if err := manager.SetModeStudy("Go"); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.SetModeEyeCareBreak(test.long); err != nil {
+				t.Fatal(err)
+			}
+			date := now.Format("2006-01-02")
+			revisionBefore, err := store.GetEvidenceRevision(context.Background(), date)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.ResumeEyeCareStudy(); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.RestoreEyeCareBreak(test.long); err != nil {
+				t.Fatal(err)
+			}
+
+			status := manager.GetStatus()
+			if status.UserMode != UserModeBreak || status.ModeOrigin != ModeOriginEyeCare || status.PauseReason != test.want {
+				t.Fatalf("compensation did not restore canonical %s break: %+v", test.name, status)
+			}
+			revisionAfter, err := store.GetEvidenceRevision(context.Background(), date)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if revisionAfter != revisionBefore {
+				t.Fatalf("compensation bumped evidence revision from %d to %d", revisionBefore, revisionAfter)
+			}
+		})
 	}
 }
 

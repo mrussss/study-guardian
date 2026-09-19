@@ -28,7 +28,11 @@ func (s *Server) handleEyeCareSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		canonical, err := s.eyeCare.SaveSettings(value)
 		if err != nil {
-			jsonError(w, err, http.StatusBadRequest)
+			statusCode := http.StatusBadRequest
+			if eyecare.ErrorKind(err) == "storage_unavailable" {
+				statusCode = http.StatusServiceUnavailable
+			}
+			writeTaskPresetJSON(w, statusCode, map[string]string{"error": eyecare.ErrorKind(err), "error_kind": eyecare.ErrorKind(err)})
 			return
 		}
 		writeTaskPresetJSON(w, http.StatusOK, canonical)
@@ -69,10 +73,13 @@ func (s *Server) handleEyeCareAction(w http.ResponseWriter, r *http.Request) {
 	status, err := s.eyeCare.Act(request)
 	if err != nil {
 		statusCode := http.StatusBadRequest
-		if strings.Contains(err.Error(), "stale eye-care revision") {
+		kind := eyecare.ErrorKind(err)
+		if kind == "stale_revision" || kind == "request_conflict" || kind == "request_pending" {
 			statusCode = http.StatusConflict
+		} else if kind == "storage_unavailable" || kind == "reconciliation_required" {
+			statusCode = http.StatusServiceUnavailable
 		}
-		jsonError(w, err, statusCode)
+		writeTaskPresetJSON(w, statusCode, map[string]string{"error": kind, "error_kind": kind})
 		return
 	}
 	writeTaskPresetJSON(w, http.StatusOK, status)

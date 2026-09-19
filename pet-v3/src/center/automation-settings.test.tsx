@@ -21,7 +21,7 @@ afterEach(() => cleanup());
 
 const settings: NativeAutomationSettings = {
   enabled: false,
-  auto_start: { enabled: true, focused_stable_seconds: 90, min_confidence: .8, allow_unclassified: true, confirm: false },
+  auto_start: { enabled: true, focused_stable_seconds: 90, unclassified_stable_seconds: 180, evidence_grace_seconds: 20, min_confidence: .8, allow_unclassified: true, confirm: false },
   auto_pause: { enabled: true, idle_static_seconds: 300, idle_dynamic_seconds: 900, locked_seconds: 15, confirm: false },
   auto_resume: { enabled: true, focused_stable_seconds: 45 },
   transition_cooldown_seconds: 30,

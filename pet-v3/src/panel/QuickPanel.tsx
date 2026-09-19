@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import { useRef, useState, type ReactElement } from "react";
 import {
   ArrowUpRight,
   BookOpen,
@@ -22,7 +22,8 @@ import { EyeCareWidget } from "../shared/EyeCare";
 import { TaskWheel } from "../shared/task-wheel/TaskWheel";
 import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
-import type { NativeAutomationSettings, NativeEyeCareSettings, NativeEyeCareStatus, NativeSupervisorStatus, NativeTaskPresetList, SupervisorDashboardSnapshot } from "../transport/supervisor";
+import type { EyeCareAction, NativeAutomationSettings, NativeEyeCareSettings, NativeEyeCareStatus, NativeSupervisorStatus, NativeTaskPresetList, SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { eyeCareResumeAction, eyeCareResumeLabel } from "../shared/eye-care-resume";
 
 export type QuickPanelMode = "STANDBY" | "STUDY" | "BREAK" | "OFF";
 
@@ -52,6 +53,7 @@ export interface QuickPanelProps {
   onTaskResult?: (result: TaskPickerActionResult, action: TaskWheelAction) => void | Promise<void>;
   onTaskMutationStarted?: () => void;
   onModeAction?: (mode: "STUDY" | "BREAK" | "OFF") => void;
+  onEyeCareResumeAction?: (action: EyeCareAction) => void | Promise<void>;
   onAcceptAutomation?: () => void | Promise<void>;
   onRejectAutomation?: () => void | Promise<void>;
   onAutomationExpired?: () => void | Promise<void>;
@@ -59,6 +61,17 @@ export interface QuickPanelProps {
   onOpenCenter?: () => void;
   onOpenSettings?: () => void;
   onClose?: () => void;
+}
+
+function automationDiagnosticCopy(status: NativeSupervisorStatus | undefined): string | undefined {
+  const diagnostic = status?.automation_diagnostics;
+  if (!diagnostic || status?.user_mode !== "STANDBY") return undefined;
+  if (diagnostic.state === "ACCUMULATING") return "自动开始：稳定 " + diagnostic.accumulated_seconds + " / " + diagnostic.required_seconds + " 秒";
+  if (diagnostic.state === "GRACE") return "自动开始：短暂切换中，保留进度";
+  if (diagnostic.state === "READY") return "自动开始：学习证据已满足";
+  if (diagnostic.state === "SUPPRESSED") return "自动开始：等待当前请求处理";
+  if (diagnostic.state === "BLOCKED") return "自动开始暂不可用";
+  return undefined;
 }
 
 const modeCopy: Record<QuickPanelMode, { kicker: string; title: string; description: string }> = {
@@ -91,6 +104,7 @@ export function QuickPanel({
   onUpdateTaskPreset,
   onDeleteTaskPreset,
   onModeAction,
+  onEyeCareResumeAction,
   onAcceptAutomation,
   onRejectAutomation,
   onAutomationExpired,
@@ -103,6 +117,7 @@ export function QuickPanel({
   onClose,
 }: QuickPanelProps): ReactElement {
   const [localNotice, setLocalNotice] = useState("");
+  const eyeCareResumeBusy = useRef(false);
   const copy = modeCopy[mode];
   const progress = clampProgress(targetMinutes > 0 ? focusMinutes / targetMinutes : 0);
   const supervision = deriveSupervisionState(connected, status);
@@ -110,6 +125,16 @@ export function QuickPanel({
   const action = (nextMode: "STUDY" | "BREAK" | "OFF", message: string): void => {
     onModeAction?.(nextMode);
     setLocalNotice(message);
+  };
+
+  const requestEyeCareResume = async (resumeAction: EyeCareAction): Promise<void> => {
+    if (!onEyeCareResumeAction || eyeCareResumeBusy.current) return;
+    eyeCareResumeBusy.current = true;
+    try {
+      await onEyeCareResumeAction(resumeAction);
+    } finally {
+      eyeCareResumeBusy.current = false;
+    }
   };
 
   const displayNotice = notice ?? localNotice;
@@ -145,6 +170,7 @@ export function QuickPanel({
           <p className="focus-description">{copy.description}</p>
           <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={onAcceptAutomation} onReject={onRejectAutomation} onExpired={onAutomationExpired} />
           <AutomationPauseStatus status={status} settings={automationSettings} />
+          {automationDiagnosticCopy(status) && <p className="automation-diagnostic" role="status">{automationDiagnosticCopy(status)}</p>}
           <div className="task-line"><BookOpen size={15} /><TaskWheel currentTask={task} presets={taskPresets} compact disabled={!connected} onSelect={onSelectTask} onTemporary={onTemporaryTask} onSavePinned={onSaveTask} onUpdatePreset={onUpdateTaskPreset} onDeletePreset={onDeleteTaskPreset} onOptimisticTaskChange={onOptimisticTaskChange} onTaskMutationStarted={onTaskMutationStarted} onResult={onTaskResult} /></div>
         </section>
 
@@ -152,7 +178,13 @@ export function QuickPanel({
 
         <div className="quick-actions">
           {mode === "BREAK" ? (
-            <button className="action-button action-primary" type="button" onClick={() => action("STUDY", "已准备继续学习")}> <Play size={16} fill="currentColor" />继续学习</button>
+            <button className="action-button action-primary" type="button" onClick={() => {
+              const resume = eyeCareResumeAction(mode, status?.mode_origin, eyeCareStatus);
+              if (status?.mode_origin === "EYE_CARE") {
+                if (resume) void requestEyeCareResume(resume);
+                else void onRefresh?.();
+              } else action("STUDY", "已准备继续学习");
+            }}> <Play size={16} fill="currentColor" />{eyeCareResumeLabel(mode, status?.mode_origin, eyeCareStatus)}</button>
           ) : mode === "OFF" || mode === "STANDBY" ? (
             <button className="action-button action-primary" type="button" onClick={() => action("STUDY", "已准备开始学习")}> <Play size={16} fill="currentColor" />开始学习</button>
           ) : (

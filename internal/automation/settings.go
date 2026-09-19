@@ -14,11 +14,13 @@ import (
 const settingKey = "automation.config.v1"
 
 type StartSettings struct {
-	Enabled              bool    `json:"enabled"`
-	FocusedStableSeconds int     `json:"focused_stable_seconds"`
-	MinConfidence        float64 `json:"min_confidence"`
-	AllowUnclassified    bool    `json:"allow_unclassified"`
-	Confirm              bool    `json:"confirm"`
+	Enabled                   bool    `json:"enabled"`
+	FocusedStableSeconds      int     `json:"focused_stable_seconds"`
+	UnclassifiedStableSeconds int     `json:"unclassified_stable_seconds"`
+	EvidenceGraceSeconds      int     `json:"evidence_grace_seconds"`
+	MinConfidence             float64 `json:"min_confidence"`
+	AllowUnclassified         bool    `json:"allow_unclassified"`
+	Confirm                   bool    `json:"confirm"`
 }
 
 type PauseSettings struct {
@@ -84,7 +86,7 @@ func (s *SettingsService) Save(ctx context.Context, input Settings) (Settings, e
 func fromConfig(value config.AutomationConfig) Settings {
 	return Settings{
 		Enabled:                   value.Enabled,
-		AutoStart:                 StartSettings{Enabled: value.AutoStart.Enabled, FocusedStableSeconds: value.AutoStart.FocusedStableSeconds, MinConfidence: value.AutoStart.MinConfidence, AllowUnclassified: value.AutoStart.AllowUnclassified, Confirm: value.AutoStart.Confirm},
+		AutoStart:                 StartSettings{Enabled: value.AutoStart.Enabled, FocusedStableSeconds: value.AutoStart.FocusedStableSeconds, UnclassifiedStableSeconds: value.AutoStart.UnclassifiedStableSeconds, EvidenceGraceSeconds: value.AutoStart.EvidenceGraceSeconds, MinConfidence: value.AutoStart.MinConfidence, AllowUnclassified: value.AutoStart.AllowUnclassified, Confirm: value.AutoStart.Confirm},
 		AutoPause:                 PauseSettings{Enabled: value.AutoPause.Enabled, IdleStaticSeconds: value.AutoPause.IdleStaticSeconds, IdleDynamicSeconds: value.AutoPause.IdleDynamicSeconds, LockedSeconds: value.AutoPause.LockedSeconds, Confirm: value.AutoPause.Confirm},
 		AutoResume:                ResumeSettings{Enabled: value.AutoResume.Enabled, FocusedStableSeconds: value.AutoResume.FocusedStableSeconds},
 		TransitionCooldownSeconds: value.TransitionCooldownSeconds,
@@ -94,7 +96,7 @@ func fromConfig(value config.AutomationConfig) Settings {
 
 func toConfig(value Settings) config.AutomationConfig {
 	return config.AutomationConfig{Enabled: value.Enabled,
-		AutoStart:                 config.AutomationStartConfig{Enabled: value.AutoStart.Enabled, FocusedStableSeconds: value.AutoStart.FocusedStableSeconds, MinConfidence: value.AutoStart.MinConfidence, AllowUnclassified: value.AutoStart.AllowUnclassified, Confirm: value.AutoStart.Confirm},
+		AutoStart:                 config.AutomationStartConfig{Enabled: value.AutoStart.Enabled, FocusedStableSeconds: value.AutoStart.FocusedStableSeconds, UnclassifiedStableSeconds: value.AutoStart.UnclassifiedStableSeconds, EvidenceGraceSeconds: value.AutoStart.EvidenceGraceSeconds, MinConfidence: value.AutoStart.MinConfidence, AllowUnclassified: value.AutoStart.AllowUnclassified, Confirm: value.AutoStart.Confirm},
 		AutoPause:                 config.AutomationPauseConfig{Enabled: value.AutoPause.Enabled, IdleStaticSeconds: value.AutoPause.IdleStaticSeconds, IdleDynamicSeconds: value.AutoPause.IdleDynamicSeconds, LockedSeconds: value.AutoPause.LockedSeconds, Confirm: value.AutoPause.Confirm},
 		AutoResume:                config.AutomationResumeConfig{Enabled: value.AutoResume.Enabled, FocusedStableSeconds: value.AutoResume.FocusedStableSeconds},
 		TransitionCooldownSeconds: value.TransitionCooldownSeconds, ManualOverrideMinutes: value.ManualOverrideMinutes}
@@ -102,9 +104,33 @@ func toConfig(value Settings) config.AutomationConfig {
 
 func ConfigFromSettings(value Settings) config.AutomationConfig { return toConfig(value) }
 
+func NormalizePersistedSettings(value Settings, raw string) Settings {
+	var envelope map[string]json.RawMessage
+	var start map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &envelope) != nil || json.Unmarshal(envelope["auto_start"], &start) != nil {
+		return value
+	}
+	if _, ok := start["focused_stable_seconds"]; !ok {
+		value.AutoStart.FocusedStableSeconds = 90
+	}
+	if _, ok := start["unclassified_stable_seconds"]; !ok {
+		value.AutoStart.UnclassifiedStableSeconds = 180
+	}
+	if _, ok := start["evidence_grace_seconds"]; !ok {
+		value.AutoStart.EvidenceGraceSeconds = 20
+	}
+	return value
+}
+
 func validate(value Settings) error {
 	if value.AutoStart.FocusedStableSeconds < 1 || value.AutoStart.FocusedStableSeconds > 3600 {
 		return fmt.Errorf("auto_start focused_stable_seconds must be 1-3600")
+	}
+	if value.AutoStart.UnclassifiedStableSeconds < 30 || value.AutoStart.UnclassifiedStableSeconds > 1800 {
+		return fmt.Errorf("auto_start unclassified_stable_seconds must be 30-1800")
+	}
+	if value.AutoStart.EvidenceGraceSeconds < 0 || value.AutoStart.EvidenceGraceSeconds > 120 {
+		return fmt.Errorf("auto_start evidence_grace_seconds must be 0-120")
 	}
 	if value.AutoStart.MinConfidence < 0 || value.AutoStart.MinConfidence > 1 {
 		return fmt.Errorf("auto_start min_confidence must be 0-1")

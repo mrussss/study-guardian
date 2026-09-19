@@ -46,13 +46,7 @@ func elapsedAfterBaseline(current int64, baseline *int64) int64 {
 }
 
 func (e *Engine) isQuiet(now time.Time) bool {
-	minute := now.Hour()*60 + now.Minute()
-	for _, period := range e.quietPeriods {
-		if minute >= period.Start && minute < period.End {
-			return true
-		}
-	}
-	return false
+	return config.IsQuietTime(now.Hour()*60+now.Minute(), e.quietPeriods)
 }
 
 func (e *Engine) GetSettings() config.ReminderConfig {

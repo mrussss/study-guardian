@@ -16,6 +16,8 @@ import (
 
 var sessionSequence atomic.Uint64
 
+var ErrEyeCareActionRequired = errors.New("eye_care_action_required")
+
 const maxTickGap = 30 * time.Second
 
 func newSessionID(now time.Time) string {
@@ -81,6 +83,7 @@ type Manager struct {
 	currentReminder                  *ReminderEvent
 	reminderRecoverySince            time.Time
 	pendingAutomationIntent          *AutomationIntent
+	automationDiagnostics            *AutomationDiagnostics
 	autoPauseSnoozeUntil             *time.Time
 	feedbacks                        []FeedbackRecord
 
@@ -241,6 +244,24 @@ func (m *Manager) clearRecoveredReminderLocked(now time.Time) {
 	}
 }
 
+func cloneAutomationDiagnostics(value *AutomationDiagnostics) *AutomationDiagnostics {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	if value.ManualOverrideUntil != nil {
+		deadline := *value.ManualOverrideUntil
+		copy.ManualOverrideUntil = &deadline
+	}
+	return &copy
+}
+
+func (m *Manager) SetAutomationDiagnostics(value AutomationDiagnostics) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.automationDiagnostics = cloneAutomationDiagnostics(&value)
+}
+
 func (m *Manager) GetStatus() SystemStatus {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -277,7 +298,7 @@ func (m *Manager) GetStatus() SystemStatus {
 		AutoResumeEligible:               m.autoResumeEligible,
 		ManualOverrideUntil:              m.manualOverrideUntil,
 		AutoPauseSnoozeUntil:             m.autoPauseSnoozeUntil,
-		PendingAutomationIntent:          pending,
+		AutomationDiagnostics:            cloneAutomationDiagnostics(m.automationDiagnostics), PendingAutomationIntent: pending,
 	}
 }
 
@@ -290,6 +311,9 @@ func (m *Manager) GetCurrentTask() string {
 func (m *Manager) SetModeStudy(task string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.userMode == UserModeBreak && m.modeOrigin == ModeOriginEyeCare {
+		return ErrEyeCareActionRequired
+	}
 
 	now := m.clock.Now()
 	m.checkMidnightResetLocked(now)
@@ -377,20 +401,36 @@ func (m *Manager) SetModeBreak() error {
 func (m *Manager) SetModeEyeCareBreak(long bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.setModeEyeCareBreakLocked(long, true)
+}
+
+// RestoreEyeCareBreak is the compensation path for a resume whose paired
+// eye-care transaction did not commit. It restores the canonical break type
+// without counting the transient study session as new study evidence.
+func (m *Manager) RestoreEyeCareBreak(long bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.setModeEyeCareBreakLocked(long, false)
+}
+
+func (m *Manager) setModeEyeCareBreakLocked(long, bumpStudyEvidence bool) error {
 	if m.userMode != UserModeStudy {
 		return errors.New("eye-care break requires STUDY mode")
 	}
 	now := m.clock.Now()
 	m.checkMidnightResetLocked(now)
-	m.closeCurrentSessionLocked(now, "EYE_CARE_BREAK")
+	newSessionID := newSessionID(now)
+	pauseReason := PauseReasonEyeCareShort
+	if long {
+		pauseReason = PauseReasonEyeCareLong
+	}
+	if err := m.persistModeTransitionLocked(now, "EYE_CARE_BREAK", newSessionID, UserModeBreak, ModeOriginEyeCare, pauseReason, false, bumpStudyEvidence); err != nil {
+		return err
+	}
 	m.userMode = UserModeBreak
 	m.modeOrigin = ModeOriginEyeCare
 	m.autoResumeEligible = false
-	if long {
-		m.pauseReason = PauseReasonEyeCareLong
-	} else {
-		m.pauseReason = PauseReasonEyeCareShort
-	}
+	m.pauseReason = pauseReason
 	m.modeStartTime = now
 	m.currentModeSeconds = 0
 	m.distractedSeconds = 0
@@ -400,13 +440,7 @@ func (m *Manager) SetModeEyeCareBreak(long bool) error {
 	m.clearCurrentReminderLocked()
 	m.pendingAutomationIntent = nil
 	m.autoPauseSnoozeUntil = nil
-	m.currentSessID = newSessionID(now)
-	if m.storage != nil {
-		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
-			ID: m.currentSessID, Mode: string(UserModeBreak), Task: m.task, StartedAt: now,
-			ModeOrigin: string(ModeOriginEyeCare), PauseReason: string(m.pauseReason), AutoResumeEligible: false,
-		})
-	}
+	m.currentSessID = newSessionID
 	return nil
 }
 
@@ -417,7 +451,10 @@ func (m *Manager) ResumeEyeCareStudy() error {
 		return errors.New("no active eye-care break")
 	}
 	now := m.clock.Now()
-	m.closeCurrentSessionLocked(now, "EYE_CARE_RESUMED")
+	newSessionID := newSessionID(now)
+	if err := m.persistModeTransitionLocked(now, "EYE_CARE_RESUMED", newSessionID, UserModeStudy, ModeOriginManual, PauseReasonNone, false, false); err != nil {
+		return err
+	}
 	m.userMode = UserModeStudy
 	m.modeOrigin = ModeOriginManual
 	m.pauseReason = PauseReasonNone
@@ -429,12 +466,26 @@ func (m *Manager) ResumeEyeCareStudy() error {
 	m.idleStaticSeconds = 0
 	m.afkSeconds = 0
 	m.afkSince = time.Time{}
-	m.currentSessID = newSessionID(now)
-	if m.storage != nil {
-		_ = m.storage.SaveSession(context.Background(), storage.SessionRecord{
-			ID: m.currentSessID, Mode: string(UserModeStudy), Task: m.task, StartedAt: now,
-			ModeOrigin: string(ModeOriginManual), PauseReason: string(PauseReasonNone), AutoResumeEligible: false,
-		})
+	m.currentSessID = newSessionID
+	return nil
+}
+
+func (m *Manager) persistModeTransitionLocked(now time.Time, reason, nextID string, nextMode UserMode, nextOrigin ModeOrigin, nextPauseReason PauseReason, nextAutoResume, bumpStudyEvidence bool) error {
+	if m.storage == nil {
+		return nil
+	}
+	endedAt := now
+	closed := storage.SessionRecord{
+		ID: m.currentSessID, Mode: string(m.userMode), Task: m.task, StartedAt: m.modeStartTime,
+		EndedAt: &endedAt, DurationSeconds: m.currentModeSeconds, EndReason: reason,
+		ModeOrigin: string(m.modeOrigin), PauseReason: string(m.pauseReason), AutoResumeEligible: m.autoResumeEligible,
+	}
+	opened := storage.SessionRecord{
+		ID: nextID, Mode: string(nextMode), Task: m.task, StartedAt: now,
+		ModeOrigin: string(nextOrigin), PauseReason: string(nextPauseReason), AutoResumeEligible: nextAutoResume,
+	}
+	if err := m.storage.TransitionSession(context.Background(), closed, opened, bumpStudyEvidence, now); err != nil {
+		return fmt.Errorf("storage unavailable: %w", err)
 	}
 	return nil
 }
@@ -445,6 +496,28 @@ func (m *Manager) SetModeOff() error {
 
 	now := m.clock.Now()
 	m.checkMidnightResetLocked(now)
+	if m.modeOrigin == ModeOriginEyeCare {
+		newID := newSessionID(now)
+		if err := m.persistModeTransitionLocked(now, "USER_SWITCH_OFF", newID, UserModeOff, ModeOriginManual, PauseReasonNone, false, false); err != nil {
+			return err
+		}
+		m.userMode = UserModeOff
+		m.modeOrigin = ModeOriginManual
+		m.pauseReason = PauseReasonNone
+		m.autoResumeEligible = false
+		m.setManualOverrideLocked(now)
+		m.modeStartTime = now
+		m.distractedSeconds = 0
+		m.idleStaticSeconds = 0
+		m.afkSeconds = 0
+		m.afkSince = time.Time{}
+		m.currentModeSeconds = 0
+		m.clearCurrentReminderLocked()
+		m.pendingAutomationIntent = nil
+		m.autoPauseSnoozeUntil = nil
+		m.currentSessID = newID
+		return nil
+	}
 
 	m.closeCurrentSessionLocked(now, "USER_SWITCH_OFF")
 
@@ -786,6 +859,36 @@ func (m *Manager) recordAutomationAuditLocked(eventType string, intent *Automati
 		return
 	}
 	_, _ = m.storage.RecordUIEvent(context.Background(), eventType, "automation decision", string(raw), now)
+}
+
+func (m *Manager) RecordAutomationDiagnosticAudit(eventType string, diagnostic AutomationDiagnostics) {
+	if m == nil || m.storage == nil || strings.TrimSpace(eventType) == "" {
+		return
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	now := m.clock.Now()
+	confidenceBucket := "LOW"
+	if m.confidence >= .8 {
+		confidenceBucket = "HIGH"
+	} else if m.confidence >= .6 {
+		confidenceBucket = "MEDIUM"
+	}
+	metadata := map[string]interface{}{
+		"timestamp":           now.UTC().Format(time.RFC3339Nano),
+		"signal_kind":         string(diagnostic.SignalKind),
+		"accumulated_seconds": diagnostic.AccumulatedSeconds,
+		"required_seconds":    diagnostic.RequiredSeconds,
+		"blocker":             string(diagnostic.Blocker),
+		"interaction":         string(m.interaction),
+		"relation":            string(m.relation),
+		"confidence_bucket":   confidenceBucket,
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return
+	}
+	_, _ = m.storage.RecordUIEvent(context.Background(), eventType, "automatic start diagnostic", string(raw), now)
 }
 
 func (m *Manager) RecordFeedback(eventID, feedback string) error {

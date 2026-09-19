@@ -185,11 +185,13 @@ type AutomationConfig struct {
 }
 
 type AutomationStartConfig struct {
-	Enabled              bool    `yaml:"enabled"`
-	FocusedStableSeconds int     `yaml:"focused_stable_seconds"`
-	MinConfidence        float64 `yaml:"min_confidence"`
-	AllowUnclassified    bool    `yaml:"allow_unclassified"`
-	Confirm              bool    `yaml:"confirm"`
+	Enabled                   bool    `yaml:"enabled"`
+	FocusedStableSeconds      int     `yaml:"focused_stable_seconds"`
+	UnclassifiedStableSeconds int     `yaml:"unclassified_stable_seconds"`
+	EvidenceGraceSeconds      int     `yaml:"evidence_grace_seconds"`
+	MinConfidence             float64 `yaml:"min_confidence"`
+	AllowUnclassified         bool    `yaml:"allow_unclassified"`
+	Confirm                   bool    `yaml:"confirm"`
 }
 
 type AutomationPauseConfig struct {
@@ -271,7 +273,7 @@ func DefaultConfig() *Config {
 		},
 		Automation: AutomationConfig{
 			Enabled:                   false,
-			AutoStart:                 AutomationStartConfig{Enabled: true, FocusedStableSeconds: 90, MinConfidence: .80, AllowUnclassified: true},
+			AutoStart:                 AutomationStartConfig{Enabled: true, FocusedStableSeconds: 90, UnclassifiedStableSeconds: 180, EvidenceGraceSeconds: 20, MinConfidence: .80, AllowUnclassified: true},
 			AutoPause:                 AutomationPauseConfig{Enabled: true, IdleStaticSeconds: 300, IdleDynamicSeconds: 900, LockedSeconds: 15},
 			AutoResume:                AutomationResumeConfig{Enabled: true, FocusedStableSeconds: 45},
 			TransitionCooldownSeconds: 30,
@@ -322,6 +324,18 @@ func LoadConfig(configPath string, tokenPath string) (*Config, error) {
 }
 
 func NormalizeAutomationConfig(cfg *Config) {
+	if cfg.Automation.AutoStart.FocusedStableSeconds <= 0 {
+		cfg.Automation.AutoStart.FocusedStableSeconds = 90
+	}
+	if cfg.Automation.AutoStart.UnclassifiedStableSeconds <= 0 {
+		cfg.Automation.AutoStart.UnclassifiedStableSeconds = 180
+	}
+	if cfg.Automation.AutoStart.EvidenceGraceSeconds < 0 {
+		cfg.Automation.AutoStart.EvidenceGraceSeconds = 20
+	}
+	if cfg.Automation.AutoStart.MinConfidence <= 0 {
+		cfg.Automation.AutoStart.MinConfidence = .80
+	}
 	if cfg.Automation.AutoPause.IdleStaticSeconds <= 0 {
 		cfg.Automation.AutoPause.IdleStaticSeconds = 300
 	}

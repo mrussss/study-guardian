@@ -66,6 +66,13 @@ func TestEyeCareAPISettingsStatusAndRevisionedActions(t *testing.T) {
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &started) != nil || started.Phase != eyecare.ShortBreak || manager.GetStatus().ModeOrigin != state.ModeOriginEyeCare {
 		t.Fatalf("action status=%d body=%s manager=%+v", response.Code, response.Body.String(), manager.GetStatus())
 	}
+	request = httptest.NewRequest(http.MethodPost, "/v1/mode/study", bytes.NewBufferString(`{"task":"Go"}`))
+	request.Header.Set("Authorization", "Bearer "+cfg.IPC.AuthToken)
+	response = httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !bytes.Contains(response.Body.Bytes(), []byte(`"eye_care_action_required"`)) || manager.GetStatus().UserMode != state.UserModeBreak {
+		t.Fatalf("generic study route bypassed eye-care: status=%d body=%s mode=%s", response.Code, response.Body.String(), manager.GetStatus().UserMode)
+	}
 
 	request = httptest.NewRequest(http.MethodPost, "/v1/eye-care/action", bytes.NewBufferString(`{"action":"RESUME_STUDY","expected_revision":0,"request_id":"api-stale-1"}`))
 	request.Header.Set("Authorization", "Bearer "+cfg.IPC.AuthToken)

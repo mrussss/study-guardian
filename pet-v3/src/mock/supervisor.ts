@@ -12,6 +12,8 @@ export const MOCK_SCENARIOS = [
   { id: "eye-short-due", label: "护眼：远眺提醒" }, { id: "eye-long-due", label: "护眼：完整休息提醒" },
   { id: "eye-short-break", label: "护眼：远眺休息中" }, { id: "eye-long-break", label: "护眼：完整休息中" },
   { id: "eye-waiting-return", label: "护眼：等待继续" },
+  { id: "eye-snoozed", label: "护眼：提醒已延后" }, { id: "eye-quiet-suppressed", label: "护眼：免打扰" },
+  { id: "eye-storage-degraded", label: "护眼：存储异常" }, { id: "eye-mode-state-mismatch", label: "护眼：模式状态不一致" },
 ] as const;
 export type MockScenarioId = typeof MOCK_SCENARIOS[number]["id"];
 
@@ -28,20 +30,21 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
   const sensorFailure = scenario === "sensor-failure";
   const activityWatchFailure = scenario === "activitywatch-failure";
   const eyeCareEnabled = scenario.startsWith("eye-");
-  const eyePhase: NativeEyeCareStatus["phase"] = scenario === "eye-short-due" ? "SHORT_BREAK_DUE" : scenario === "eye-long-due" ? "LONG_BREAK_DUE" : scenario === "eye-short-break" ? "SHORT_BREAK" : scenario === "eye-long-break" ? "LONG_BREAK" : scenario === "eye-waiting-return" ? "WAITING_RETURN" : "DISABLED";
+  const eyePhase: NativeEyeCareStatus["phase"] = scenario === "eye-short-due" || scenario === "eye-snoozed" || scenario === "eye-quiet-suppressed" ? "SHORT_BREAK_DUE" : scenario === "eye-long-due" ? "LONG_BREAK_DUE" : scenario === "eye-short-break" || scenario === "eye-mode-state-mismatch" ? "SHORT_BREAK" : scenario === "eye-long-break" ? "LONG_BREAK" : scenario === "eye-waiting-return" ? "WAITING_RETURN" : "DISABLED";
   const eyeBreak = eyePhase === "SHORT_BREAK" || eyePhase === "LONG_BREAK" || eyePhase === "WAITING_RETURN";
   const now = new Date();
   const breakEnd = new Date(now.getTime() + (eyePhase === "LONG_BREAK" ? 20 : 5) * 60_000).toISOString();
   return {
     connected: scenario !== "offline",
     status: {
-      user_mode: scenario === "progress-empty" ? "STANDBY" : eyeBreak ? "BREAK" : "STUDY",
+      user_mode: scenario === "progress-empty" ? "STANDBY" : scenario === "eye-mode-state-mismatch" ? "STUDY" : eyeBreak ? "BREAK" : "STUDY",
       interaction_state: "ACTIVE", task_relation: scenario === "reminder" ? "DISTRACTED" : "FOCUSED",
       privacy_state: "NORMAL", confidence: scenario === "reminder" ? 0.58 : 0.94,
       task: scenario === "rapid" ? "Go" : "算法", study_seconds: focusMinutes * 60 + 17,
       break_seconds: 0, active_seconds: focusMinutes * 60 + 17, afk_seconds: 0, activitywatch_ok: !activityWatchFailure,
       screen_sensor_ok: !sensorFailure, last_activity_at: new Date().toISOString(),
       mode_origin: eyeBreak ? "EYE_CARE" : "MANUAL", pause_reason: scenario === "eye-short-break" ? "EYE_CARE_SHORT" : scenario === "eye-long-break" ? "EYE_CARE_LONG" : "NONE", auto_resume_eligible: false,
+      automation_diagnostics: { state: scenario === "progress-empty" ? "ACCUMULATING" : "INACTIVE", signal_kind: scenario === "progress-empty" ? "STRONG_FOCUS" : "", accumulated_seconds: scenario === "progress-empty" ? 42 : 0, required_seconds: 90, grace_remaining_seconds: 20, blocker: scenario === "progress-empty" ? "" : "NOT_STANDBY", updated_at: new Date().toISOString() },
     },
     semantic: { schema_version: 1, observed_at: new Date().toISOString(), fresh: !activityWatchFailure, user_mode: "STUDY", task: scenario === "rapid" ? "Go" : "算法", interaction: "ACTIVE", relation: scenario === "reminder" ? "DISTRACTED" : "FOCUSED", privacy: "NORMAL", activity: "CODING", confidence: scenario === "reminder" ? .58 : .94, progress_signal: "CODING", source_kind: "LOCAL_RULE" },
     motivation: {
@@ -64,7 +67,7 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
     ] },
     automation_settings: {
       enabled: false,
-      auto_start: { enabled: true, focused_stable_seconds: 90, min_confidence: .8, allow_unclassified: true, confirm: false },
+      auto_start: { enabled: true, focused_stable_seconds: 90, unclassified_stable_seconds: 180, evidence_grace_seconds: 20, min_confidence: .8, allow_unclassified: true, confirm: false },
       auto_pause: { enabled: true, idle_static_seconds: 300, idle_dynamic_seconds: 900, locked_seconds: 15, confirm: false },
       auto_resume: { enabled: true, focused_stable_seconds: 45 },
       transition_cooldown_seconds: 30, manual_override_minutes: 30,
@@ -78,7 +81,9 @@ function initialSnapshot(scenario: MockScenarioId): SupervisorDashboardSnapshot 
       ...(eyePhase === "WAITING_RETURN" ? { break_started_at: new Date(now.getTime() - 5 * 60_000).toISOString(), planned_break_end_at: new Date(now.getTime() - 1000).toISOString() } : {}),
       ...(eyePhase.endsWith("_DUE") ? { due_at: now.toISOString() } : {}),
       snooze_count: 0, completed_short_breaks: 0, completed_long_breaks: 0, retry_focus_after_seconds: 0,
-      revision: 1, updated_at: now.toISOString(), notification_suppressed: false,
+      ...(scenario === "eye-snoozed" ? { snooze_until: new Date(now.getTime() + 5 * 60_000).toISOString() } : {}),
+      revision: 1, updated_at: now.toISOString(), notification_suppressed: scenario === "eye-snoozed" || scenario === "eye-quiet-suppressed",
+      ...(scenario === "eye-storage-degraded" ? { storage_degraded: true, storage_error_kind: "storage_unavailable" } : {}),
     },
     ai_settings: {
       enabled: false, min_confidence: 0.75,

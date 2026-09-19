@@ -100,7 +100,8 @@ func main() {
 		log.Printf("[Automation] settings load failed: %v", loadErr)
 	} else if ok {
 		var persisted automation.Settings
-		if decodeErr := json.Unmarshal([]byte(raw), &persisted); decodeErr == nil && automation.ValidateSettings(persisted) == nil {
+		if decodeErr := json.Unmarshal([]byte(raw), &persisted); decodeErr == nil && automation.ValidateSettings(automation.NormalizePersistedSettings(persisted, raw)) == nil {
+			persisted = automation.NormalizePersistedSettings(persisted, raw)
 			cfg.Automation = automation.ConfigFromSettings(persisted)
 		}
 	}
@@ -157,7 +158,7 @@ func main() {
 
 	stateMgr := state.NewPersistentManager(clock, cfg, store, ruleEngine, privacyGate, reminderEng)
 	stateMgr.SetToastNotifier(windows.SendToast)
-	eyeCareService, eyeCareErr := eyecare.New(cfg.EyeCare, cfg.Reminder, store, stateMgr)
+	eyeCareService, eyeCareErr := eyecare.NewWithReminderSettingsProvider(cfg.EyeCare, reminderEng, store, stateMgr)
 	if eyeCareErr != nil {
 		log.Printf("[EyeCare] settings/state unavailable; feature disabled for this run (%v)", eyeCareErr)
 	}
@@ -228,6 +229,8 @@ func main() {
 		lastObservedMode := state.UserModeStandby
 		lastClassRes := state.ClassificationResult{Relation: state.RelationUnknown, Confidence: 1.0, Reason: "No observation yet"}
 		lastAFKAudit := false
+		var lastEyeCareStorageLog time.Time
+		var lastEyeCarePrune time.Time
 
 		for {
 			select {
@@ -402,8 +405,36 @@ func main() {
 				creditedFocusSeconds := motivationService.RecordTick(outcome)
 				eyeCareStatus := stateMgr.GetStatus()
 				if eyeCareService != nil {
-					eyeCareService.Observe(outcome.Now, eyeCareStatus)
-					eyeCareService.RecordCreditedFocus(creditedFocusSeconds, outcome, eyeCareStatus)
+					if lastEyeCarePrune.IsZero() || outcome.Now.Sub(lastEyeCarePrune) >= 24*time.Hour {
+						if err := eyeCareService.PruneRequests(outcome.Now); err != nil {
+							if time.Since(lastEyeCareStorageLog) >= time.Minute {
+								log.Printf("[EyeCare] request-ledger cleanup unavailable; retrying later")
+								lastEyeCareStorageLog = time.Now()
+							}
+						} else {
+							lastEyeCarePrune = outcome.Now
+						}
+					}
+					if err := eyeCareService.Observe(outcome.Now, eyeCareStatus); err != nil && time.Since(lastEyeCareStorageLog) >= time.Minute {
+						log.Printf("[EyeCare] state persistence degraded; retrying on subsequent ticks")
+						lastEyeCareStorageLog = time.Now()
+					}
+					if err := eyeCareService.RecordCreditedFocus(creditedFocusSeconds, outcome, eyeCareStatus); err != nil && time.Since(lastEyeCareStorageLog) >= time.Minute {
+						log.Printf("[EyeCare] focus checkpoint persistence degraded; retrying on subsequent ticks")
+						lastEyeCareStorageLog = time.Now()
+					}
+					if notification, err := eyeCareService.TakePendingNotification(outcome.Now); err != nil {
+						if time.Since(lastEyeCareStorageLog) >= time.Minute {
+							log.Printf("[EyeCare] notification claim unavailable; retrying on subsequent ticks")
+							lastEyeCareStorageLog = time.Now()
+						}
+					} else if notification != nil {
+						go func(item eyecare.Notification) {
+							if err := windows.SendToast(item.Title, item.Message); err != nil {
+								log.Printf("[EyeCare] toast delivery failed kind=%s", item.Kind)
+							}
+						}(*notification)
+					}
 				}
 				postStatus := stateMgr.GetStatus()
 				if intent := automationController.Evaluate(outcome.Now, outcome, postStatus); intent != nil {
@@ -416,6 +447,11 @@ func main() {
 						log.Printf("[Automation] transition=%s reason=%s", intent.Transition, intent.Reason)
 					}
 				}
+				stateMgr.SetAutomationDiagnostics(automationController.Diagnostics())
+				if diagnosticAudit := automationController.TakeDiagnosticAudit(); diagnosticAudit != nil {
+					stateMgr.RecordAutomationDiagnosticAudit(diagnosticAudit.EventType, diagnosticAudit.Diagnostic)
+				}
+				postStatus = stateMgr.GetStatus()
 				if lastObservedMode != postStatus.UserMode && postStatus.UserMode == state.UserModeOff {
 					if _, err := reviewService.MarkStaleIfChanged(tickerCtx, outcome.Now.In(time.Local).Format("2006-01-02")); err != nil {
 						log.Printf("[Review] OFF transition stale check failed: %v", err)

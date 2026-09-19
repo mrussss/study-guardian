@@ -9,6 +9,10 @@ test("mock scenarios parse only supported values", () => {
   assert.equal(parseMockScenario("?mock=activitywatch-failure"), "activitywatch-failure");
   assert.equal(parseMockScenario("?mock=eye-short-due"), "eye-short-due");
   assert.equal(parseMockScenario("?mock=eye-long-break"), "eye-long-break");
+  assert.equal(parseMockScenario("?mock=eye-snoozed"), "eye-snoozed");
+  assert.equal(parseMockScenario("?mock=eye-quiet-suppressed"), "eye-quiet-suppressed");
+  assert.equal(parseMockScenario("?mock=eye-storage-degraded"), "eye-storage-degraded");
+  assert.equal(parseMockScenario("?mock=eye-mode-state-mismatch"), "eye-mode-state-mismatch");
   assert.equal(parseMockScenario("?mock=unknown"), "normal");
 });
 test("normal mock mutates task, mode, target, and settings through production interfaces", async () => {

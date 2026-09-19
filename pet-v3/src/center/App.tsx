@@ -40,9 +40,10 @@ import { HelpDrawer } from "../shared/HelpDrawer";
 import { AutomationIntentPrompt } from "../shared/AutomationIntentPrompt";
 import { AutomationPauseStatus } from "../shared/AutomationPauseStatus";
 import { EyeCareSettingsCard, EyeCareWidget } from "../shared/EyeCare";
+import { eyeCareResumeAction, eyeCareResumeLabel, newEyeCareRequestId } from "../shared/eye-care-resume";
 import { automationDecisionNotice } from "../shared/automation-intent";
 import { FocusClock } from "./FocusClock";
-import type { AutostartState, ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeAutomationIntent, NativeAutomationSettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot, SystemIntegrationAdapter } from "../transport/supervisor";
+import type { AutostartState, ControlResult, NativeAchievement, NativeAIEndpointSettings, NativeAISettings, NativeAutomationIntent, NativeAutomationSettings, NativeMission, NativeMotivationStatus, NativeReward, NativeReviewSummary, NativeTaskPresetList, NativeSupervisorStatus, ReviewGenerationStatusSnapshot, SupervisorDashboardSnapshot, SystemIntegrationAdapter } from "../transport/supervisor";
 
 type NavItem = { id: string; label: string; icon: ComponentType<{ size?: number; strokeWidth?: number }> };
 type DashboardRefresh = () => Promise<SupervisorDashboardSnapshot | void>;
@@ -79,7 +80,7 @@ const missionRows = [
 
 const achievement = { title: "一周坚持", description: "连续打卡 7 天，保持稳定的节奏", progress: .71, detail: "5 / 7 天" };
 
-type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void; onTaskChanged?: () => void | Promise<void>; onTaskMutationStarted?: () => void; onRefresh?: DashboardRefresh; onOpenHelp?: () => void };
+export type DashboardProps = { snapshot?: SupervisorDashboardSnapshot; live?: boolean; initialActive?: string; routeRevision?: number; onNavigate?: (id: string) => void; onTaskChanged?: () => void | Promise<void>; onTaskMutationStarted?: () => void; onRefresh?: DashboardRefresh; onOpenHelp?: () => void; control?: ReturnType<typeof getSupervisorControlAdapter> };
 
 const modeTitle: Record<"STANDBY" | "STUDY" | "BREAK" | "OFF", string> = {
   STANDBY: "准备开始",
@@ -108,6 +109,20 @@ function liveMissionRows(missions: NativeMission[] | undefined): typeof missionR
   }));
 }
 
+function automationDiagnosticCopy(status: NativeSupervisorStatus | undefined): string | undefined {
+  const diagnostic = status?.automation_diagnostics;
+  if (!diagnostic || status?.user_mode !== "STANDBY") return undefined;
+  if (diagnostic.state === "ACCUMULATING") return "自动开始：已稳定 " + diagnostic.accumulated_seconds + " / " + diagnostic.required_seconds + " 秒";
+  if (diagnostic.state === "GRACE") return "自动开始：短暂切换中，保留进度（容错 " + diagnostic.grace_remaining_seconds + " 秒）";
+  if (diagnostic.state === "READY") return "自动开始：学习证据已满足，等待开始";
+  if (diagnostic.state === "SUPPRESSED") return "自动开始：等待当前请求处理";
+  if (diagnostic.state === "BLOCKED") {
+    const labels: Record<string, string> = { NO_TASK: "还没有设置任务", ACTIVITYWATCH_UNAVAILABLE: "活动数据暂不可用", DISTRACTED: "当前活动与任务不一致", LOCKED: "设备已锁定", AFK: "暂时没有输入", PRIVACY_SENSITIVE: "隐私保护中", MANUAL_OVERRIDE: "手动操作暂时覆盖自动开始" };
+    return "自动开始暂不可用：" + (labels[diagnostic.blocker] ?? "等待更多学习证据");
+  }
+  return undefined;
+}
+
 function displayTitle(id: string): string {
   return [...primaryNav, ...secondaryNav].find(item => item.id === id)?.label ?? "总览";
 }
@@ -123,11 +138,12 @@ function navGroup(items: NavItem[], active: string, setActive: (id: string) => v
   </nav>;
 }
 
-function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMutationStarted, onRefresh, onOpenHelp }: DashboardProps): ReactElement {
+export function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMutationStarted, onRefresh, onOpenHelp, control: controlOverride }: DashboardProps): ReactElement {
   const status = snapshot?.status;
   const motivation = snapshot?.motivation;
   const liveData = live && snapshot?.connected === true;
   const currentMode = status?.user_mode ?? (liveData ? "STANDBY" : "STUDY");
+  const continueLabel = eyeCareResumeLabel(currentMode, status?.mode_origin, snapshot?.eye_care_status);
   const snapshotTask = status?.task || (liveData ? "未设置任务" : "Go Context 与 goroutine");
   const taskSelection = useTaskSelectionState(snapshotTask);
   const currentTask = taskSelection.task;
@@ -150,7 +166,8 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
   const targetLabel = motivation ? `${targetMinutes} min` : liveData ? "—" : "120 min";
   const [taskNotice, setTaskNotice] = useState("");
   const [automationBusy, setAutomationBusy] = useState(false);
-  const control = getSupervisorControlAdapter();
+  const eyeCareActionBusy = useRef(false);
+  const control = controlOverride ?? getSupervisorControlAdapter();
   const taskOperation = (operation: Promise<ControlResult>): Promise<ControlResult> => operation;
   const taskResult = async (result: TaskPickerActionResult, action: TaskWheelAction): Promise<void> => {
     setTaskNotice(result.ok ? (action === "save" ? "常用任务已保存并选中" : "当前任务已更新") : "当前任务暂时无法更新");
@@ -165,6 +182,27 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
     return taskOperation(control.setTask(name));
   };
   const modeAction = async (next: "STUDY" | "BREAK" | "OFF"): Promise<void> => {
+    if (next === "STUDY" && currentMode === "BREAK" && status?.mode_origin === "EYE_CARE") {
+      if (eyeCareActionBusy.current) return;
+      const eyeStatus = snapshot?.eye_care_status;
+      const action = eyeCareResumeAction(currentMode, status.mode_origin, eyeStatus);
+      if (!action || !eyeStatus || !control.eyeCareAction) {
+        setTaskNotice("护眼状态正在同步，请刷新后重试");
+        await onRefresh?.();
+        return;
+      }
+      eyeCareActionBusy.current = true;
+      try {
+        const result = await control.eyeCareAction(action, eyeStatus.revision, newEyeCareRequestId());
+        await onRefresh?.();
+        setTaskNotice(result.ok ? (action === "FINISH_EARLY" ? "已提前结束护眼休息" : "已继续学习") : "护眼状态暂时无法更新");
+      } catch {
+        setTaskNotice("护眼状态暂时无法更新");
+      } finally {
+        eyeCareActionBusy.current = false;
+      }
+      return;
+    }
     const result = next === "STUDY" ? await control.setModeStudy(currentTask === "未设置任务" ? "" : currentTask) : next === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
     setTaskNotice(result.ok ? "状态已更新" : "状态暂时无法更新");
   };
@@ -195,6 +233,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
         <div className="hero-topline"><span className="hero-kicker"><span className="live-dot" />当前状态</span><span className={`hero-health is-${supervision.behaviorTone}`}><ShieldCheck size={15} />{supervision.behaviorLabel}</span></div>
         <AutomationIntentPrompt pending={status?.pending_automation_intent} busy={automationBusy} onAccept={() => resolveAutomation(true)} onReject={() => resolveAutomation(false)} onExpired={() => refreshAutomation()} />
         <AutomationPauseStatus status={status} settings={snapshot?.automation_settings} />
+        {automationDiagnosticCopy(status) && <p className="automation-diagnostic" role="status">{automationDiagnosticCopy(status)}</p>}
         <h2 id="current-focus-title">{modeTitle[currentMode]}</h2>
         <div className="hero-task-control"><BookOpen size={17} /><TaskWheel currentTask={currentTask} presets={snapshot?.task_presets} disabled={!liveData}
           onOptimisticTaskChange={task => {
@@ -211,7 +250,7 @@ function Dashboard({ snapshot, live = false, onNavigate, onTaskChanged, onTaskMu
         <p className="hero-caption">{liveData ? (status?.user_mode === "STUDY" ? `已保持专注 ${formatFocusMinutes(Math.floor(status.study_seconds / 60))}，继续完成眼前这一小段。` : modeCaption) : "已保持专注 42 分钟，继续完成眼前这一小段。"}</p>
         <div className="hero-actions">
           {currentMode === "STUDY" && <><button className="primary-button" type="button" onClick={() => void modeAction("BREAK")}><CoffeeIcon />休息一下</button><button className="secondary-button" type="button" onClick={() => void modeAction("OFF")}>结束学习</button></>}
-          {currentMode === "BREAK" && <><button className="primary-button" type="button" onClick={() => void modeAction("STUDY")}><Play size={17} />继续学习</button><button className="secondary-button" type="button" onClick={() => void modeAction("OFF")}>结束今天</button></>}
+          {currentMode === "BREAK" && <><button className="primary-button" type="button" onClick={() => void modeAction("STUDY")}><Play size={17} />{continueLabel}</button><button className="secondary-button" type="button" onClick={() => void modeAction("OFF")}>结束今天</button></>}
           {currentMode === "STANDBY" && <button className="primary-button" type="button" onClick={() => void modeAction("STUDY")}><Play size={17} />开始学习</button>}
           {currentMode === "OFF" && <><button className="primary-button" type="button" onClick={() => onNavigate?.("review")}><BookOpen size={17} />查看今日复盘</button><button className="secondary-button" type="button" onClick={() => void modeAction("STUDY")}>重新开始学习</button></>}
         </div>
@@ -778,7 +817,7 @@ function SettingsPage({ snapshot, onRefresh }: { snapshot?: SupervisorDashboardS
 }
 
 export function AutomationSettingsCard({ settings: source, pending, onRefresh, control = getSupervisorControlAdapter() }: { settings?: NativeAutomationSettings; pending?: NativeAutomationIntent; onRefresh?: DashboardRefresh; control?: ReturnType<typeof getSupervisorControlAdapter> }): ReactElement {
-  const fallback: NativeAutomationSettings = { enabled: false, auto_start: { enabled: true, focused_stable_seconds: 90, min_confidence: .8, allow_unclassified: true, confirm: false }, auto_pause: { enabled: true, idle_static_seconds: 300, idle_dynamic_seconds: 900, locked_seconds: 15, confirm: false }, auto_resume: { enabled: true, focused_stable_seconds: 45 }, transition_cooldown_seconds: 30, manual_override_minutes: 30 };
+  const fallback: NativeAutomationSettings = { enabled: false, auto_start: { enabled: true, focused_stable_seconds: 90, unclassified_stable_seconds: 180, evidence_grace_seconds: 20, min_confidence: .8, allow_unclassified: true, confirm: false }, auto_pause: { enabled: true, idle_static_seconds: 300, idle_dynamic_seconds: 900, locked_seconds: 15, confirm: false }, auto_resume: { enabled: true, focused_stable_seconds: 45 }, transition_cooldown_seconds: 30, manual_override_minutes: 30 };
   const normalize = (value: NativeAutomationSettings): NativeAutomationSettings => ({ ...value, auto_pause: { ...value.auto_pause, idle_dynamic_seconds: value.auto_pause.idle_dynamic_seconds ?? 900 } });
   const [draft, setDraft] = useState<NativeAutomationSettings>(() => normalize(source ?? fallback));
   const [dirty, setDirty] = useState(false);
@@ -846,7 +885,7 @@ export function AutomationSettingsCard({ settings: source, pending, onRefresh, c
   return <section className="surface-section data-card settings-card automation-settings-card"><div className="section-header"><div><h2>自动学习计时</h2><p>本地规则与语义判断只生成转场意图；实际模式切换仍由 Supervisor 控制。</p></div><label className="switch-label"><input type="checkbox" checked={draft.enabled} disabled={busy} onChange={event => edit({ ...draft, enabled: event.target.checked })} />{draft.enabled ? "开启" : "关闭"}</label></div>
     {dirty && <p className="settings-draft-notice" role="status">有未保存的修改</p>}
     {pending && <div className="automation-pending-intent" role="status"><div><strong>{pending.transition === "AUTO_PAUSE" ? "检测到你可能已离开" : "检测到你正在学习"}</strong><span>{pending.transition === "AUTO_PAUSE" ? "是否暂停计时？" : `是否开始“${pending.task || "当前任务"}”的计时？`}</span></div><div className="setting-actions"><button className="primary-button" type="button" disabled={pendingBusy} onClick={() => void resolvePending(true)}>接受</button><button className="secondary-button" type="button" disabled={pendingBusy} onClick={() => void resolvePending(false)}>拒绝</button></div></div>}
-    <div className="automation-setting-grid"><label><span>自动开始</span><input type="checkbox" checked={draft.auto_start.enabled} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_start: { ...draft.auto_start, enabled: event.target.checked } })} /></label><label><span>自动暂停</span><input type="checkbox" checked={draft.auto_pause.enabled} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, enabled: event.target.checked } })} /></label><label><span>自动恢复</span><input type="checkbox" checked={draft.auto_resume.enabled} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_resume: { ...draft.auto_resume, enabled: event.target.checked } })} /></label><label><span>开始前确认</span><input type="checkbox" checked={draft.auto_start.confirm} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_start: { ...draft.auto_start, confirm: event.target.checked } })} /></label><label><span>暂停前提醒</span><input type="checkbox" checked={draft.auto_pause.confirm} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, confirm: event.target.checked } })} /></label><label><span>开始稳定秒数</span><input type="number" min={1} max={3600} value={draft.auto_start.focused_stable_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_start: { ...draft.auto_start, focused_stable_seconds: Number(event.target.value) } })} /></label><label><span>静态屏幕无输入暂停</span><input type="number" min={1} max={86400} value={draft.auto_pause.idle_static_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, idle_static_seconds: Number(event.target.value) } })} /></label><label><span>动态屏幕无输入暂停</span><input type="number" min={1} max={86400} value={draft.auto_pause.idle_dynamic_seconds ?? 900} disabled={busy} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, idle_dynamic_seconds: Number(event.target.value) } })} /></label><label><span>锁屏暂停秒数</span><input type="number" min={1} max={3600} value={draft.auto_pause.locked_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, locked_seconds: Number(event.target.value) } })} /></label><label><span>恢复稳定秒数</span><input type="number" min={1} max={3600} value={draft.auto_resume.focused_stable_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_resume: { ...draft.auto_resume, focused_stable_seconds: Number(event.target.value) } })} /></label></div>
+    <div className="automation-setting-grid"><label><span>自动开始</span><input type="checkbox" checked={draft.auto_start.enabled} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_start: { ...draft.auto_start, enabled: event.target.checked } })} /></label><label><span>自动暂停</span><input type="checkbox" checked={draft.auto_pause.enabled} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, enabled: event.target.checked } })} /></label><label><span>自动恢复</span><input type="checkbox" checked={draft.auto_resume.enabled} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_resume: { ...draft.auto_resume, enabled: event.target.checked } })} /></label><label><span>开始前确认</span><input type="checkbox" checked={draft.auto_start.confirm} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_start: { ...draft.auto_start, confirm: event.target.checked } })} /></label><label><span>暂停前提醒</span><input type="checkbox" checked={draft.auto_pause.confirm} disabled={busy || !draft.enabled} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, confirm: event.target.checked } })} /></label><label><span>开始稳定秒数</span><input type="number" min={1} max={3600} value={draft.auto_start.focused_stable_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_start: { ...draft.auto_start, focused_stable_seconds: Number(event.target.value) } })} /></label><label><span>静态屏幕无输入暂停</span><input type="number" min={1} max={86400} value={draft.auto_pause.idle_static_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, idle_static_seconds: Number(event.target.value) } })} /></label><label><span>动态屏幕无输入暂停</span><input type="number" min={1} max={86400} value={draft.auto_pause.idle_dynamic_seconds ?? 900} disabled={busy} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, idle_dynamic_seconds: Number(event.target.value) } })} /></label><label><span>锁屏暂停秒数</span><input type="number" min={1} max={3600} value={draft.auto_pause.locked_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_pause: { ...draft.auto_pause, locked_seconds: Number(event.target.value) } })} /></label><label><span>恢复稳定秒数</span><input type="number" min={1} max={3600} value={draft.auto_resume.focused_stable_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_resume: { ...draft.auto_resume, focused_stable_seconds: Number(event.target.value) } })} /></label><label><span>候选学习稳定秒数</span><input type="number" min={30} max={1800} value={draft.auto_start.unclassified_stable_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_start: { ...draft.auto_start, unclassified_stable_seconds: Number(event.target.value) } })} /></label><label><span>短暂切换容错秒数</span><input type="number" min={0} max={120} value={draft.auto_start.evidence_grace_seconds} disabled={busy} onChange={event => edit({ ...draft, auto_start: { ...draft.auto_start, evidence_grace_seconds: Number(event.target.value) } })} /></label></div>
     <p className="settings-help">静态屏幕下长期没有键鼠输入会较快暂停。视频、动画或页面持续变化时使用更长的动态屏幕阈值。锁屏会按独立阈值暂停。</p><div className="setting-actions"><button className="primary-button" type="button" disabled={busy} onClick={() => void save()}>保存自动计时{dirty ? " · 有修改" : ""}</button>{notice && <span role="status">{notice}</span>}</div>
   </section>;
 }

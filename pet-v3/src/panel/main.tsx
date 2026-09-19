@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import { createRoot } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { QuickPanel, type QuickPanelMode } from "./QuickPanel";
-import { SupervisorDashboardPollLoop, type SupervisorDashboardSnapshot } from "../transport/supervisor";
+import { SupervisorDashboardPollLoop, type EyeCareAction, type SupervisorDashboardSnapshot } from "../transport/supervisor";
 import { getMockScenario, getSupervisorControlAdapter, getSupervisorDashboardAdapter, isTauriRuntime } from "../runtime/adapters";
 import { MockScenarioToolbar } from "../mock/MockScenarioToolbar";
 import type { ControlCenterRoute } from "../center/route";
@@ -10,6 +10,7 @@ import type { TaskWheelAction } from "../shared/task-wheel/TaskWheelDialog";
 import type { TaskPickerActionResult } from "../shared/task-mutation";
 import { useTaskSelectionState } from "../shared/use-task-selection-state";
 import { automationDecisionNotice } from "../shared/automation-intent";
+import { newEyeCareRequestId } from "../shared/eye-care-resume";
 import "../shared/theme/tokens.css";
 import "../shared/task-picker.css";
 import "../shared/task-wheel/task-wheel.css";
@@ -58,6 +59,7 @@ function RuntimeQuickPanel(): ReactElement {
   const pollerRef = useRef<SupervisorDashboardPollLoop | undefined>(undefined);
   const latestSnapshotRef = useRef<SupervisorDashboardSnapshot | undefined>(undefined);
   const taskMutationRevision = useRef(0);
+  const eyeCareActionBusy = useRef(false);
 
   useEffect(() => {
     let stopped = false;
@@ -102,6 +104,27 @@ function RuntimeQuickPanel(): ReactElement {
       ? await control.setModeStudy(task === "未设置任务" ? "" : task)
       : nextMode === "BREAK" ? await control.setModeBreak() : await control.setModeOff();
     setNotice(result.ok ? "状态已更新" : controlNotice(result.error_kind));
+  };
+  const handleEyeCareResumeAction = async (action: EyeCareAction): Promise<void> => {
+    if (eyeCareActionBusy.current) return;
+    const current = latestSnapshotRef.current;
+    const eyeStatus = current?.eye_care_status;
+    if (!current?.connected || !eyeStatus || !control.eyeCareAction) {
+      setNotice("护眼状态正在同步，请稍后重试");
+      await pollerRef.current?.refresh();
+      return;
+    }
+    eyeCareActionBusy.current = true;
+    setNotice("正在更新护眼状态…");
+    try {
+      const result = await control.eyeCareAction(action, eyeStatus.revision, newEyeCareRequestId());
+      await pollerRef.current?.refresh();
+      setNotice(result.ok ? (action === "FINISH_EARLY" ? "已提前结束护眼休息" : "已继续学习") : controlNotice(result.error_kind));
+    } catch {
+      setNotice("护眼状态暂时无法更新");
+    } finally {
+      eyeCareActionBusy.current = false;
+    }
   };
   const refreshAutomationSnapshot = async (): Promise<SupervisorDashboardSnapshot | undefined> => {
     setAutomationBusy(true);
@@ -160,6 +183,7 @@ function RuntimeQuickPanel(): ReactElement {
       return created ? control.selectTaskPreset(created.id) : control.setTask(name);
     }))}
     onModeAction={handleModeAction}
+    onEyeCareResumeAction={handleEyeCareResumeAction}
     onAcceptAutomation={() => resolveAutomation(true)}
     onRejectAutomation={() => resolveAutomation(false)}
     onAutomationExpired={() => refreshAutomation()}

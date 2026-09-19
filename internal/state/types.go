@@ -270,6 +270,57 @@ type TickOutcome struct {
 	Classification    ClassificationResult
 }
 
+type AutomationDiagnosticState string
+
+const (
+	AutomationDiagnosticDisabled     AutomationDiagnosticState = "DISABLED"
+	AutomationDiagnosticInactive     AutomationDiagnosticState = "INACTIVE"
+	AutomationDiagnosticAccumulating AutomationDiagnosticState = "ACCUMULATING"
+	AutomationDiagnosticGrace        AutomationDiagnosticState = "GRACE"
+	AutomationDiagnosticReady        AutomationDiagnosticState = "READY"
+	AutomationDiagnosticBlocked      AutomationDiagnosticState = "BLOCKED"
+	AutomationDiagnosticSuppressed   AutomationDiagnosticState = "SUPPRESSED"
+)
+
+type AutomationSignalKind string
+
+const (
+	AutomationSignalNone        AutomationSignalKind = ""
+	AutomationSignalStrongFocus AutomationSignalKind = "STRONG_FOCUS"
+	AutomationSignalCandidate   AutomationSignalKind = "CANDIDATE_STUDY"
+	AutomationSignalNeutralGap  AutomationSignalKind = "NEUTRAL_GAP"
+	AutomationSignalHardBlocked AutomationSignalKind = "HARD_BLOCKED"
+)
+
+type AutomationBlocker string
+
+const (
+	AutomationBlockerNone                 AutomationBlocker = ""
+	AutomationBlockerAutomationDisabled   AutomationBlocker = "AUTOMATION_DISABLED"
+	AutomationBlockerAutoStartDisabled    AutomationBlocker = "AUTO_START_DISABLED"
+	AutomationBlockerNotStandby           AutomationBlocker = "NOT_STANDBY"
+	AutomationBlockerNoTask               AutomationBlocker = "NO_TASK"
+	AutomationBlockerManualOverride       AutomationBlocker = "MANUAL_OVERRIDE"
+	AutomationBlockerActivityUnavailable  AutomationBlocker = "ACTIVITYWATCH_UNAVAILABLE"
+	AutomationBlockerLocked               AutomationBlocker = "LOCKED"
+	AutomationBlockerAFK                  AutomationBlocker = "AFK"
+	AutomationBlockerPrivacySensitive     AutomationBlocker = "PRIVACY_SENSITIVE"
+	AutomationBlockerDistracted           AutomationBlocker = "DISTRACTED"
+	AutomationBlockerInsufficientEvidence AutomationBlocker = "INSUFFICIENT_EVIDENCE"
+	AutomationBlockerPendingIntent        AutomationBlocker = "PENDING_INTENT"
+)
+
+type AutomationDiagnostics struct {
+	State                 AutomationDiagnosticState `json:"state"`
+	SignalKind            AutomationSignalKind      `json:"signal_kind"`
+	AccumulatedSeconds    int64                     `json:"accumulated_seconds"`
+	RequiredSeconds       int64                     `json:"required_seconds"`
+	GraceRemainingSeconds int64                     `json:"grace_remaining_seconds"`
+	Blocker               AutomationBlocker         `json:"blocker"`
+	ManualOverrideUntil   *time.Time                `json:"manual_override_until,omitempty"`
+	UpdatedAt             time.Time                 `json:"updated_at"`
+}
+
 type SystemStatus struct {
 	UserMode                         UserMode                 `json:"user_mode"`
 	InteractionState                 InteractionState         `json:"interaction_state"`
@@ -295,5 +346,6 @@ type SystemStatus struct {
 	AutoResumeEligible               bool                     `json:"auto_resume_eligible"`
 	ManualOverrideUntil              *time.Time               `json:"manual_override_until,omitempty"`
 	AutoPauseSnoozeUntil             *time.Time               `json:"auto_pause_snooze_until,omitempty"`
+	AutomationDiagnostics            *AutomationDiagnostics   `json:"automation_diagnostics,omitempty"`
 	PendingAutomationIntent          *AutomationIntent        `json:"pending_automation_intent,omitempty"`
 }

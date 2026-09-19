@@ -205,6 +205,9 @@ func (s *Storage) migrate() error {
 			completed_short_breaks INTEGER NOT NULL DEFAULT 0,
 			completed_long_breaks INTEGER NOT NULL DEFAULT 0,
 			retry_focus_after_seconds INTEGER NOT NULL DEFAULT 0,
+			due_generation INTEGER NOT NULL DEFAULT 0,
+			notified_generation INTEGER NOT NULL DEFAULT 0,
+			notified_at TIMESTAMP,
 			revision INTEGER NOT NULL DEFAULT 0,
 			updated_at TIMESTAMP NOT NULL
 		);`,
@@ -217,7 +220,13 @@ func (s *Storage) migrate() error {
 		);`,
 		`CREATE TABLE IF NOT EXISTS eye_care_requests (
 			request_id TEXT PRIMARY KEY,
-			created_at TIMESTAMP NOT NULL
+			action TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'APPLIED',
+			result_revision INTEGER NOT NULL DEFAULT 0,
+			result_json TEXT NOT NULL DEFAULT '',
+			error_kind TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL,
+			completed_at TIMESTAMP
 		);`,
 		`CREATE TABLE IF NOT EXISTS motivation_daily (
 			date TEXT PRIMARY KEY,
@@ -439,7 +448,38 @@ func (s *Storage) migrate() error {
 	if err := s.ensureReminderColumns(); err != nil {
 		return err
 	}
-	return s.ensureDailyEvidenceDateColumns()
+	if err := s.ensureDailyEvidenceDateColumns(); err != nil {
+		return err
+	}
+	return s.ensureEyeCareColumns()
+}
+
+func (s *Storage) ensureEyeCareColumns() error {
+	for table, columns := range map[string][]struct{ name, definition string }{
+		"eye_care_state": {
+			{"due_generation", "INTEGER NOT NULL DEFAULT 0"},
+			{"notified_generation", "INTEGER NOT NULL DEFAULT 0"},
+			{"notified_at", "TIMESTAMP"},
+		},
+		"eye_care_requests": {
+			{"action", "TEXT NOT NULL DEFAULT ''"},
+			{"status", "TEXT NOT NULL DEFAULT 'APPLIED'"},
+			{"result_revision", "INTEGER NOT NULL DEFAULT 0"},
+			{"result_json", "TEXT NOT NULL DEFAULT ''"},
+			{"error_kind", "TEXT NOT NULL DEFAULT ''"},
+			{"completed_at", "TIMESTAMP"},
+		},
+	} {
+		for _, column := range columns {
+			if err := s.ensureColumn(table, column.name, column.definition); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE eye_care_state SET due_generation=1 WHERE phase IN ('SHORT_BREAK_DUE','LONG_BREAK_DUE') AND due_generation=0`); err != nil {
+		return err
+	}
+	return nil
 }
 
 const currentRestartRepairVersion = 2
