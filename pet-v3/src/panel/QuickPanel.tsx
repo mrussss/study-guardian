@@ -66,11 +66,14 @@ export interface QuickPanelProps {
 function automationDiagnosticCopy(status: NativeSupervisorStatus | undefined): string | undefined {
   const diagnostic = status?.automation_diagnostics;
   if (!diagnostic || status?.user_mode !== "STANDBY") return undefined;
-  if (diagnostic.state === "ACCUMULATING") return "自动开始：稳定 " + diagnostic.accumulated_seconds + " / " + diagnostic.required_seconds + " 秒";
-  if (diagnostic.state === "GRACE") return "自动开始：短暂切换中，保留进度";
+  if (diagnostic.state === "ACCUMULATING") return diagnostic.required_seconds > 0 ? "自动开始：稳定 " + diagnostic.accumulated_seconds + " / " + diagnostic.required_seconds + " 秒" : "自动开始：等待学习证据";
+  if (diagnostic.state === "GRACE") return "自动开始：短暂切换中，保留进度（" + diagnostic.accumulated_seconds + " / " + diagnostic.required_seconds + " 秒，容错剩余 " + diagnostic.grace_remaining_seconds + " 秒）";
   if (diagnostic.state === "READY") return "自动开始：学习证据已满足";
   if (diagnostic.state === "SUPPRESSED") return "自动开始：等待当前请求处理";
-  if (diagnostic.state === "BLOCKED") return "自动开始暂不可用";
+  if (diagnostic.state === "BLOCKED") {
+    const labels: Record<string, string> = { MANUAL_OVERRIDE: "手动操作暂时覆盖自动开始", INSUFFICIENT_EVIDENCE: "切换时间超过容错，正在重新观察", ACTIVITYWATCH_UNAVAILABLE: "活动数据暂不可用", DISTRACTED: "当前活动与任务不一致" };
+    return "自动开始暂不可用：" + (labels[diagnostic.blocker] ?? "等待更多学习证据");
+  }
   return undefined;
 }
 

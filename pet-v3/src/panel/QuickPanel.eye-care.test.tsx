@@ -69,3 +69,31 @@ test("Quick Panel rapid continue clicks submit only one eye-care action", async 
   releaseAction();
   await pendingAction;
 });
+
+test("Quick Panel shows bounded automatic-start grace progress", () => {
+  const standby: NativeSupervisorStatus = {
+    ...row("MANUAL"),
+    user_mode: "STANDBY",
+    automation_diagnostics: {
+      state: "GRACE", signal_kind: "STRONG_FOCUS", accumulated_seconds: 42,
+      required_seconds: 90, grace_remaining_seconds: 8, blocker: "", updated_at: "2026-09-19T10:00:00Z",
+    },
+  };
+  render(<QuickPanel mode="STANDBY" connected status={standby} />);
+  assert.ok(screen.getByText("自动开始：短暂切换中，保留进度（42 / 90 秒，容错剩余 8 秒）"));
+  assert.equal(screen.queryByText(/0 \/ 0 秒/), null);
+});
+
+test("Quick Panel explains a manual override", () => {
+  const standby: NativeSupervisorStatus = {
+    ...row("MANUAL"),
+    user_mode: "STANDBY",
+    automation_diagnostics: {
+      state: "BLOCKED", signal_kind: "", accumulated_seconds: 0,
+      required_seconds: 90, grace_remaining_seconds: 20, blocker: "MANUAL_OVERRIDE",
+      manual_override_until: "2026-09-19T10:30:00Z", updated_at: "2026-09-19T10:00:00Z",
+    },
+  };
+  render(<QuickPanel mode="STANDBY" connected status={standby} />);
+  assert.ok(screen.getByText("自动开始暂不可用：手动操作暂时覆盖自动开始"));
+});

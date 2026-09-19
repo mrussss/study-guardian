@@ -12,8 +12,22 @@ import (
 const (
 	candidateMinConfidence = 0.60
 	diagnosticAuditEvery   = 5 * time.Minute
-	maxEvidenceGap         = 240 * time.Second
+	maxEvidenceGap         = 15 * time.Second
+	maxEvidenceSamples     = 256
+	maxPendingAudits       = 16
 )
+
+type EvidenceSample struct {
+	Start    time.Time
+	End      time.Time
+	Kind     state.AutomationSignalKind
+	Duration int64
+}
+
+type auditRateKey struct {
+	EventType string
+	Blocker   state.AutomationBlocker
+}
 
 type DiagnosticAudit struct {
 	EventType  string
@@ -27,16 +41,13 @@ type Controller struct {
 	resumeFocusedSince time.Time
 	lastTransition     time.Time
 
-	lastEvidenceAt   time.Time
-	lastSignal       state.AutomationSignalKind
-	strongSeconds    int64
-	candidateSeconds int64
-	neutralSeconds   int64
+	evidence        []EvidenceSample
+	lastEvaluatedAt time.Time
+	lastSignal      state.AutomationSignalKind
 
-	diagnostics    state.AutomationDiagnostics
-	lastAuditAt    time.Time
-	lastAuditEvent string
-	pendingAudit   *DiagnosticAudit
+	diagnostics   state.AutomationDiagnostics
+	lastAuditAt   map[auditRateKey]time.Time
+	pendingAudits []DiagnosticAudit
 }
 
 func New(cfg config.AutomationConfig) *Controller {
@@ -75,6 +86,7 @@ func New(cfg config.AutomationConfig) *Controller {
 		diagnostics: state.AutomationDiagnostics{
 			State: state.AutomationDiagnosticInactive,
 		},
+		lastAuditAt: make(map[auditRateKey]time.Time),
 	}
 }
 
@@ -88,15 +100,12 @@ func (c *Controller) UpdateConfig(cfg config.AutomationConfig) {
 	c.lockedSince = time.Time{}
 	c.resumeFocusedSince = time.Time{}
 	c.lastTransition = time.Time{}
-	c.lastEvidenceAt = time.Time{}
+	c.evidence = nil
+	c.lastEvaluatedAt = time.Time{}
 	c.lastSignal = state.AutomationSignalNone
-	c.strongSeconds = 0
-	c.candidateSeconds = 0
-	c.neutralSeconds = 0
 	c.diagnostics = next.diagnostics
-	c.lastAuditAt = time.Time{}
-	c.lastAuditEvent = ""
-	c.pendingAudit = nil
+	c.lastAuditAt = make(map[auditRateKey]time.Time)
+	c.pendingAudits = nil
 	c.mu.Unlock()
 }
 
@@ -115,12 +124,12 @@ func (c *Controller) TakeDiagnosticAudit() *DiagnosticAudit {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.pendingAudit == nil {
+	if len(c.pendingAudits) == 0 {
 		return nil
 	}
-	audit := *c.pendingAudit
+	audit := c.pendingAudits[0]
+	c.pendingAudits = c.pendingAudits[1:]
 	audit.Diagnostic = cloneDiagnostic(audit.Diagnostic)
-	c.pendingAudit = nil
 	return &audit
 }
 
@@ -134,44 +143,90 @@ func cloneDiagnostic(value state.AutomationDiagnostics) state.AutomationDiagnost
 }
 
 func (c *Controller) resetEvidenceLocked() {
-	c.lastEvidenceAt = time.Time{}
+	c.evidence = nil
+	c.lastEvaluatedAt = time.Time{}
 	c.lastSignal = state.AutomationSignalNone
-	c.strongSeconds = 0
-	c.candidateSeconds = 0
-	c.neutralSeconds = 0
 }
 
 func (c *Controller) advanceEvidenceLocked(now time.Time, signal state.AutomationSignalKind) {
-	if c.lastEvidenceAt.IsZero() || now.Before(c.lastEvidenceAt) || now.Sub(c.lastEvidenceAt) > maxEvidenceGap {
-		c.strongSeconds = 0
-		c.candidateSeconds = 0
-		c.neutralSeconds = 0
-	} else {
-		delta := int64(now.Sub(c.lastEvidenceAt) / time.Second)
-		if signal == state.AutomationSignalNeutralGap {
-			c.neutralSeconds += delta
-		} else {
-			switch c.lastSignal {
-			case state.AutomationSignalStrongFocus:
-				c.strongSeconds += delta
-			case state.AutomationSignalCandidate:
-				c.candidateSeconds += delta
-			}
-		}
-	}
 	if signal == state.AutomationSignalHardBlocked {
 		c.resetEvidenceLocked()
 		return
 	}
-	if signal == state.AutomationSignalNeutralGap && c.neutralSeconds > int64(c.cfg.AutoStart.EvidenceGraceSeconds) {
-		c.strongSeconds = 0
-		c.candidateSeconds = 0
+	if c.lastEvaluatedAt.IsZero() || now.Before(c.lastEvaluatedAt) || now.Sub(c.lastEvaluatedAt) > maxEvidenceGap {
+		c.resetEvidenceLocked()
+		c.lastEvaluatedAt = now
+		c.lastSignal = signal
+		return
 	}
-	if signal != state.AutomationSignalNeutralGap {
-		c.neutralSeconds = 0
+	duration := int64(now.Sub(c.lastEvaluatedAt) / time.Second)
+	if duration > 0 {
+		c.evidence = append(c.evidence, EvidenceSample{
+			Start:    c.lastEvaluatedAt,
+			End:      now,
+			Kind:     signal,
+			Duration: duration,
+		})
+		if len(c.evidence) > maxEvidenceSamples {
+			c.evidence = c.evidence[len(c.evidence)-maxEvidenceSamples:]
+		}
 	}
-	c.lastEvidenceAt = now
+	c.trimEvidenceLocked(now)
+	c.lastEvaluatedAt = now
 	c.lastSignal = signal
+}
+
+func (c *Controller) trimEvidenceLocked(now time.Time) {
+	window := time.Duration(c.cfg.AutoStart.UnclassifiedStableSeconds+c.cfg.AutoStart.EvidenceGraceSeconds) * time.Second
+	cutoff := now.Add(-window)
+	kept := c.evidence[:0]
+	for _, sample := range c.evidence {
+		if !sample.End.After(cutoff) {
+			continue
+		}
+		if sample.Start.Before(cutoff) {
+			sample.Start = cutoff
+			sample.Duration = int64(sample.End.Sub(sample.Start) / time.Second)
+		}
+		kept = append(kept, sample)
+	}
+	c.evidence = kept
+}
+
+func (c *Controller) evidenceTotalsLocked(now time.Time, window time.Duration) (strong, candidate, neutral int64) {
+	cutoff := now.Add(-window)
+	for _, sample := range c.evidence {
+		start := sample.Start
+		if start.Before(cutoff) {
+			start = cutoff
+		}
+		end := sample.End
+		if end.After(now) {
+			end = now
+		}
+		if !end.After(start) {
+			continue
+		}
+		seconds := int64(end.Sub(start) / time.Second)
+		if seconds <= 0 {
+			continue
+		}
+		switch sample.Kind {
+		case state.AutomationSignalStrongFocus:
+			strong += seconds
+		case state.AutomationSignalCandidate:
+			candidate += seconds
+		case state.AutomationSignalNeutralGap:
+			neutral += seconds
+		}
+	}
+	return strong, candidate, neutral
+}
+
+func (c *Controller) evidenceWindowsLocked(now time.Time) (strong, strongNeutral, candidate, candidateNeutral int64) {
+	strong, _, strongNeutral = c.evidenceTotalsLocked(now, time.Duration(c.cfg.AutoStart.FocusedStableSeconds+c.cfg.AutoStart.EvidenceGraceSeconds)*time.Second)
+	strongCandidate, candidateOnly, candidateNeutral := c.evidenceTotalsLocked(now, time.Duration(c.cfg.AutoStart.UnclassifiedStableSeconds+c.cfg.AutoStart.EvidenceGraceSeconds)*time.Second)
+	return strong, strongNeutral, strongCandidate + candidateOnly, candidateNeutral
 }
 
 func (c *Controller) setDiagnosticLocked(now time.Time, diagnostic state.AutomationDiagnostics) {
@@ -199,12 +254,26 @@ func (c *Controller) setDiagnosticLocked(now time.Time, diagnostic state.Automat
 	if event == "" {
 		return
 	}
-	if event == c.lastAuditEvent && !c.lastAuditAt.IsZero() && now.Sub(c.lastAuditAt) < diagnosticAuditEvery {
+	key := auditRateKey{EventType: event, Blocker: diagnostic.Blocker}
+	if last, ok := c.lastAuditAt[key]; ok && now.Sub(last) < diagnosticAuditEvery {
 		return
 	}
-	c.lastAuditEvent = event
-	c.lastAuditAt = now
-	c.pendingAudit = &DiagnosticAudit{EventType: event, Diagnostic: cloneDiagnostic(diagnostic)}
+	if c.lastAuditAt == nil {
+		c.lastAuditAt = make(map[auditRateKey]time.Time)
+	}
+	c.lastAuditAt[key] = now
+	audit := DiagnosticAudit{EventType: event, Diagnostic: cloneDiagnostic(diagnostic)}
+	for index := range c.pendingAudits {
+		queuedKey := auditRateKey{EventType: c.pendingAudits[index].EventType, Blocker: c.pendingAudits[index].Diagnostic.Blocker}
+		if queuedKey == key {
+			c.pendingAudits[index] = audit
+			return
+		}
+	}
+	if len(c.pendingAudits) >= maxPendingAudits {
+		c.pendingAudits = c.pendingAudits[1:]
+	}
+	c.pendingAudits = append(c.pendingAudits, audit)
 }
 
 func (c *Controller) hardBlocker(outcome state.TickOutcome, status state.SystemStatus) state.AutomationBlocker {
@@ -252,36 +321,50 @@ func (c *Controller) signalKind(outcome state.TickOutcome, status state.SystemSt
 }
 
 func (c *Controller) updateDiagnosticLocked(now time.Time, signal state.AutomationSignalKind, blocker state.AutomationBlocker, status state.SystemStatus) {
+	strongSeconds, strongNeutral, candidateSeconds, candidateNeutral := c.evidenceWindowsLocked(now)
+	targetSignal := signal
+	if signal == state.AutomationSignalNeutralGap {
+		switch c.diagnostics.SignalKind {
+		case state.AutomationSignalStrongFocus, state.AutomationSignalCandidate:
+			targetSignal = c.diagnostics.SignalKind
+		}
+	}
 	required := int64(0)
 	accumulated := int64(0)
-	switch signal {
+	neutralSeconds := int64(0)
+	switch targetSignal {
 	case state.AutomationSignalStrongFocus:
 		required = int64(c.cfg.AutoStart.FocusedStableSeconds)
-		accumulated = c.strongSeconds
+		accumulated = strongSeconds
+		neutralSeconds = strongNeutral
 	case state.AutomationSignalCandidate:
 		required = int64(c.cfg.AutoStart.UnclassifiedStableSeconds)
-		accumulated = c.candidateSeconds
+		accumulated = candidateSeconds
+		neutralSeconds = candidateNeutral
 	}
-	graceRemaining := int64(c.cfg.AutoStart.EvidenceGraceSeconds) - c.neutralSeconds
+	graceRemaining := int64(c.cfg.AutoStart.EvidenceGraceSeconds) - neutralSeconds
 	if graceRemaining < 0 {
 		graceRemaining = 0
 	}
 	diagnostic := state.AutomationDiagnostics{
 		State:                 state.AutomationDiagnosticAccumulating,
-		SignalKind:            signal,
+		SignalKind:            targetSignal,
 		AccumulatedSeconds:    accumulated,
 		RequiredSeconds:       required,
 		GraceRemainingSeconds: graceRemaining,
 		Blocker:               blocker,
 	}
+	if required > 0 && neutralSeconds > int64(c.cfg.AutoStart.EvidenceGraceSeconds) {
+		diagnostic.Blocker = state.AutomationBlockerInsufficientEvidence
+	}
 	if status.ManualOverrideUntil != nil && now.Before(*status.ManualOverrideUntil) {
 		deadline := *status.ManualOverrideUntil
 		diagnostic.ManualOverrideUntil = &deadline
 	}
-	c.updateDiagnosticStateLocked(diagnostic, now, status)
+	c.updateDiagnosticStateLocked(diagnostic, now, status, signal)
 }
 
-func (c *Controller) updateDiagnosticStateLocked(diagnostic state.AutomationDiagnostics, now time.Time, status state.SystemStatus) {
+func (c *Controller) updateDiagnosticStateLocked(diagnostic state.AutomationDiagnostics, now time.Time, status state.SystemStatus, currentSignal state.AutomationSignalKind) {
 	if !c.cfg.Enabled {
 		diagnostic.State = state.AutomationDiagnosticDisabled
 		diagnostic.Blocker = state.AutomationBlockerAutomationDisabled
@@ -296,10 +379,9 @@ func (c *Controller) updateDiagnosticStateLocked(diagnostic state.AutomationDiag
 		diagnostic.Blocker = state.AutomationBlockerPendingIntent
 	} else if diagnostic.Blocker != state.AutomationBlockerNone {
 		diagnostic.State = state.AutomationDiagnosticBlocked
-	} else if diagnostic.SignalKind == state.AutomationSignalNeutralGap && c.neutralSeconds > 0 {
+	} else if currentSignal == state.AutomationSignalNeutralGap && diagnostic.SignalKind != state.AutomationSignalNeutralGap && diagnostic.GraceRemainingSeconds > 0 {
 		diagnostic.State = state.AutomationDiagnosticGrace
-	} else if (diagnostic.SignalKind == state.AutomationSignalStrongFocus && c.strongSeconds >= int64(c.cfg.AutoStart.FocusedStableSeconds)) ||
-		(diagnostic.SignalKind == state.AutomationSignalCandidate && c.candidateSeconds >= int64(c.cfg.AutoStart.UnclassifiedStableSeconds)) {
+	} else if currentSignal != state.AutomationSignalNeutralGap && diagnostic.RequiredSeconds > 0 && diagnostic.AccumulatedSeconds >= diagnostic.RequiredSeconds {
 		diagnostic.State = state.AutomationDiagnosticReady
 	} else {
 		diagnostic.State = state.AutomationDiagnosticAccumulating
@@ -363,17 +445,15 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 
 	if !c.cfg.Enabled {
 		c.resetEvidenceLocked()
-		c.updateDiagnosticStateLocked(state.AutomationDiagnostics{State: state.AutomationDiagnosticDisabled, Blocker: state.AutomationBlockerAutomationDisabled}, now, status)
+		c.updateDiagnosticStateLocked(state.AutomationDiagnostics{State: state.AutomationDiagnosticDisabled, Blocker: state.AutomationBlockerAutomationDisabled}, now, status, state.AutomationSignalNone)
 		return c.evaluatePauseResumeLocked(now, outcome, status, false)
 	}
 	if status.PendingAutomationIntent != nil {
 		c.resetEvidenceLocked()
-		c.updateDiagnosticStateLocked(state.AutomationDiagnostics{State: state.AutomationDiagnosticSuppressed, Blocker: state.AutomationBlockerPendingIntent}, now, status)
+		c.updateDiagnosticStateLocked(state.AutomationDiagnostics{State: state.AutomationDiagnosticSuppressed, Blocker: state.AutomationBlockerPendingIntent}, now, status, state.AutomationSignalNone)
 		return nil
 	}
-	if !c.lastTransition.IsZero() && now.Sub(c.lastTransition) < time.Duration(c.cfg.TransitionCooldownSeconds)*time.Second {
-		return nil
-	}
+	cooldownActive := !c.lastTransition.IsZero() && now.Sub(c.lastTransition) < time.Duration(c.cfg.TransitionCooldownSeconds)*time.Second
 
 	focusedForResume := outcome.Relation == state.RelationFocused &&
 		outcome.Interaction == state.InteractionActive &&
@@ -389,9 +469,31 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 			SignalKind: state.AutomationSignalNone,
 			Blocker:    state.AutomationBlockerNotStandby,
 		})
+		if cooldownActive {
+			return nil
+		}
 		return c.evaluatePauseResumeLocked(now, outcome, status, focusedForResume)
 	}
 	c.resumeFocusedSince = time.Time{}
+
+	if !c.cfg.AutoStart.Enabled {
+		c.resetEvidenceLocked()
+		c.setDiagnosticLocked(now, state.AutomationDiagnostics{
+			State:   state.AutomationDiagnosticDisabled,
+			Blocker: state.AutomationBlockerAutoStartDisabled,
+		})
+		return nil
+	}
+	if status.ManualOverrideUntil != nil && now.Before(*status.ManualOverrideUntil) {
+		c.resetEvidenceLocked()
+		deadline := *status.ManualOverrideUntil
+		c.setDiagnosticLocked(now, state.AutomationDiagnostics{
+			State:               state.AutomationDiagnosticBlocked,
+			Blocker:             state.AutomationBlockerManualOverride,
+			ManualOverrideUntil: &deadline,
+		})
+		return nil
+	}
 
 	blocker := c.hardBlocker(outcome, status)
 	if blocker != state.AutomationBlockerNone {
@@ -403,34 +505,21 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 		})
 		return nil
 	}
-	if !c.cfg.AutoStart.Enabled {
-		c.resetEvidenceLocked()
-		c.setDiagnosticLocked(now, state.AutomationDiagnostics{
-			State:   state.AutomationDiagnosticDisabled,
-			Blocker: state.AutomationBlockerAutoStartDisabled,
-		})
-		return nil
-	}
 
 	signal := c.signalKind(outcome, status)
 	c.advanceEvidenceLocked(now, signal)
 	c.updateDiagnosticLocked(now, signal, state.AutomationBlockerNone, status)
-	strongReady := c.strongSeconds >= int64(c.cfg.AutoStart.FocusedStableSeconds)
-	candidateReady := c.candidateSeconds >= int64(c.cfg.AutoStart.UnclassifiedStableSeconds)
-	if status.ManualOverrideUntil != nil && now.Before(*status.ManualOverrideUntil) {
-		diagnostic := c.diagnostics
-		diagnostic.State = state.AutomationDiagnosticBlocked
-		diagnostic.Blocker = state.AutomationBlockerManualOverride
-		c.setDiagnosticLocked(now, diagnostic)
-		return nil
-	}
-	if (signal == state.AutomationSignalStrongFocus && strongReady) ||
+	strongSeconds, strongNeutral, candidateSeconds, candidateNeutral := c.evidenceWindowsLocked(now)
+	grace := int64(c.cfg.AutoStart.EvidenceGraceSeconds)
+	strongReady := strongSeconds >= int64(c.cfg.AutoStart.FocusedStableSeconds) && strongNeutral <= grace
+	candidateReady := candidateSeconds >= int64(c.cfg.AutoStart.UnclassifiedStableSeconds) && candidateNeutral <= grace
+	if ((signal == state.AutomationSignalStrongFocus || signal == state.AutomationSignalCandidate) && strongReady) ||
 		(signal == state.AutomationSignalCandidate && candidateReady) {
 		diagnostic := c.diagnostics
 		diagnostic.State = state.AutomationDiagnosticReady
 		diagnostic.Blocker = state.AutomationBlockerNone
 		c.setDiagnosticLocked(now, diagnostic)
-		if c.lastTransition.IsZero() || now.Sub(c.lastTransition) >= time.Duration(c.cfg.TransitionCooldownSeconds)*time.Second {
+		if !cooldownActive {
 			c.lastTransition = now
 			return &state.AutomationIntent{
 				Transition:           state.AutomationStart,

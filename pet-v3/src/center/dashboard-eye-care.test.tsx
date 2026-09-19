@@ -86,3 +86,33 @@ test("Dashboard rapid continue clicks submit only one eye-care action", async ()
   releaseAction({ ok: true });
   await waitFor(() => assert.ok(screen.queryByText("已继续学习")));
 });
+
+test("Dashboard keeps automatic-start progress visible during a grace window", () => {
+  const standby: NativeSupervisorStatus = {
+    ...status,
+    user_mode: "STANDBY",
+    mode_origin: "MANUAL",
+    automation_diagnostics: {
+      state: "GRACE", signal_kind: "CANDIDATE_STUDY", accumulated_seconds: 76,
+      required_seconds: 180, grace_remaining_seconds: 12, blocker: "", updated_at: "2026-09-19T10:00:00Z",
+    },
+  };
+  render(<Dashboard live snapshot={{ connected: true, status: standby }} onRefresh={async () => ({ connected: true, status: standby })} />);
+  assert.ok(screen.getByText("自动开始：短暂切换中，保留进度（76 / 180 秒，容错剩余 12 秒）"));
+  assert.equal(screen.queryByText(/0 \/ 0 秒/), null);
+});
+
+test("Dashboard explains the manual override diagnostic", () => {
+  const standby: NativeSupervisorStatus = {
+    ...status,
+    user_mode: "STANDBY",
+    mode_origin: "MANUAL",
+    automation_diagnostics: {
+      state: "BLOCKED", signal_kind: "", accumulated_seconds: 0,
+      required_seconds: 90, grace_remaining_seconds: 20, blocker: "MANUAL_OVERRIDE",
+      manual_override_until: "2026-09-19T10:30:00Z", updated_at: "2026-09-19T10:00:00Z",
+    },
+  };
+  render(<Dashboard live snapshot={{ connected: true, status: standby }} onRefresh={async () => ({ connected: true, status: standby })} />);
+  assert.ok(screen.getByText("自动开始暂不可用：手动操作暂时覆盖自动开始"));
+});

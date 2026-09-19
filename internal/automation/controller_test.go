@@ -157,12 +157,12 @@ func TestControllerAllowUnclassifiedRequiresExplicitStudyActivityAndLongStabilit
 	study := unknown
 	study.Classification.Activity = state.ActivityCoding
 	controller.UpdateConfig(cfg)
-	controller.Evaluate(start, study, status)
-	if got := controller.Evaluate(start.Add(179*time.Second), study, status); got != nil {
-		t.Fatalf("unclassified study started too early: %+v", got)
-	}
-	if got := controller.Evaluate(start.Add(180*time.Second), study, status); got == nil || got.Transition != state.AutomationStart {
-		t.Fatalf("intent=%+v", got)
+	for second := 0; second <= 180; second += 10 {
+		if got := controller.Evaluate(start.Add(time.Duration(second)*time.Second), study, status); second < 180 && got != nil {
+			t.Fatalf("unclassified study started too early at %d seconds: %+v", second, got)
+		} else if second == 180 && (got == nil || got.Transition != state.AutomationStart) {
+			t.Fatalf("intent=%+v", got)
+		}
 	}
 }
 
@@ -278,10 +278,7 @@ func TestControllerPreservesCandidateEvidenceAcrossNeutralGrace(t *testing.T) {
 	controller.Evaluate(start.Add(2*time.Second), candidate, status)
 	controller.Evaluate(start.Add(3*time.Second), neutral, status)
 	controller.Evaluate(start.Add(4*time.Second), candidate, status)
-	if got := controller.Evaluate(start.Add(5*time.Second), candidate, status); got != nil {
-		t.Fatalf("candidate evidence should not reach the threshold before the final sample: %+v", got)
-	}
-	if got := controller.Evaluate(start.Add(6*time.Second), candidate, status); got == nil || got.Transition != state.AutomationStart {
+	if got := controller.Evaluate(start.Add(5*time.Second), candidate, status); got == nil || got.Transition != state.AutomationStart {
 		t.Fatalf("short neutral gap did not preserve candidate evidence: %+v", got)
 	}
 
@@ -327,5 +324,234 @@ func TestControllerReportsAutomaticStartDiagnosticsAndHardBlockers(t *testing.T)
 	}
 	if audit := controller.TakeDiagnosticAudit(); audit == nil || audit.EventType != "AUTO_START_BLOCKED" {
 		t.Fatalf("missing blocker audit: %+v", audit)
+	}
+}
+
+func TestControllerUsesMixedStrongAndCandidateEvidenceWithinBoundedWindow(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 99
+	cfg.AutoStart.UnclassifiedStableSeconds = 6
+	cfg.AutoStart.EvidenceGraceSeconds = 2
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 0, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	strong := focusedOutcome()
+	candidate := candidateOutcome(state.ActivityCoding, .72)
+	controller.Evaluate(start, strong, status)
+	controller.Evaluate(start.Add(2*time.Second), strong, status)
+	if got := controller.Evaluate(start.Add(4*time.Second), candidate, status); got != nil {
+		t.Fatalf("mixed evidence started too early: %+v", got)
+	}
+	got := controller.Evaluate(start.Add(6*time.Second), candidate, status)
+	if got == nil || got.Transition != state.AutomationStart {
+		t.Fatalf("mixed strong/candidate evidence did not start: %+v", got)
+	}
+}
+
+func TestControllerExpiresEvidenceOutsideTheStrongWindow(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 6
+	cfg.AutoStart.UnclassifiedStableSeconds = 100
+	cfg.AutoStart.EvidenceGraceSeconds = 2
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 10, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	strong := focusedOutcome()
+	candidate := candidateOutcome(state.ActivityCoding, .72)
+	controller.Evaluate(start, strong, status)
+	controller.Evaluate(start.Add(2*time.Second), strong, status)
+	controller.Evaluate(start.Add(4*time.Second), strong, status)
+	if got := controller.Evaluate(start.Add(13*time.Second), candidate, status); got != nil {
+		t.Fatalf("expired strong evidence started: %+v", got)
+	}
+	controller.mu.Lock()
+	strongSeconds, _, candidateSeconds, _ := controller.evidenceWindowsLocked(start.Add(13 * time.Second))
+	controller.mu.Unlock()
+	diagnostic := controller.Diagnostics()
+	if strongSeconds != 0 || candidateSeconds != 13 || diagnostic.SignalKind != state.AutomationSignalCandidate || diagnostic.AccumulatedSeconds != 13 {
+		t.Fatalf("bounded windows were calculated incorrectly: strong=%d candidate=%d diagnostic=%+v", strongSeconds, candidateSeconds, diagnostic)
+	}
+}
+
+func TestControllerCountsNeutralTimeAcrossShortGaps(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 99
+	cfg.AutoStart.UnclassifiedStableSeconds = 10
+	cfg.AutoStart.EvidenceGraceSeconds = 2
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 20, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	candidate := candidateOutcome(state.ActivityCoding, .72)
+	neutral := candidateOutcome(state.ActivityOther, .72)
+	for second := 0; second <= 40; second++ {
+		outcome := candidate
+		if second%2 == 1 {
+			outcome = neutral
+		}
+		if got := controller.Evaluate(start.Add(time.Duration(second)*time.Second), outcome, status); got != nil {
+			t.Fatalf("alternating short gaps incorrectly started at %d seconds: %+v", second, got)
+		}
+	}
+}
+
+func TestControllerGraceRetainsCandidateProgressAndLongGapBlocks(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 99
+	cfg.AutoStart.UnclassifiedStableSeconds = 4
+	cfg.AutoStart.EvidenceGraceSeconds = 2
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 30, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	candidate := candidateOutcome(state.ActivityCoding, .72)
+	neutral := candidateOutcome(state.ActivityOther, .72)
+	controller.Evaluate(start, candidate, status)
+	controller.Evaluate(start.Add(2*time.Second), candidate, status)
+	controller.Evaluate(start.Add(3*time.Second), neutral, status)
+	diagnostic := controller.Diagnostics()
+	if diagnostic.State != state.AutomationDiagnosticGrace || diagnostic.SignalKind != state.AutomationSignalCandidate || diagnostic.AccumulatedSeconds != 2 || diagnostic.RequiredSeconds != 4 || diagnostic.GraceRemainingSeconds != 1 {
+		t.Fatalf("grace did not retain candidate progress: %+v", diagnostic)
+	}
+	controller.Evaluate(start.Add(5*time.Second), neutral, status)
+	diagnostic = controller.Diagnostics()
+	if diagnostic.State != state.AutomationDiagnosticBlocked || diagnostic.Blocker != state.AutomationBlockerInsufficientEvidence {
+		t.Fatalf("long neutral gap was not blocked: %+v", diagnostic)
+	}
+	if got := controller.Evaluate(start.Add(7*time.Second), candidate, status); got != nil {
+		t.Fatalf("evidence with excessive neutral time started: %+v", got)
+	}
+	if got := controller.Evaluate(start.Add(11*time.Second), candidate, status); got == nil || got.Transition != state.AutomationStart {
+		t.Fatalf("evidence did not recover after the old neutral sample left the window: %+v", got)
+	}
+}
+
+func TestControllerManualOverrideClearsEvidenceBeforeAccumulation(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 4
+	cfg.AutoStart.UnclassifiedStableSeconds = 6
+	cfg.AutoStart.EvidenceGraceSeconds = 2
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 40, 0, 0, time.UTC)
+	deadline := start.Add(30 * time.Second)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go", ManualOverrideUntil: &deadline}
+	outcome := focusedOutcome()
+	for second := 0; second < 30; second += 2 {
+		if got := controller.Evaluate(start.Add(time.Duration(second)*time.Second), outcome, status); got != nil {
+			t.Fatalf("manual override generated intent at %d seconds: %+v", second, got)
+		}
+		diagnostic := controller.Diagnostics()
+		if diagnostic.AccumulatedSeconds != 0 || diagnostic.Blocker != state.AutomationBlockerManualOverride {
+			t.Fatalf("manual override accumulated evidence: %+v", diagnostic)
+		}
+	}
+	if got := controller.Evaluate(deadline, outcome, status); got != nil {
+		t.Fatalf("override expiry tick reused old evidence: %+v", got)
+	}
+	if diagnostic := controller.Diagnostics(); diagnostic.AccumulatedSeconds != 0 {
+		t.Fatalf("first post-override tick was not a fresh window: %+v", diagnostic)
+	}
+	if got := controller.Evaluate(deadline.Add(2*time.Second), outcome, status); got != nil {
+		t.Fatalf("post-override evidence started too early: %+v", got)
+	}
+	if got := controller.Evaluate(deadline.Add(4*time.Second), outcome, status); got == nil || got.Transition != state.AutomationStart {
+		t.Fatalf("post-override evidence did not accumulate from zero: %+v", got)
+	}
+}
+
+func TestControllerResetsEvidenceForClockRollbackAndLongSamplingGap(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 4
+	cfg.AutoStart.UnclassifiedStableSeconds = 8
+	cfg.AutoStart.EvidenceGraceSeconds = 2
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 50, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	outcome := focusedOutcome()
+	controller.Evaluate(start, outcome, status)
+	controller.Evaluate(start.Add(2*time.Second), outcome, status)
+	controller.Evaluate(start.Add(time.Second), outcome, status)
+	if diagnostic := controller.Diagnostics(); diagnostic.AccumulatedSeconds != 0 {
+		t.Fatalf("clock rollback retained evidence: %+v", diagnostic)
+	}
+	if got := controller.Evaluate(start.Add(3*time.Second), outcome, status); got != nil {
+		t.Fatalf("rollback evidence started too early: %+v", got)
+	}
+	controller.Evaluate(start.Add(30*time.Second), outcome, status)
+	if diagnostic := controller.Diagnostics(); diagnostic.AccumulatedSeconds != 0 {
+		t.Fatalf("long sampling gap retained evidence: %+v", diagnostic)
+	}
+}
+
+func TestControllerAuditRateLimitUsesEventAndBlocker(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 20
+	cfg.AutoStart.UnclassifiedStableSeconds = 20
+	cfg.AutoStart.EvidenceGraceSeconds = 2
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 14, 0, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	focused := focusedOutcome()
+	distracted := focused
+	distracted.Relation = state.RelationDistracted
+	counts := map[auditRateKey]int{}
+	consume := func() {
+		if audit := controller.TakeDiagnosticAudit(); audit != nil {
+			counts[auditRateKey{EventType: audit.EventType, Blocker: audit.Diagnostic.Blocker}]++
+		}
+	}
+	for second := 0; second < 100; second++ {
+		outcome := focused
+		if second%2 == 1 {
+			outcome = distracted
+		}
+		controller.Evaluate(start.Add(time.Duration(second)*time.Second), outcome, status)
+		consume()
+	}
+	if counts[auditRateKey{EventType: "AUTO_START_ACCUMULATION_STARTED"}] != 1 {
+		t.Fatalf("accumulation audit was not rate limited: %+v", counts)
+	}
+	if counts[auditRateKey{EventType: "AUTO_START_BLOCKED", Blocker: state.AutomationBlockerDistracted}] != 1 {
+		t.Fatalf("distracted audit was not rate limited: %+v", counts)
+	}
+	controller.Evaluate(start.Add(301*time.Second), focused, status)
+	consume()
+	controller.Evaluate(start.Add(302*time.Second), distracted, status)
+	consume()
+	if counts[auditRateKey{EventType: "AUTO_START_BLOCKED", Blocker: state.AutomationBlockerDistracted}] != 2 {
+		t.Fatalf("distracted audit did not reopen after five minutes: %+v", counts)
+	}
+	if len(controller.pendingAudits) > maxPendingAudits {
+		t.Fatalf("pending audit queue exceeded bound: %d", len(controller.pendingAudits))
+	}
+}
+
+func TestControllerEvidenceQueueHasHardBound(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 1000
+	cfg.AutoStart.UnclassifiedStableSeconds = 1000
+	cfg.AutoStart.EvidenceGraceSeconds = 20
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 15, 0, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	for second := 0; second < 1000; second += 2 {
+		controller.Evaluate(start.Add(time.Duration(second)*time.Second), focusedOutcome(), status)
+	}
+	if len(controller.evidence) > maxEvidenceSamples {
+		t.Fatalf("evidence queue exceeded hard bound: %d", len(controller.evidence))
 	}
 }
