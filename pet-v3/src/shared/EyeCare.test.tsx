@@ -58,6 +58,17 @@ test("due widget uses Chinese copy and starts a break only through the canonical
   assert.ok(screen.getByText("该远眺休息 5 分钟了"));
 });
 
+test("computer-use due widget is actionable outside study and uses basis-specific copy", async () => {
+  let action = "";
+  const computerSettings = { ...settings, counting_basis: "COMPUTER_USAGE" as const };
+  const standby = { ...supervisorStatus, user_mode: "STANDBY" as const, task_relation: "UNKNOWN" as const };
+  render(<EyeCareWidget connected settings={computerSettings} eyeCareStatus={eyeStatus("SHORT_BREAK_DUE")} supervisorStatus={standby} userMode="STANDBY" control={fakeControl({ eyeCareAction: async (value: string) => { action = value; return { ok: true }; } })} />);
+  assert.ok(screen.getByText("该远眺休息 5 分钟了"));
+  assert.ok(screen.getByText(/已经连续使用电脑/));
+  fireEvent.click(screen.getByRole("button", { name: "开始休息" }));
+  await waitFor(() => assert.equal(action, "START_SHORT_BREAK"));
+});
+
 test("break, waiting-return and degraded-data states have safe Chinese copy", () => {
   const view = render(<EyeCareWidget connected settings={settings} eyeCareStatus={eyeStatus("SHORT_BREAK")} supervisorStatus={supervisorStatus} userMode="BREAK" control={fakeControl()} />);
   assert.ok(screen.getByText("远眺休息中"));

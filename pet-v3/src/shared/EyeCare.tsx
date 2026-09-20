@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { Eye, Moon, RefreshCw } from "lucide-react";
 import { getSupervisorControlAdapter } from "../runtime/adapters";
-import type { NativeEyeCareSettings, NativeEyeCareStatus, NativeSupervisorStatus, SupervisorDashboardSnapshot } from "../transport/supervisor";
+import type { EyeCareCountingBasis, NativeEyeCareSettings, NativeEyeCareStatus, NativeSupervisorStatus, SupervisorDashboardSnapshot } from "../transport/supervisor";
 
 export type EyeCareRefresh = () => Promise<SupervisorDashboardSnapshot | void>;
 
 const defaultSettings: NativeEyeCareSettings = {
-  enabled: false, focus_minutes: 40, short_break_minutes: 5,
+  enabled: false, counting_basis: "EFFECTIVE_FOCUS", focus_minutes: 40, short_break_minutes: 5,
   long_break_after_focus_minutes: 120, long_break_minutes: 20,
   snooze_minutes: 5, max_snoozes: 2,
 };
@@ -74,6 +74,9 @@ export function EyeCareWidget({
   if (!enabled || !currentStatus) return null;
   const phase = currentStatus.phase;
   const values = currentSettings ?? defaultSettings;
+  const countingBasis: EyeCareCountingBasis = values.counting_basis ?? "EFFECTIVE_FOCUS";
+  const computerUsage = countingBasis === "COMPUTER_USAGE";
+  const basisLabel = computerUsage ? "电脑使用" : "有效专注";
   const focusRemaining = Math.max(0, values.focus_minutes * 60 - currentStatus.focus_segment_seconds);
   const timestampRemaining = (value?: string): number | undefined => {
     if (!value) return undefined;
@@ -81,7 +84,7 @@ export function EyeCareWidget({
     return Number.isFinite(parsed) ? Math.max(0, Math.ceil((parsed - now) / 1000)) : undefined;
   };
   const restRemaining = timestampRemaining(currentStatus.planned_break_end_at);
-  const focusUnavailable = authoritative && userMode === "STUDY" && !focusDataAvailable;
+  const focusUnavailable = authoritative && !focusDataAvailable && (computerUsage || userMode === "STUDY");
 
   const runAction = async (action: Parameters<NonNullable<typeof control.eyeCareAction>>[0]): Promise<void> => {
     if (busy || !authoritative || !control.eyeCareAction) return;
@@ -102,11 +105,12 @@ export function EyeCareWidget({
   const snoozed = duePhase && snoozeRemaining !== undefined && snoozeRemaining > 0;
   const due = duePhase && !snoozed;
   const rest = phase === "SHORT_BREAK" || phase === "LONG_BREAK";
-  const dueActionsAllowed = authoritative && (userMode === undefined || userMode === "STUDY");
+  const dueActionsAllowed = authoritative && (computerUsage || userMode === undefined || userMode === "STUDY");
   const phaseTitle = phase === "SHORT_BREAK_DUE" ? `该远眺休息 ${values.short_break_minutes} 分钟了`
     : phase === "LONG_BREAK_DUE" ? "该安排一次完整休息了"
-      : phase === "FOCUSING" && userMode === "OFF" ? "今天已结束，护眼累计已保留"
-        : phase === "FOCUSING" && userMode !== undefined && userMode !== "STUDY" ? "等待继续学习后再累计"
+      : phase === "FOCUSING" && computerUsage ? "电脑使用护眼节奏进行中"
+        : phase === "FOCUSING" && userMode === "OFF" ? "今天已结束，护眼累计已保留"
+          : phase === "FOCUSING" && userMode !== undefined && userMode !== "STUDY" ? "等待继续学习后再累计"
           : statusActionLabel(currentStatus);
 
   return <section className={`eye-care-widget${compact ? " is-compact" : ""} is-${due ? "due" : rest ? "rest" : "calm"}`} aria-label="护眼节奏">
@@ -115,19 +119,19 @@ export function EyeCareWidget({
       <div className="eye-care-copy-main">
         <strong>{!authoritative ? "护眼状态暂不可用" : focusUnavailable ? "等待有效专注数据" : snoozed ? "护眼提醒已延后" : phaseTitle}</strong>
         <span>
-          {!authoritative ? "连接恢复后将继续显示最新状态" : focusUnavailable ? "数据恢复前不会按墙上时间补算" : snoozed ? `约 ${formatDuration(snoozeRemaining ?? 0)} 后再次提醒` : phase === "FOCUSING" && userMode === "STUDY" ? `距离远眺休息 ${formatDuration(focusRemaining)}` : phase === "FOCUSING" ? "开始有效专注后会继续累计。" : phase === "SHORT_BREAK_DUE" ? "起来走动一下，看看远处；休息时尽量少看手机。" : phase === "LONG_BREAK_DUE" ? "起身走动、喝水，给自己一段完整休息。" : rest ? (restRemaining === undefined ? "看看远处，休息时尽量少看手机。" : `剩余 ${formatDuration(restRemaining)} · 休息时尽量少看手机。`) : phase === "WAITING_RETURN" ? "准备好后，由你决定何时继续学习。" : "有效专注时长达到后会在这里提醒。"}
+          {!authoritative ? "连接恢复后将继续显示最新状态" : focusUnavailable ? "数据恢复前不会按墙上时间补算" : snoozed ? `约 ${formatDuration(snoozeRemaining ?? 0)} 后再次提醒` : phase === "FOCUSING" && computerUsage ? `距离电脑使用休息 ${formatDuration(focusRemaining)} · ${basisLabel}只在确认的 ACTIVE 样本中累计。` : phase === "FOCUSING" && userMode === "STUDY" ? `距离远眺休息 ${formatDuration(focusRemaining)}` : phase === "FOCUSING" ? "开始有效专注后会继续累计。" : phase === "SHORT_BREAK_DUE" && computerUsage ? "已经连续使用电脑，出去走走，看看远处，让眼睛真正离开近距离屏幕。" : phase === "SHORT_BREAK_DUE" ? "起来走动一下，看看远处；休息时尽量少看手机。" : phase === "LONG_BREAK_DUE" && computerUsage ? "出去走走，看看远处，让眼睛真正离开近距离屏幕。" : phase === "LONG_BREAK_DUE" ? "起身走动、喝水，给自己一段完整休息。" : rest ? (restRemaining === undefined ? "看看远处，休息时尽量少看手机。" : `剩余 ${formatDuration(restRemaining)} · 休息时尽量少看手机。`) : phase === "WAITING_RETURN" ? (computerUsage ? "我回来了 / 开始下一轮；护眼只重置本轮计时。" : "准备好后，由你决定何时继续学习。") : "有效专注时长达到后会在这里提醒。"}
         </span>
       </div>
     </div>
     {authoritative && due && <div className="eye-care-actions">
       {dueActionsAllowed && <>
-        <button className="eye-care-primary" type="button" disabled={busy} onClick={() => void runAction(phase === "LONG_BREAK_DUE" ? "START_LONG_BREAK" : "START_SHORT_BREAK")}>{phase === "LONG_BREAK_DUE" ? "开始完整休息" : "开始远眺"}</button>
+        <button className="eye-care-primary" type="button" disabled={busy} onClick={() => void runAction(phase === "LONG_BREAK_DUE" ? "START_LONG_BREAK" : "START_SHORT_BREAK")}>{computerUsage ? "开始休息" : phase === "LONG_BREAK_DUE" ? "开始完整休息" : "开始远眺"}</button>
         {currentStatus.snooze_count < values.max_snoozes && <button type="button" disabled={busy} onClick={() => void runAction("SNOOZE")}>延后 {values.snooze_minutes} 分钟</button>}
         <button type="button" disabled={busy} onClick={() => void runAction("SKIP")}>跳过</button>
       </>}
     </div>}
     {authoritative && rest && <div className="eye-care-countdown" aria-live="off">{restRemaining === undefined ? "--:--" : formatDuration(restRemaining)}<button type="button" disabled={busy} onClick={() => void runAction("FINISH_EARLY")}>提前结束</button></div>}
-    {authoritative && phase === "WAITING_RETURN" && <div className="eye-care-actions"><button className="eye-care-primary" type="button" disabled={busy} onClick={() => void runAction("RESUME_STUDY")}>继续学习</button></div>}
+    {authoritative && phase === "WAITING_RETURN" && <div className="eye-care-actions"><button className="eye-care-primary" type="button" disabled={busy} onClick={() => void runAction("RESUME_STUDY")}>{computerUsage ? "我回来了 / 开始下一轮" : "继续学习"}</button></div>}
     {currentStatus.storage_degraded && <span className="eye-care-notice" role="status">护眼状态暂未保存，服务正在重试</span>}
     {!authoritative && <span className="eye-care-offline"><RefreshCw size={13} />状态未连接</span>}
     {notice && <span className="eye-care-notice" role="status">{notice}</span>}
@@ -209,8 +213,9 @@ export function EyeCareSettingsCard({ settings: source, connected, onRefresh, co
 
   return <section className="surface-section eye-care-settings-card" aria-labelledby="eye-care-settings-title">
     <div className="section-header"><div><h2 id="eye-care-settings-title">护眼节奏</h2><p>按有效专注时间提醒，休息结束后由你决定何时继续</p></div><label className="eye-care-toggle"><input type="checkbox" checked={draft.enabled} disabled={!connected} onChange={event => update("enabled", event.target.checked)} /><span>开启</span></label></div>
-    <div className="eye-care-settings-summary"><strong>推荐节奏</strong><span>有效专注 {draft.focus_minutes} 分钟 → 远眺 {draft.short_break_minutes} 分钟</span><span>累计专注 {draft.long_break_after_focus_minutes} 分钟 → 完整休息 {draft.long_break_minutes} 分钟</span></div>
+    <div className="eye-care-settings-summary"><strong>推荐节奏</strong><span>{(draft.counting_basis ?? "EFFECTIVE_FOCUS") === "COMPUTER_USAGE" ? "电脑使用" : "有效专注"} {draft.focus_minutes} 分钟 → 远眺 {draft.short_break_minutes} 分钟</span><span>{(draft.counting_basis ?? "EFFECTIVE_FOCUS") === "COMPUTER_USAGE" ? "电脑使用累计" : "累计专注"} {draft.long_break_after_focus_minutes} 分钟 → 完整休息 {draft.long_break_minutes} 分钟</span></div>
     <div className="eye-care-setting-grid">
+      <label>计时依据<select aria-label="计时依据" value={draft.counting_basis ?? "EFFECTIVE_FOCUS"} disabled={!connected} onChange={event => update("counting_basis", event.target.value as EyeCareCountingBasis)}><option value="EFFECTIVE_FOCUS">有效专注：只在确认学习时累计</option><option value="COMPUTER_USAGE">电脑使用：持续活动就累计</option></select></label>
       <label>有效专注间隔（分钟）<input aria-label="有效专注间隔（分钟）" type="number" min={20} max={90} step={1} value={draft.focus_minutes} disabled={!connected} onChange={event => update("focus_minutes", Number(event.target.value))} /></label>
       <label>远眺休息（分钟）<input aria-label="远眺休息（分钟）" type="number" min={1} max={20} step={1} value={draft.short_break_minutes} disabled={!connected} onChange={event => update("short_break_minutes", Number(event.target.value))} /></label>
       <label>完整休息间隔（分钟）<input aria-label="完整休息间隔（分钟）" type="number" min={60} max={240} step={1} value={draft.long_break_after_focus_minutes} disabled={!connected} onChange={event => update("long_break_after_focus_minutes", Number(event.target.value))} /></label>
@@ -218,13 +223,13 @@ export function EyeCareSettingsCard({ settings: source, connected, onRefresh, co
       <label>延后时长（分钟）<input aria-label="延后时长（分钟）" type="number" min={1} max={30} step={1} value={draft.snooze_minutes} disabled={!connected} onChange={event => update("snooze_minutes", Number(event.target.value))} /></label>
       <label>最多延后次数<input aria-label="最多延后次数" type="number" min={0} max={5} step={1} value={draft.max_snoozes} disabled={!connected} onChange={event => update("max_snoozes", Number(event.target.value))} /></label>
     </div>
-    <p className="eye-care-settings-help">护眼节奏只依据系统已确认的有效专注累计；不会验证你是否看远，也不会新增摄像头采集、截图或 AI 请求。</p>
+    <p className="eye-care-settings-help">{(draft.counting_basis ?? "EFFECTIVE_FOCUS") === "COMPUTER_USAGE" ? "电脑使用只在 ActivityWatch 有效、状态为 ACTIVE 且未锁屏或离开时累计；锁屏和离开不计时。" : "护眼节奏只依据系统已确认的有效专注累计。"} 不会验证你是否看远，也不会新增摄像头采集、截图或 AI 请求。</p>
     <div className="setting-actions"><button className="primary-button" type="button" disabled={!connected || busy || !dirty} onClick={() => void save()}>{busy ? "正在保存…" : "保存护眼设置"}</button>{notice && <span role="status">{notice}</span>}</div>
   </section>;
 }
 
 function sameSettings(left: NativeEyeCareSettings, right: NativeEyeCareSettings): boolean {
-  return left.enabled === right.enabled && left.focus_minutes === right.focus_minutes &&
+  return left.enabled === right.enabled && (left.counting_basis ?? "EFFECTIVE_FOCUS") === (right.counting_basis ?? "EFFECTIVE_FOCUS") && left.focus_minutes === right.focus_minutes &&
     left.short_break_minutes === right.short_break_minutes &&
     left.long_break_after_focus_minutes === right.long_break_after_focus_minutes &&
     left.long_break_minutes === right.long_break_minutes && left.snooze_minutes === right.snooze_minutes &&

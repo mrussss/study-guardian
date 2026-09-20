@@ -1554,6 +1554,13 @@ fn optional_timestamp(
 
 fn sanitize_eye_care_settings(value: &Value) -> Result<Value, NativeErrorKind> {
     let object = value.as_object().ok_or(NativeErrorKind::InvalidResponse)?;
+    let counting_basis = object
+        .get("counting_basis")
+        .and_then(Value::as_str)
+        .unwrap_or("EFFECTIVE_FOCUS");
+    if !["EFFECTIVE_FOCUS", "COMPUTER_USAGE"].contains(&counting_basis) {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
     let focus = non_negative_i64_field(object, "focus_minutes")?;
     let short_break = non_negative_i64_field(object, "short_break_minutes")?;
     let long_after = non_negative_i64_field(object, "long_break_after_focus_minutes")?;
@@ -1571,6 +1578,7 @@ fn sanitize_eye_care_settings(value: &Value) -> Result<Value, NativeErrorKind> {
     }
     Ok(json!({
         "enabled": bool_field(object, "enabled")?,
+        "counting_basis": counting_basis,
         "focus_minutes": focus,
         "short_break_minutes": short_break,
         "long_break_after_focus_minutes": long_after,
@@ -1607,9 +1615,30 @@ fn sanitize_eye_care_status(value: &Value) -> Result<Value, NativeErrorKind> {
     if !valid_rfc3339_timestamp(&updated_at) {
         return Err(NativeErrorKind::InvalidResponse);
     }
+    let counting_basis = object
+        .get("counting_basis")
+        .and_then(Value::as_str)
+        .unwrap_or("EFFECTIVE_FOCUS");
+    if !["EFFECTIVE_FOCUS", "COMPUTER_USAGE"].contains(&counting_basis) {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
+    let default_context = if ["SHORT_BREAK", "LONG_BREAK", "WAITING_RETURN"].contains(&phase.as_str()) {
+        "STUDY_BOUND"
+    } else {
+        "NONE"
+    };
+    let break_context = object
+        .get("break_context")
+        .and_then(Value::as_str)
+        .unwrap_or(default_context);
+    if !["NONE", "STUDY_BOUND", "REMINDER_ONLY"].contains(&break_context) {
+        return Err(NativeErrorKind::InvalidResponse);
+    }
     let mut output = json!({
         "enabled": enabled,
+        "counting_basis": counting_basis,
         "phase": phase,
+        "break_context": break_context,
         "local_date": local_date,
         "focus_segment_seconds": safe_non_negative_i64_field(object, "focus_segment_seconds")?,
         "focus_since_long_break_seconds": safe_non_negative_i64_field(object, "focus_since_long_break_seconds")?,
@@ -2333,6 +2362,8 @@ struct AutomationSettingsInput {
 #[derive(Deserialize, Serialize)]
 struct EyeCareSettingsInput {
     enabled: bool,
+    #[serde(default)]
+    counting_basis: String,
     focus_minutes: i64,
     short_break_minutes: i64,
     long_break_after_focus_minutes: i64,
@@ -2525,9 +2556,18 @@ async fn supervisor_save_automation_settings(
 
 #[tauri::command]
 async fn supervisor_save_eye_care_settings(
-    settings: EyeCareSettingsInput,
+    mut settings: EyeCareSettingsInput,
 ) -> SupervisorControlResult {
     tauri::async_runtime::spawn_blocking(move || {
+        if settings.counting_basis.is_empty() {
+            settings.counting_basis = "EFFECTIVE_FOCUS".to_string();
+        }
+        if !["EFFECTIVE_FOCUS", "COMPUTER_USAGE"].contains(&settings.counting_basis.as_str()) {
+            return SupervisorControlResult {
+                ok: false,
+                error_kind: Some("rejected"),
+            };
+        }
         if !(20..=90).contains(&settings.focus_minutes)
             || !(1..=20).contains(&settings.short_break_minutes)
             || !(60..=240).contains(&settings.long_break_after_focus_minutes)
@@ -3828,6 +3868,7 @@ mod tests {
         }))
         .expect("valid settings");
         assert_eq!(settings["focus_minutes"], 40);
+        assert_eq!(settings["counting_basis"], "EFFECTIVE_FOCUS");
         assert!(settings.get("secret").is_none());
         assert!(sanitize_eye_care_settings(&json!({"enabled":true,"focus_minutes":10,"short_break_minutes":5,"long_break_after_focus_minutes":120,"long_break_minutes":20,"snooze_minutes":5,"max_snoozes":2})).is_err());
         let raw_status = json!({
@@ -3844,6 +3885,9 @@ mod tests {
         let mut invalid_phase = raw_status.clone();
         invalid_phase["phase"] = json!("EYE_BREAK");
         assert!(sanitize_eye_care_status(&invalid_phase).is_err());
+        let mut invalid_basis = raw_status.clone();
+        invalid_basis["counting_basis"] = json!("UNKNOWN");
+        assert!(sanitize_eye_care_status(&invalid_basis).is_err());
         let mut invalid_date = raw_status.clone();
         invalid_date["local_date"] = json!("2026-02-30");
         assert!(sanitize_eye_care_status(&invalid_date).is_err());

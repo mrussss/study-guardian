@@ -166,6 +166,7 @@ export interface NativeAutomationSettings {
 
 export interface NativeEyeCareSettings {
   enabled: boolean;
+  counting_basis?: EyeCareCountingBasis;
   focus_minutes: number;
   short_break_minutes: number;
   long_break_after_focus_minutes: number;
@@ -174,12 +175,16 @@ export interface NativeEyeCareSettings {
   max_snoozes: number;
 }
 
+export type EyeCareCountingBasis = "EFFECTIVE_FOCUS" | "COMPUTER_USAGE";
+
 export type EyeCarePhase = "DISABLED" | "FOCUSING" | "SHORT_BREAK_DUE" | "SHORT_BREAK" | "LONG_BREAK_DUE" | "LONG_BREAK" | "WAITING_RETURN";
 export type EyeCareAction = "START_SHORT_BREAK" | "START_LONG_BREAK" | "SNOOZE" | "SKIP" | "FINISH_EARLY" | "RESUME_STUDY" | "DISMISS";
 
 export interface NativeEyeCareStatus {
   enabled: boolean;
+  counting_basis?: EyeCareCountingBasis;
   phase: EyeCarePhase;
+  break_context?: "NONE" | "STUDY_BOUND" | "REMINDER_ONLY";
   local_date: string;
   focus_segment_seconds: number;
   focus_since_long_break_seconds: number;
@@ -441,7 +446,7 @@ function validAutomationSettings(value: unknown): value is NativeAutomationSetti
 }
 
 function validEyeCareSettings(value: unknown): value is NativeEyeCareSettings {
-  return record(value) && typeof value.enabled === "boolean" && Number.isSafeInteger(value.focus_minutes) && Number(value.focus_minutes) >= 20 && Number(value.focus_minutes) <= 90 &&
+  return record(value) && typeof value.enabled === "boolean" && (value.counting_basis === undefined || value.counting_basis === "EFFECTIVE_FOCUS" || value.counting_basis === "COMPUTER_USAGE") && Number.isSafeInteger(value.focus_minutes) && Number(value.focus_minutes) >= 20 && Number(value.focus_minutes) <= 90 &&
     Number.isSafeInteger(value.short_break_minutes) && Number(value.short_break_minutes) >= 1 && Number(value.short_break_minutes) <= 20 &&
     Number.isSafeInteger(value.long_break_after_focus_minutes) && Number(value.long_break_after_focus_minutes) >= 60 && Number(value.long_break_after_focus_minutes) <= 240 &&
     Number.isSafeInteger(value.long_break_minutes) && Number(value.long_break_minutes) >= 5 && Number(value.long_break_minutes) <= 60 &&
@@ -454,7 +459,7 @@ function validOptionalIso(value: unknown): value is string {
 }
 
 function validEyeCareStatus(value: unknown): value is NativeEyeCareStatus {
-  return record(value) && typeof value.enabled === "boolean" && ["DISABLED", "FOCUSING", "SHORT_BREAK_DUE", "SHORT_BREAK", "LONG_BREAK_DUE", "LONG_BREAK", "WAITING_RETURN"].includes(value.phase as string) &&
+  return record(value) && typeof value.enabled === "boolean" && (value.counting_basis === undefined || value.counting_basis === "EFFECTIVE_FOCUS" || value.counting_basis === "COMPUTER_USAGE") && (value.break_context === undefined || ["NONE", "STUDY_BOUND", "REMINDER_ONLY"].includes(value.break_context as string)) && ["DISABLED", "FOCUSING", "SHORT_BREAK_DUE", "SHORT_BREAK", "LONG_BREAK_DUE", "LONG_BREAK", "WAITING_RETURN"].includes(value.phase as string) &&
     (value.enabled ? value.phase !== "DISABLED" : value.phase === "DISABLED") &&
     boundedText(value.local_date, 10) && validReviewDate(value.local_date) && nonNegativeInteger(value.focus_segment_seconds) &&
     nonNegativeInteger(value.focus_since_long_break_seconds) && validOptionalIso(value.break_started_at) && validOptionalIso(value.planned_break_end_at) &&
@@ -469,7 +474,7 @@ function validEyeCareStatus(value: unknown): value is NativeEyeCareStatus {
 function normalizedEyeCareSettings(value: unknown): NativeEyeCareSettings | undefined {
   if (!validEyeCareSettings(value)) return undefined;
   return {
-    enabled: value.enabled, focus_minutes: value.focus_minutes, short_break_minutes: value.short_break_minutes,
+    enabled: value.enabled, counting_basis: value.counting_basis ?? "EFFECTIVE_FOCUS", focus_minutes: value.focus_minutes, short_break_minutes: value.short_break_minutes,
     long_break_after_focus_minutes: value.long_break_after_focus_minutes, long_break_minutes: value.long_break_minutes,
     snooze_minutes: value.snooze_minutes, max_snoozes: value.max_snoozes,
   };
@@ -478,7 +483,8 @@ function normalizedEyeCareSettings(value: unknown): NativeEyeCareSettings | unde
 function normalizedEyeCareStatus(value: unknown): NativeEyeCareStatus | undefined {
   if (!validEyeCareStatus(value)) return undefined;
   return {
-    enabled: value.enabled, phase: value.phase, local_date: value.local_date,
+    enabled: value.enabled, counting_basis: value.counting_basis ?? "EFFECTIVE_FOCUS", phase: value.phase,
+    break_context: value.break_context ?? (["SHORT_BREAK", "LONG_BREAK", "WAITING_RETURN"].includes(value.phase) ? "STUDY_BOUND" : "NONE"), local_date: value.local_date,
     focus_segment_seconds: value.focus_segment_seconds, focus_since_long_break_seconds: value.focus_since_long_break_seconds,
     ...(value.break_started_at ? { break_started_at: value.break_started_at } : {}),
     ...(value.planned_break_end_at ? { planned_break_end_at: value.planned_break_end_at } : {}),
