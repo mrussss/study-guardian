@@ -162,9 +162,12 @@ func (c *Controller) advanceEvidenceLocked(now time.Time, signal state.Automatio
 	duration := int64(now.Sub(c.lastEvaluatedAt) / time.Second)
 	if duration > 0 {
 		c.evidence = append(c.evidence, EvidenceSample{
-			Start:    c.lastEvaluatedAt,
-			End:      now,
-			Kind:     signal,
+			Start: c.lastEvaluatedAt,
+			End:   now,
+			// The interval belongs to the signal that was already observed at
+			// lastEvaluatedAt. Attribution to the new sample consumes evidence
+			// one tick early and can turn a neutral gap into focus evidence.
+			Kind:     c.lastSignal,
 			Duration: duration,
 		})
 		if len(c.evidence) > maxEvidenceSamples {
@@ -513,8 +516,8 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 	grace := int64(c.cfg.AutoStart.EvidenceGraceSeconds)
 	strongReady := strongSeconds >= int64(c.cfg.AutoStart.FocusedStableSeconds) && strongNeutral <= grace
 	candidateReady := candidateSeconds >= int64(c.cfg.AutoStart.UnclassifiedStableSeconds) && candidateNeutral <= grace
-	if ((signal == state.AutomationSignalStrongFocus || signal == state.AutomationSignalCandidate) && strongReady) ||
-		(signal == state.AutomationSignalCandidate && candidateReady) {
+	if (signal == state.AutomationSignalStrongFocus || signal == state.AutomationSignalCandidate) &&
+		(strongReady || candidateReady) {
 		diagnostic := c.diagnostics
 		diagnostic.State = state.AutomationDiagnosticReady
 		diagnostic.Blocker = state.AutomationBlockerNone

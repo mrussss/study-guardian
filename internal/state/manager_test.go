@@ -302,6 +302,68 @@ func TestManagerSupervisionStateChainAndActivityWatchFailSoft(t *testing.T) {
 	}
 }
 
+func TestManagerActiveUseCreditFailsClosedForLockAFKHealthAndLongGaps(t *testing.T) {
+	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	mgr := NewPersistentManager(clock, config.DefaultConfig(), nil, mockRuleClassifier{}, mockPrivacyEvaluator{}, nil)
+
+	clock.Set(now.Add(5 * time.Second))
+	active := mgr.Tick(now.Add(5*time.Second), "code.exe", "main.go", "", false, false, false)
+	if active.ActiveUseCreditSeconds != 5 {
+		t.Fatalf("fresh active tick credit=%d, want 5", active.ActiveUseCreditSeconds)
+	}
+
+	clock.Set(now.Add(10 * time.Second))
+	locked := mgr.Tick(now.Add(10*time.Second), "code.exe", "main.go", "", false, false, true)
+	if locked.ActiveUseCreditSeconds != 0 {
+		t.Fatalf("locked tick credited %d seconds", locked.ActiveUseCreditSeconds)
+	}
+	clock.Set(now.Add(15 * time.Second))
+	afk := mgr.Tick(now.Add(15*time.Second), "code.exe", "main.go", "", true, false, false)
+	if afk.ActiveUseCreditSeconds != 0 {
+		t.Fatalf("AFK tick credited %d seconds", afk.ActiveUseCreditSeconds)
+	}
+
+	mgr.SetHealth(false, true)
+	clock.Set(now.Add(20 * time.Second))
+	offline := mgr.Tick(now.Add(20*time.Second), "code.exe", "main.go", "", false, false, false)
+	if offline.ActiveUseCreditSeconds != 0 {
+		t.Fatalf("ActivityWatch-offline tick credited %d seconds", offline.ActiveUseCreditSeconds)
+	}
+
+	mgr.SetHealth(true, true)
+	mgr.SetCurrentActivitySampleValid(false)
+	clock.Set(now.Add(25 * time.Second))
+	stale := mgr.Tick(now.Add(25*time.Second), "code.exe", "main.go", "", false, false, false)
+	if stale.ActiveUseCreditSeconds != 0 {
+		t.Fatalf("stale sample credited %d seconds", stale.ActiveUseCreditSeconds)
+	}
+
+	mgr.SetCurrentActivitySampleValid(true)
+	clock.Set(now.Add(60 * time.Second))
+	gap := mgr.Tick(now.Add(60*time.Second), "code.exe", "main.go", "", false, false, false)
+	if gap.ActiveUseCreditSeconds != 0 {
+		t.Fatalf("long sampling gap credited %d seconds", gap.ActiveUseCreditSeconds)
+	}
+}
+
+func TestManagerActiveUseCreditStopsDuringStudyBoundEyeCareBreak(t *testing.T) {
+	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.Local)
+	clock := NewFakeClock(now)
+	mgr := NewPersistentManager(clock, config.DefaultConfig(), nil, mockRuleClassifier{}, mockPrivacyEvaluator{}, nil)
+	if err := mgr.SetModeStudy("Go"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.SetModeEyeCareBreak(false); err != nil {
+		t.Fatal(err)
+	}
+	clock.Set(now.Add(5 * time.Second))
+	outcome := mgr.Tick(now.Add(5*time.Second), "code.exe", "main.go", "", false, false, false)
+	if outcome.ActiveUseCreditSeconds != 0 || mgr.GetStatus().ModeOrigin != ModeOriginEyeCare {
+		t.Fatalf("eye-care break leaked active credit: outcome=%+v status=%+v", outcome, mgr.GetStatus())
+	}
+}
+
 func TestManagerRestartRecoversOnlyInterruptedSession(t *testing.T) {
 	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.Local)
 	dbPath := t.TempDir() + "/studyguardian.db"

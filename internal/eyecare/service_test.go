@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -130,6 +131,135 @@ func addFocus(service *Service, seconds int64, now time.Time) {
 		Now: now, DeltaSeconds: seconds, UserMode: state.UserModeStudy,
 		ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationFocused,
 	}, state.SystemStatus{UserMode: state.UserModeStudy, ModeOrigin: state.ModeOriginManual})
+}
+
+func newComputerUsageService(t *testing.T, start time.Time, mode state.UserMode) (*Service, *storage.Storage, *testModes, *time.Time) {
+	t.Helper()
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	clock := start
+	modes := &testModes{status: state.SystemStatus{UserMode: mode, ModeOrigin: state.ModeOriginManual}}
+	cfg := config.DefaultConfig().EyeCare
+	cfg.Enabled = true
+	cfg.CountingBasis = config.EyeCareCountingBasisComputerUsage
+	service, err := NewWithClock(cfg, config.DefaultConfig().Reminder, store, modes, func() time.Time { return clock })
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.cfg.FocusMinutes = 1
+	service.cfg.ShortBreakMinutes = 1
+	service.cfg.LongBreakAfterFocusMinutes = 2
+	service.cfg.LongBreakMinutes = 1
+	return service, store, modes, &clock
+}
+
+func addActiveUse(service *Service, seconds int64, now time.Time, mode state.UserMode) error {
+	return service.RecordCredits(0, seconds, state.TickOutcome{
+		Now: now, DeltaSeconds: seconds, ActiveUseCreditSeconds: seconds,
+		UserMode: mode, ActivityValid: true, Interaction: state.InteractionActive,
+	}, state.SystemStatus{UserMode: mode, ModeOrigin: state.ModeOriginManual})
+}
+
+func TestComputerUsageCountsActiveTicksWithoutStudyAndUsesReminderOnlyBreak(t *testing.T) {
+	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.Local)
+	service, _, modes, clock := newComputerUsageService(t, now, state.UserModeStandby)
+	if err := addActiveUse(service, 60, now, state.UserModeStandby); err != nil {
+		t.Fatal(err)
+	}
+	due := service.Status()
+	if due.Phase != ShortBreakDue || due.CountingBasis != config.EyeCareCountingBasisComputerUsage {
+		t.Fatalf("computer-use threshold did not become due outside study: %+v", due)
+	}
+	notice, err := service.TakePendingNotification(now)
+	if err != nil || notice == nil || !strings.Contains(notice.Message, "连续使用电脑") {
+		t.Fatalf("computer-use notice=%+v err=%v", notice, err)
+	}
+	started, err := service.Act(ActionRequest{Action: StartShortBreak, ExpectedRevision: due.Revision, RequestID: "computer-reminder-start"})
+	if err != nil || started.BreakContext != BreakContextReminderOnly || modes.starts != 0 || modes.status.UserMode != state.UserModeStandby {
+		t.Fatalf("reminder-only start mutated study state: status=%+v modes=%+v err=%v", started, modes, err)
+	}
+	if err := addActiveUse(service, 60, now.Add(time.Second), state.UserModeStandby); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Status(); got.Phase != ShortBreak || got.FocusSegmentSeconds != 60 {
+		t.Fatalf("active use accrued during reminder-only break: %+v", got)
+	}
+	*clock = now.Add(61 * time.Second)
+	waiting := service.Status()
+	if waiting.Phase != WaitingReturn {
+		t.Fatalf("reminder-only break did not wait for explicit return: %+v", waiting)
+	}
+	resumed, err := service.Act(ActionRequest{Action: ResumeStudy, ExpectedRevision: waiting.Revision, RequestID: "computer-reminder-resume"})
+	if err != nil || resumed.Phase != Focusing || modes.resumes != 0 || modes.status.UserMode != state.UserModeStandby {
+		t.Fatalf("reminder-only return changed user mode: status=%+v modes=%+v err=%v", resumed, modes, err)
+	}
+}
+
+func TestComputerUsagePersistsWithoutRestartWallClockCredit(t *testing.T) {
+	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.Local)
+	dbPath := filepath.Join(t.TempDir(), "eye-care.db")
+	store, err := storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := now
+	modes := &testModes{status: state.SystemStatus{UserMode: state.UserModeOff, ModeOrigin: state.ModeOriginManual}}
+	cfg := config.DefaultConfig().EyeCare
+	cfg.Enabled = true
+	cfg.CountingBasis = config.EyeCareCountingBasisComputerUsage
+	service, err := NewWithClock(cfg, config.DefaultConfig().Reminder, store, modes, func() time.Time { return clock })
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.cfg.FocusMinutes = 20
+	if err := addActiveUse(service, 30, now, state.UserModeOff); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Status(); got.FocusSegmentSeconds != 30 {
+		t.Fatalf("initial computer-use credit missing: %+v", got)
+	}
+	_ = store.Close()
+
+	clock = now.Add(2 * time.Hour)
+	store, err = storage.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	modes = &testModes{status: state.SystemStatus{UserMode: state.UserModeOff, ModeOrigin: state.ModeOriginManual}}
+	restarted, err := NewWithClock(cfg, config.DefaultConfig().Reminder, store, modes, func() time.Time { return clock })
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.cfg.FocusMinutes = 20
+	if got := restarted.Status(); got.FocusSegmentSeconds != 30 {
+		t.Fatalf("restart filled downtime from wall clock: %+v", got)
+	}
+}
+
+func TestLegacyEyeCareSettingsNormalizeToEffectiveFocus(t *testing.T) {
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.Local)
+	if err := store.SetSetting(context.Background(), SettingsKey, `{"enabled":true,"focus_minutes":40,"short_break_minutes":5,"long_break_after_focus_minutes":120,"long_break_minutes":20,"snooze_minutes":5,"max_snoozes":2}`, now); err != nil {
+		t.Fatal(err)
+	}
+	modes := &testModes{status: state.SystemStatus{UserMode: state.UserModeStudy}}
+	cfg := config.DefaultConfig().EyeCare
+	cfg.Enabled = true
+	service, err := NewWithClock(cfg, config.DefaultConfig().Reminder, store, modes, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Settings().CountingBasis; got != config.EyeCareCountingBasisEffectiveFocus {
+		t.Fatalf("legacy settings changed basis: %q", got)
+	}
 }
 
 func TestEffectiveFocusThresholdIsInclusiveAndDueIsAuditedOnce(t *testing.T) {

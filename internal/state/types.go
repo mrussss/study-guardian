@@ -257,17 +257,22 @@ type ReminderDecisionInput struct {
 // Downstream product features must consume this result instead of creating a
 // second wall-clock timer.
 type TickOutcome struct {
-	Now               time.Time
-	DeltaSeconds      int64
-	UserMode          UserMode
-	Interaction       InteractionState
-	Relation          TaskRelation
-	ActivityValid     bool
-	Locked            bool
-	IdleStaticSeconds int64
-	AfkSeconds        int64
-	AfkSince          *time.Time
-	Classification    ClassificationResult
+	Now          time.Time
+	DeltaSeconds int64
+	// ActiveUseCreditSeconds is the bounded credit produced by this
+	// Supervisor tick. It is intentionally separate from DeltaSeconds so
+	// downstream features cannot mistake a wall-clock interval for confirmed
+	// active computer use.
+	ActiveUseCreditSeconds int64
+	UserMode               UserMode
+	Interaction            InteractionState
+	Relation               TaskRelation
+	ActivityValid          bool
+	Locked                 bool
+	IdleStaticSeconds      int64
+	AfkSeconds             int64
+	AfkSince               *time.Time
+	Classification         ClassificationResult
 }
 
 type AutomationDiagnosticState string

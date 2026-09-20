@@ -29,6 +29,14 @@ const (
 	WaitingReturn Phase = "WAITING_RETURN"
 )
 
+type BreakContext string
+
+const (
+	BreakContextNone         BreakContext = "NONE"
+	BreakContextStudyBound   BreakContext = "STUDY_BOUND"
+	BreakContextReminderOnly BreakContext = "REMINDER_ONLY"
+)
+
 type Action string
 
 const (
@@ -42,27 +50,29 @@ const (
 )
 
 type Status struct {
-	Enabled                    bool       `json:"enabled"`
-	Phase                      Phase      `json:"phase"`
-	LocalDate                  string     `json:"local_date"`
-	FocusSegmentSeconds        int64      `json:"focus_segment_seconds"`
-	FocusSinceLongBreakSeconds int64      `json:"focus_since_long_break_seconds"`
-	BreakStartedAt             *time.Time `json:"break_started_at,omitempty"`
-	PlannedBreakEndAt          *time.Time `json:"planned_break_end_at,omitempty"`
-	DueAt                      *time.Time `json:"due_at,omitempty"`
-	SnoozeUntil                *time.Time `json:"snooze_until,omitempty"`
-	SnoozeCount                int        `json:"snooze_count"`
-	CompletedShortBreaks       int        `json:"completed_short_breaks"`
-	CompletedLongBreaks        int        `json:"completed_long_breaks"`
-	RetryFocusAfterSeconds     int64      `json:"retry_focus_after_seconds"`
-	DueGeneration              int64      `json:"due_generation"`
-	NotifiedGeneration         int64      `json:"notified_generation"`
-	NotifiedAt                 *time.Time `json:"notified_at,omitempty"`
-	Revision                   int64      `json:"revision"`
-	UpdatedAt                  time.Time  `json:"updated_at"`
-	NotificationSuppressed     bool       `json:"notification_suppressed"`
-	StorageDegraded            bool       `json:"storage_degraded"`
-	StorageErrorKind           string     `json:"storage_error_kind,omitempty"`
+	Enabled                    bool                        `json:"enabled"`
+	CountingBasis              config.EyeCareCountingBasis `json:"counting_basis"`
+	Phase                      Phase                       `json:"phase"`
+	BreakContext               BreakContext                `json:"break_context"`
+	LocalDate                  string                      `json:"local_date"`
+	FocusSegmentSeconds        int64                       `json:"focus_segment_seconds"`
+	FocusSinceLongBreakSeconds int64                       `json:"focus_since_long_break_seconds"`
+	BreakStartedAt             *time.Time                  `json:"break_started_at,omitempty"`
+	PlannedBreakEndAt          *time.Time                  `json:"planned_break_end_at,omitempty"`
+	DueAt                      *time.Time                  `json:"due_at,omitempty"`
+	SnoozeUntil                *time.Time                  `json:"snooze_until,omitempty"`
+	SnoozeCount                int                         `json:"snooze_count"`
+	CompletedShortBreaks       int                         `json:"completed_short_breaks"`
+	CompletedLongBreaks        int                         `json:"completed_long_breaks"`
+	RetryFocusAfterSeconds     int64                       `json:"retry_focus_after_seconds"`
+	DueGeneration              int64                       `json:"due_generation"`
+	NotifiedGeneration         int64                       `json:"notified_generation"`
+	NotifiedAt                 *time.Time                  `json:"notified_at,omitempty"`
+	Revision                   int64                       `json:"revision"`
+	UpdatedAt                  time.Time                   `json:"updated_at"`
+	NotificationSuppressed     bool                        `json:"notification_suppressed"`
+	StorageDegraded            bool                        `json:"storage_degraded"`
+	StorageErrorKind           string                      `json:"storage_error_kind,omitempty"`
 }
 
 type Notification struct {
@@ -164,6 +174,9 @@ func NewWithReminderSettingsProviderAndClock(cfg config.EyeCareConfig, reminderS
 			if err := json.Unmarshal([]byte(raw), &persisted); err != nil {
 				return nil, fmt.Errorf("decode eye-care settings: %w", err)
 			}
+			persistedHolder := config.Config{EyeCare: persisted}
+			config.NormalizeEyeCareConfig(&persistedHolder)
+			persisted = persistedHolder.EyeCare
 			if err := config.ValidateEyeCareConfig(persisted); err != nil {
 				return nil, fmt.Errorf("invalid persisted eye-care settings: %w", err)
 			}
@@ -212,12 +225,12 @@ func freshStatus(cfg config.EyeCareConfig, now time.Time) Status {
 	if !cfg.Enabled {
 		phase = Disabled
 	}
-	return Status{Enabled: cfg.Enabled, Phase: phase, LocalDate: localDate(now), UpdatedAt: now}
+	return Status{Enabled: cfg.Enabled, CountingBasis: cfg.CountingBasis, Phase: phase, BreakContext: BreakContextNone, LocalDate: localDate(now), UpdatedAt: now}
 }
 
 func statusFromRecord(cfg config.EyeCareConfig, record storage.EyeCareStateRecord) Status {
 	return Status{
-		Enabled: cfg.Enabled, Phase: Phase(record.Phase), LocalDate: record.LocalDate,
+		Enabled: cfg.Enabled, CountingBasis: cfg.CountingBasis, Phase: Phase(record.Phase), BreakContext: normalizeBreakContext(record.BreakContext, Phase(record.Phase)), LocalDate: record.LocalDate,
 		FocusSegmentSeconds:        record.FocusSegmentSeconds,
 		FocusSinceLongBreakSeconds: record.FocusSinceLongBreakSeconds,
 		BreakStartedAt:             cloneTime(record.BreakStartedAt), PlannedBreakEndAt: cloneTime(record.PlannedBreakEndAt),
@@ -237,6 +250,9 @@ func (s *Service) Settings() config.EyeCareConfig {
 }
 
 func (s *Service) SaveSettings(value config.EyeCareConfig) (config.EyeCareConfig, error) {
+	normalized := config.Config{EyeCare: value}
+	config.NormalizeEyeCareConfig(&normalized)
+	value = normalized.EyeCare
 	if err := config.ValidateEyeCareConfig(value); err != nil {
 		return config.EyeCareConfig{}, err
 	}
@@ -252,6 +268,7 @@ func (s *Service) SaveSettings(value config.EyeCareConfig) (config.EyeCareConfig
 	now := s.now()
 	next := cloneStatus(s.status)
 	next.Enabled = value.Enabled
+	next.CountingBasis = value.CountingBasis
 	if !value.Enabled {
 		next.Phase = Disabled
 		next.DueAt, next.SnoozeUntil = nil, nil
@@ -271,6 +288,20 @@ func (s *Service) SaveSettings(value config.EyeCareConfig) (config.EyeCareConfig
 	next.StorageDegraded, next.StorageErrorKind = false, ""
 	s.status = next
 	return s.cfg, nil
+}
+
+// RecordCredits routes both canonical credit streams through the same
+// transactional eye-care state machine. Effective-focus callers pass the
+// amount accepted by Motivation; computer-use callers pass the bounded credit
+// produced by the current Supervisor tick.
+func (s *Service) RecordCredits(creditedFocusSeconds, activeUseSeconds int64, out state.TickOutcome, canonical state.SystemStatus) error {
+	s.mu.Lock()
+	basis := s.cfg.CountingBasis
+	s.mu.Unlock()
+	if basis == config.EyeCareCountingBasisComputerUsage {
+		return s.recordComputerUse(activeUseSeconds, out, canonical)
+	}
+	return s.RecordCreditedFocus(creditedFocusSeconds, out, canonical)
 }
 
 // RecordCreditedFocus consumes only the seconds the motivation ledger
@@ -301,6 +332,61 @@ func (s *Service) RecordCreditedFocus(seconds int64, out state.TickOutcome, cano
 	shortDue := int64(s.cfg.FocusMinutes) * 60
 	event := ""
 	if next.FocusSinceLongBreakSeconds >= longDue && next.FocusSinceLongBreakSeconds >= next.RetryFocusAfterSeconds && next.Phase != LongBreakDue {
+		next.Phase = LongBreakDue
+		next.DueAt = timePointer(now)
+		next.SnoozeUntil = nil
+		next.SnoozeCount = 0
+		next.RetryFocusAfterSeconds = 0
+		next.DueGeneration++
+		event = "DUE"
+	} else if next.Phase == Focusing && next.FocusSegmentSeconds >= shortDue && next.FocusSinceLongBreakSeconds >= next.RetryFocusAfterSeconds {
+		next.Phase = ShortBreakDue
+		next.DueAt = timePointer(now)
+		next.SnoozeUntil = nil
+		next.SnoozeCount = 0
+		next.DueGeneration++
+		event = "DUE"
+	}
+	if event != "" {
+		next.Revision++
+	}
+	if err := s.persistCandidateLocked(next, now, event, "", "", ""); err != nil {
+		s.setStorageFailure(err)
+		s.unpersistedCreditedSeconds = addBounded(s.unpersistedCreditedSeconds, seconds)
+		return err
+	}
+	s.unpersistedCreditedSeconds = 0
+	next.StorageDegraded, next.StorageErrorKind = false, ""
+	s.status = next
+	return nil
+}
+
+func (s *Service) recordComputerUse(seconds int64, out state.TickOutcome, canonical state.SystemStatus) error {
+	if s == nil || seconds <= 0 || !out.ActivityValid || out.Locked || out.Interaction != state.InteractionActive || out.UserMode == state.UserModeOff && out.AfkSeconds > 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := out.Now
+	if now.IsZero() {
+		now = s.now()
+	}
+	if err := s.advanceLocked(now, canonical); err != nil {
+		s.unpersistedCreditedSeconds = addBounded(s.unpersistedCreditedSeconds, seconds)
+		return err
+	}
+	if !s.cfg.Enabled || isDuePhase(s.status.Phase) || isBreakPhase(s.status.Phase) || canonical.ModeOrigin == state.ModeOriginEyeCare {
+		return nil
+	}
+	next := cloneStatus(s.status)
+	credited := addBounded(seconds, s.unpersistedCreditedSeconds)
+	next.FocusSegmentSeconds = addBounded(next.FocusSegmentSeconds, credited)
+	next.FocusSinceLongBreakSeconds = addBounded(next.FocusSinceLongBreakSeconds, credited)
+	next.UpdatedAt = now
+	longDue := int64(s.cfg.LongBreakAfterFocusMinutes) * 60
+	shortDue := int64(s.cfg.FocusMinutes) * 60
+	event := ""
+	if next.FocusSinceLongBreakSeconds >= longDue && next.FocusSinceLongBreakSeconds >= next.RetryFocusAfterSeconds {
 		next.Phase = LongBreakDue
 		next.DueAt = timePointer(now)
 		next.SnoozeUntil = nil
@@ -373,7 +459,7 @@ func (s *Service) TakePendingNotification(now time.Time) (*Notification, error) 
 	if quietErr != nil {
 		return nil, errors.New("reminder settings unavailable")
 	}
-	if !isDuePhase(s.status.Phase) || s.currentMode().UserMode != state.UserModeStudy || quiet || s.status.SnoozeUntil != nil && now.Before(*s.status.SnoozeUntil) || s.status.DueGeneration <= s.status.NotifiedGeneration {
+	if !isDuePhase(s.status.Phase) || (s.cfg.CountingBasis == config.EyeCareCountingBasisEffectiveFocus && s.currentMode().UserMode != state.UserModeStudy) || quiet || s.status.SnoozeUntil != nil && now.Before(*s.status.SnoozeUntil) || s.status.DueGeneration <= s.status.NotifiedGeneration {
 		return nil, nil
 	}
 	if s.store != nil {
@@ -393,6 +479,12 @@ func (s *Service) TakePendingNotification(now time.Time) (*Notification, error) 
 	s.status = next
 	if next.SnoozeCount > 0 {
 		return &Notification{Kind: "SNOOZE_EXPIRED", Title: "StudyGuardian 护眼提醒", Message: "延后时间到了，该让眼睛休息一下了。"}, nil
+	}
+	if s.cfg.CountingBasis == config.EyeCareCountingBasisComputerUsage {
+		if next.Phase == LongBreakDue {
+			return &Notification{Kind: "LONG_BREAK_DUE", Title: "StudyGuardian 完整休息", Message: fmt.Sprintf("已经连续使用电脑 %s。出去走走，看看远处，让眼睛真正离开近距离屏幕。", focusDurationLabel(s.cfg.LongBreakAfterFocusMinutes))}, nil
+		}
+		return &Notification{Kind: "SHORT_BREAK_DUE", Title: "StudyGuardian 护眼提醒", Message: fmt.Sprintf("已经连续使用电脑 %d 分钟。出去走走，看看远处，让眼睛真正离开近距离屏幕。", s.cfg.FocusMinutes)}, nil
 	}
 	if next.Phase == LongBreakDue {
 		return &Notification{Kind: "LONG_BREAK_DUE", Title: "StudyGuardian 完整休息", Message: fmt.Sprintf("已累计有效专注 %s，建议安排一次 %d 分钟完整休息。", focusDurationLabel(s.cfg.LongBreakAfterFocusMinutes), s.cfg.LongBreakMinutes)}, nil
@@ -488,10 +580,14 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		if next.Phase != ShortBreakDue {
 			return cloneStatus(s.status), errors.New("short break is not due")
 		}
-		if canonical.UserMode != state.UserModeStudy {
+		if s.cfg.CountingBasis == config.EyeCareCountingBasisEffectiveFocus && canonical.UserMode != state.UserModeStudy {
 			return cloneStatus(s.status), errors.New("eye-care break requires study mode")
 		}
-		modeAction = "START"
+		next.BreakContext = BreakContextReminderOnly
+		if canonical.UserMode == state.UserModeStudy {
+			modeAction = "START"
+			next.BreakContext = BreakContextStudyBound
+		}
 		next.Phase = ShortBreak
 		next.BreakStartedAt = timePointer(now)
 		next.PlannedBreakEndAt = timePointer(now.Add(time.Duration(s.cfg.ShortBreakMinutes) * time.Minute))
@@ -501,10 +597,15 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		if next.Phase != LongBreakDue {
 			return cloneStatus(s.status), errors.New("long break is not due")
 		}
-		if canonical.UserMode != state.UserModeStudy {
+		if s.cfg.CountingBasis == config.EyeCareCountingBasisEffectiveFocus && canonical.UserMode != state.UserModeStudy {
 			return cloneStatus(s.status), errors.New("eye-care break requires study mode")
 		}
-		modeAction, long = "START", true
+		long = true
+		next.BreakContext = BreakContextReminderOnly
+		if canonical.UserMode == state.UserModeStudy {
+			modeAction = "START"
+			next.BreakContext = BreakContextStudyBound
+		}
 		next.Phase = LongBreak
 		next.BreakStartedAt = timePointer(now)
 		next.PlannedBreakEndAt = timePointer(now.Add(time.Duration(s.cfg.LongBreakMinutes) * time.Minute))
@@ -522,6 +623,7 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 			return cloneStatus(s.status), errors.New("no due eye-care reminder")
 		}
 		next.Phase = Focusing
+		next.BreakContext = BreakContextNone
 		next.RetryFocusAfterSeconds = next.FocusSinceLongBreakSeconds + 10*60
 		next.DueAt, next.SnoozeUntil = nil, nil
 		next.SnoozeCount = 0
@@ -530,11 +632,14 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		if next.Phase != ShortBreak && next.Phase != LongBreak {
 			return cloneStatus(s.status), errors.New("no active eye-care break")
 		}
-		if canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare || !isEyeCarePauseReason(canonical.PauseReason) {
+		if next.BreakContext == BreakContextStudyBound && (canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare || !isEyeCarePauseReason(canonical.PauseReason)) {
 			return cloneStatus(s.status), errors.New("reconciliation_required: canonical eye-care break unavailable")
 		}
-		modeAction = "RESUME"
+		if next.BreakContext == BreakContextStudyBound {
+			modeAction = "RESUME"
+		}
 		next.Phase = Focusing
+		next.BreakContext = BreakContextNone
 		next.RetryFocusAfterSeconds = next.FocusSinceLongBreakSeconds + 10*60
 		next.BreakStartedAt, next.PlannedBreakEndAt = nil, nil
 		next.DueAt, next.SnoozeUntil = nil, nil
@@ -544,11 +649,14 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		if next.Phase != WaitingReturn {
 			return cloneStatus(s.status), errors.New("eye-care rest timer is not complete")
 		}
-		if canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare || !isEyeCarePauseReason(canonical.PauseReason) {
+		if next.BreakContext == BreakContextStudyBound && (canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare || !isEyeCarePauseReason(canonical.PauseReason)) {
 			return cloneStatus(s.status), errors.New("reconciliation_required: canonical eye-care break unavailable")
 		}
-		modeAction = "RESUME"
+		if next.BreakContext == BreakContextStudyBound {
+			modeAction = "RESUME"
+		}
 		next.Phase = Focusing
+		next.BreakContext = BreakContextNone
 		next.BreakStartedAt, next.PlannedBreakEndAt = nil, nil
 		next.DueAt, next.SnoozeUntil = nil, nil
 		next.SnoozeCount = 0
@@ -658,8 +766,9 @@ func (s *Service) advanceLocked(now time.Time, canonical state.SystemStatus) err
 		}
 		changed = true
 	}
-	if canonical.UserMode == state.UserModeOff && next.Phase != Disabled && next.Phase != Focusing {
+	if s.cfg.CountingBasis == config.EyeCareCountingBasisEffectiveFocus && canonical.UserMode == state.UserModeOff && next.Phase != Disabled && next.Phase != Focusing {
 		next.Phase = Focusing
+		next.BreakContext = BreakContextNone
 		if !s.cfg.Enabled {
 			next.Phase = Disabled
 		}
@@ -669,10 +778,11 @@ func (s *Service) advanceLocked(now time.Time, canonical state.SystemStatus) err
 		next.DueGeneration = next.NotifiedGeneration
 		event = "CANCELED"
 		changed = true
-	} else if isBreakPhase(next.Phase) && (canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare) {
+	} else if isBreakPhase(next.Phase) && next.BreakContext == BreakContextStudyBound && (canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare) {
 		wasWaiting := next.Phase == WaitingReturn
 		wasOff := canonical.UserMode == state.UserModeOff
 		next.Phase = Focusing
+		next.BreakContext = BreakContextNone
 		if !wasWaiting && !wasOff {
 			next.RetryFocusAfterSeconds = next.FocusSinceLongBreakSeconds + 10*60
 		}
@@ -742,7 +852,7 @@ func (s *Service) persistCandidateLocked(value Status, now time.Time, event, req
 
 func stateRecord(value Status, now time.Time) storage.EyeCareStateRecord {
 	return storage.EyeCareStateRecord{
-		LocalDate: value.LocalDate, Phase: string(value.Phase), FocusSegmentSeconds: value.FocusSegmentSeconds,
+		LocalDate: value.LocalDate, Phase: string(value.Phase), BreakContext: string(normalizeBreakContext(string(value.BreakContext), value.Phase)), FocusSegmentSeconds: value.FocusSegmentSeconds,
 		FocusSinceLongBreakSeconds: value.FocusSinceLongBreakSeconds,
 		BreakStartedAt:             cloneTime(value.BreakStartedAt), PlannedBreakEndAt: cloneTime(value.PlannedBreakEndAt),
 		DueAt: cloneTime(value.DueAt), SnoozeUntil: cloneTime(value.SnoozeUntil), SnoozeCount: value.SnoozeCount,
@@ -801,14 +911,14 @@ func (s *Service) reconcilePendingRequests(now time.Time) error {
 		}
 		switch Action(request.Action) {
 		case StartShortBreak, StartLongBreak:
-			if canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare {
+			if planned.BreakContext == BreakContextStudyBound && (canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare) {
 				if failErr := s.store.FailEyeCareRequest(context.Background(), request.RequestID, request.Action, "reconciliation_required", "{}", s.status.Revision, now); failErr != nil {
 					return failErr
 				}
 				continue
 			}
 		case FinishEarly, ResumeStudy:
-			if canonical.UserMode != state.UserModeStudy {
+			if canonical.ModeOrigin == state.ModeOriginEyeCare || canonical.UserMode == state.UserModeBreak && isEyeCarePauseReason(canonical.PauseReason) {
 				if failErr := s.store.FailEyeCareRequest(context.Background(), request.RequestID, request.Action, "reconciliation_required", "{}", s.status.Revision, now); failErr != nil {
 					return failErr
 				}
@@ -859,6 +969,21 @@ func (s *Service) inQuietHours(now time.Time) (bool, error) {
 }
 
 func localDate(now time.Time) string { return now.In(time.Local).Format("2006-01-02") }
+
+func normalizeBreakContext(raw string, phase Phase) BreakContext {
+	value := BreakContext(raw)
+	if value == BreakContextStudyBound || value == BreakContextReminderOnly {
+		return value
+	}
+	// Before break context was persisted every active eye-care break was
+	// necessarily tied to STUDY. Treat legacy rows that are in a break phase as
+	// study-bound so an upgrade cannot silently loosen the old behavior.
+	if isBreakPhase(phase) {
+		return BreakContextStudyBound
+	}
+	return BreakContextNone
+}
+
 func addBounded(current, delta int64) int64 {
 	if delta > int64(^uint64(0)>>1)-current {
 		return int64(^uint64(0) >> 1)

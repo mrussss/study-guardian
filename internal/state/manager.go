@@ -75,6 +75,7 @@ type Manager struct {
 	lastActivityAt *time.Time
 
 	activityWatchOK                  bool
+	currentActivitySampleValid       bool
 	activityWatchLastSuccessAt       *time.Time
 	activityWatchConsecutiveFailures int
 	activityWatchStableOK            bool
@@ -105,27 +106,28 @@ func NewPersistentManager(
 	dateStr := now.Format("2006-01-02")
 
 	m := &Manager{
-		clock:                    clock,
-		cfg:                      cfg,
-		storage:                  store,
-		ruleEngine:               ruleEngine,
-		privacyGate:              privacyGate,
-		reminderEng:              reminderEng,
-		currentDate:              dateStr,
-		userMode:                 UserModeStandby,
-		interaction:              InteractionUnknown,
-		relation:                 RelationUnknown,
-		privacy:                  PrivacyNormal,
-		confidence:               1.0,
-		modeOrigin:               ModeOriginManual,
-		pauseReason:              PauseReasonNone,
-		modeStartTime:            now,
-		lastTickTime:             now,
-		lastActivityAt:           &now,
-		activityWatchOK:          true,
-		activityWatchStableOK:    true,
-		activityWatchHealthPhase: ActivityWatchAvailable,
-		screenSensorOK:           true,
+		clock:                      clock,
+		cfg:                        cfg,
+		storage:                    store,
+		ruleEngine:                 ruleEngine,
+		privacyGate:                privacyGate,
+		reminderEng:                reminderEng,
+		currentDate:                dateStr,
+		userMode:                   UserModeStandby,
+		interaction:                InteractionUnknown,
+		relation:                   RelationUnknown,
+		privacy:                    PrivacyNormal,
+		confidence:                 1.0,
+		modeOrigin:                 ModeOriginManual,
+		pauseReason:                PauseReasonNone,
+		modeStartTime:              now,
+		lastTickTime:               now,
+		lastActivityAt:             &now,
+		activityWatchOK:            true,
+		currentActivitySampleValid: true,
+		activityWatchStableOK:      true,
+		activityWatchHealthPhase:   ActivityWatchAvailable,
+		screenSensorOK:             true,
 	}
 
 	// 1. Load Daily State
@@ -930,6 +932,20 @@ func (m *Manager) SetActivityWatchHealth(diagnostics ActivityWatchDiagnostics, s
 	m.screenSensorOK = sensorOK
 }
 
+// SetCurrentActivitySampleValid records whether the data fed to the next
+// Supervisor tick came from a fresh ActivityWatch sample. Stable health may
+// deliberately retain the last trusted classification for supervision, but
+// computer-use eye care must fail closed for that tick instead of extending a
+// stale sample across a sampling gap.
+func (m *Manager) SetCurrentActivitySampleValid(valid bool) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.currentActivitySampleValid = valid
+	m.mu.Unlock()
+}
+
 func cloneTimePtr(value *time.Time) *time.Time {
 	if value == nil {
 		return nil
@@ -991,7 +1007,7 @@ func (m *Manager) TickWithClassification(
 	}
 
 	// 3. Update Activity time
-	if !isAFK && m.activityWatchOK { // Fix: Must not accumulate if AW is dead
+	if !isAFK && !isLocked && m.activityWatchOK { // locked time is not active use
 		m.activeSeconds += deltaSec
 		m.lastActivityAt = &now
 	}
@@ -1079,6 +1095,15 @@ func (m *Manager) TickWithClassification(
 		m.distractedSeconds = 0
 	}
 
+	activeUseCredit := int64(0)
+	if m.currentActivitySampleValid && m.activityWatchOK && !isLocked &&
+		m.interaction == InteractionActive && m.modeOrigin != ModeOriginEyeCare {
+		// deltaSec is already capped by maxTickGap above. No wall-clock gap,
+		// restart interval, AFK interval, or eye-care break can enter this
+		// canonical credit stream.
+		activeUseCredit = deltaSec
+	}
+
 	// 8. A reminder remains visible only until it expires or the user has
 	// recovered a stable focused/healthy state. Recovery uses the same state
 	// semantics as supervision and does not depend on a second wall clock.
@@ -1163,15 +1188,16 @@ func (m *Manager) TickWithClassification(
 	}
 
 	return TickOutcome{
-		Now:               now,
-		DeltaSeconds:      deltaSec,
-		UserMode:          m.userMode,
-		Interaction:       m.interaction,
-		Relation:          m.relation,
-		ActivityValid:     m.activityWatchOK,
-		Locked:            isLocked,
-		IdleStaticSeconds: m.idleStaticSeconds,
-		AfkSeconds:        m.afkSeconds,
+		Now:                    now,
+		DeltaSeconds:           deltaSec,
+		ActiveUseCreditSeconds: activeUseCredit,
+		UserMode:               m.userMode,
+		Interaction:            m.interaction,
+		Relation:               m.relation,
+		ActivityValid:          m.activityWatchOK,
+		Locked:                 isLocked,
+		IdleStaticSeconds:      m.idleStaticSeconds,
+		AfkSeconds:             m.afkSeconds,
 		AfkSince: cloneTimePtr(func() *time.Time {
 			if m.afkSince.IsZero() {
 				return nil

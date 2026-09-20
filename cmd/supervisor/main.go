@@ -260,6 +260,10 @@ func main() {
 					LastSuccessAt: lastSuccessAt, ConsecutiveFailures: awStatus.ConsecutiveFailures,
 					StableOK: awStatus.StableOK, Phase: state.ActivityWatchHealthPhase(awStatus.Phase),
 				}, sensorOK)
+				// A stable health state may keep the last trusted classification for
+				// supervision, but eye-care computer-use credit is only allowed for
+				// this tick when a fresh ActivityWatch sample was actually received.
+				stateMgr.SetCurrentActivitySampleValid(activitySampleSuccess)
 				if awStatus.Phase != lastAWPhase {
 					log.Printf("[ActivityWatch] %s -> %s", lastAWPhase, awStatus.Phase)
 					lastAWPhase = awStatus.Phase
@@ -419,7 +423,7 @@ func main() {
 						log.Printf("[EyeCare] state persistence degraded; retrying on subsequent ticks")
 						lastEyeCareStorageLog = time.Now()
 					}
-					if err := eyeCareService.RecordCreditedFocus(creditedFocusSeconds, outcome, eyeCareStatus); err != nil && time.Since(lastEyeCareStorageLog) >= time.Minute {
+					if err := eyeCareService.RecordCredits(creditedFocusSeconds, outcome.ActiveUseCreditSeconds, outcome, eyeCareStatus); err != nil && time.Since(lastEyeCareStorageLog) >= time.Minute {
 						log.Printf("[EyeCare] focus checkpoint persistence degraded; retrying on subsequent ticks")
 						lastEyeCareStorageLog = time.Now()
 					}

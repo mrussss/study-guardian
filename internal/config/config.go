@@ -28,14 +28,25 @@ type Config struct {
 }
 
 type EyeCareConfig struct {
-	Enabled                    bool `yaml:"enabled" json:"enabled"`
-	FocusMinutes               int  `yaml:"focus_minutes" json:"focus_minutes"`
-	ShortBreakMinutes          int  `yaml:"short_break_minutes" json:"short_break_minutes"`
-	LongBreakAfterFocusMinutes int  `yaml:"long_break_after_focus_minutes" json:"long_break_after_focus_minutes"`
-	LongBreakMinutes           int  `yaml:"long_break_minutes" json:"long_break_minutes"`
-	SnoozeMinutes              int  `yaml:"snooze_minutes" json:"snooze_minutes"`
-	MaxSnoozes                 int  `yaml:"max_snoozes" json:"max_snoozes"`
+	Enabled                    bool                 `yaml:"enabled" json:"enabled"`
+	CountingBasis              EyeCareCountingBasis `yaml:"counting_basis" json:"counting_basis"`
+	FocusMinutes               int                  `yaml:"focus_minutes" json:"focus_minutes"`
+	ShortBreakMinutes          int                  `yaml:"short_break_minutes" json:"short_break_minutes"`
+	LongBreakAfterFocusMinutes int                  `yaml:"long_break_after_focus_minutes" json:"long_break_after_focus_minutes"`
+	LongBreakMinutes           int                  `yaml:"long_break_minutes" json:"long_break_minutes"`
+	SnoozeMinutes              int                  `yaml:"snooze_minutes" json:"snooze_minutes"`
+	MaxSnoozes                 int                  `yaml:"max_snoozes" json:"max_snoozes"`
 }
+
+// EyeCareCountingBasis selects the canonical credit stream consumed by the
+// eye-care cadence. The zero value is normalized to EffectiveFocus for old
+// YAML/JSON settings that predate this field.
+type EyeCareCountingBasis string
+
+const (
+	EyeCareCountingBasisEffectiveFocus EyeCareCountingBasis = "EFFECTIVE_FOCUS"
+	EyeCareCountingBasisComputerUsage  EyeCareCountingBasis = "COMPUTER_USAGE"
+)
 
 type StandbyConfig struct {
 	FirstStudyActiveMinutes int `yaml:"first_study_active_minutes"`
@@ -279,7 +290,7 @@ func DefaultConfig() *Config {
 			TransitionCooldownSeconds: 30,
 			ManualOverrideMinutes:     30,
 		},
-		EyeCare: EyeCareConfig{Enabled: false, FocusMinutes: 40, ShortBreakMinutes: 5, LongBreakAfterFocusMinutes: 120, LongBreakMinutes: 20, SnoozeMinutes: 5, MaxSnoozes: 2},
+		EyeCare: EyeCareConfig{Enabled: false, CountingBasis: EyeCareCountingBasisEffectiveFocus, FocusMinutes: 40, ShortBreakMinutes: 5, LongBreakAfterFocusMinutes: 120, LongBreakMinutes: 20, SnoozeMinutes: 5, MaxSnoozes: 2},
 	}
 }
 
@@ -350,6 +361,9 @@ func NormalizeAutomationConfig(cfg *Config) {
 // NormalizeEyeCareConfig fills missing values for older YAML files while
 // keeping the feature opt-in. Explicit non-zero values are validated later.
 func NormalizeEyeCareConfig(cfg *Config) {
+	if cfg.EyeCare.CountingBasis == "" {
+		cfg.EyeCare.CountingBasis = EyeCareCountingBasisEffectiveFocus
+	}
 	if cfg.EyeCare.FocusMinutes == 0 {
 		cfg.EyeCare.FocusMinutes = 40
 	}
@@ -368,6 +382,9 @@ func NormalizeEyeCareConfig(cfg *Config) {
 }
 
 func ValidateEyeCareConfig(value EyeCareConfig) error {
+	if value.CountingBasis != EyeCareCountingBasisEffectiveFocus && value.CountingBasis != EyeCareCountingBasisComputerUsage {
+		return fmt.Errorf("counting_basis must be EFFECTIVE_FOCUS or COMPUTER_USAGE")
+	}
 	if value.FocusMinutes < 20 || value.FocusMinutes > 90 {
 		return fmt.Errorf("focus_minutes must be 20-90")
 	}

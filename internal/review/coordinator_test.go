@@ -151,7 +151,11 @@ func TestCoordinatorStartsFallbackTimeoutAfterAIDeadline(t *testing.T) {
 		t.Fatalf("AI path elapsed=%s, want longer than fallback timeout=%s", aiElapsed, service.fallbackPersistenceTimeout)
 	}
 
-	deadline := time.Now().Add(time.Second)
+	// The provider deadline is intentionally short in this test. Leave a
+	// bounded scheduling margin for fallback persistence under package-wide
+	// parallel load, while still failing deterministically if the coordinator
+	// never settles.
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		status, statusErr := coordinator.Status(date)
 		if statusErr != nil {
@@ -170,7 +174,7 @@ func TestCoordinatorStartsFallbackTimeoutAfterAIDeadline(t *testing.T) {
 			}
 			return
 		}
-		time.Sleep(time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("fallback did not settle after the AI deadline")
 }

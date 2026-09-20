@@ -10,6 +10,7 @@ import (
 type EyeCareStateRecord struct {
 	LocalDate                  string
 	Phase                      string
+	BreakContext               string
 	FocusSegmentSeconds        int64
 	FocusSinceLongBreakSeconds int64
 	BreakStartedAt             *time.Time
@@ -48,12 +49,12 @@ type EyeCareAuditRecord struct {
 func (s *Storage) LoadEyeCareState(ctx context.Context) (EyeCareStateRecord, bool, error) {
 	var value EyeCareStateRecord
 	var breakStarted, plannedEnd, dueAt, snoozeUntil, notifiedAt sql.NullTime
-	err := s.db.QueryRowContext(ctx, `SELECT local_date, phase, focus_segment_seconds,
+	err := s.db.QueryRowContext(ctx, `SELECT local_date, phase, break_context, focus_segment_seconds,
 		focus_since_long_break_seconds, break_started_at, planned_break_end_at, due_at,
 		snooze_until, snooze_count, completed_short_breaks, completed_long_breaks,
 		retry_focus_after_seconds, due_generation, notified_generation, notified_at,
 		revision, updated_at FROM eye_care_state WHERE id = 1`).Scan(
-		&value.LocalDate, &value.Phase, &value.FocusSegmentSeconds, &value.FocusSinceLongBreakSeconds,
+		&value.LocalDate, &value.Phase, &value.BreakContext, &value.FocusSegmentSeconds, &value.FocusSinceLongBreakSeconds,
 		&breakStarted, &plannedEnd, &dueAt, &snoozeUntil, &value.SnoozeCount,
 		&value.CompletedShortBreaks, &value.CompletedLongBreaks, &value.RetryFocusAfterSeconds,
 		&value.DueGeneration, &value.NotifiedGeneration, &notifiedAt, &value.Revision, &value.UpdatedAt,
@@ -145,12 +146,13 @@ type eyeCareSQLExecutor interface {
 
 func saveEyeCareStateTx(ctx context.Context, exec eyeCareSQLExecutor, value EyeCareStateRecord) error {
 	_, err := exec.ExecContext(ctx, `INSERT INTO eye_care_state(
-		id, local_date, phase, focus_segment_seconds, focus_since_long_break_seconds,
+		id, local_date, phase, break_context, focus_segment_seconds, focus_since_long_break_seconds,
 		break_started_at, planned_break_end_at, due_at, snooze_until, snooze_count,
 		completed_short_breaks, completed_long_breaks, retry_focus_after_seconds,
 		due_generation, notified_generation, notified_at, revision, updated_at
-	) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET local_date=excluded.local_date, phase=excluded.phase,
+		break_context=excluded.break_context,
 		focus_segment_seconds=excluded.focus_segment_seconds,
 		focus_since_long_break_seconds=excluded.focus_since_long_break_seconds,
 		break_started_at=excluded.break_started_at, planned_break_end_at=excluded.planned_break_end_at,
@@ -161,7 +163,7 @@ func saveEyeCareStateTx(ctx context.Context, exec eyeCareSQLExecutor, value EyeC
 		due_generation=excluded.due_generation, notified_generation=excluded.notified_generation,
 		notified_at=excluded.notified_at,
 		revision=excluded.revision, updated_at=excluded.updated_at`,
-		value.LocalDate, value.Phase, value.FocusSegmentSeconds, value.FocusSinceLongBreakSeconds,
+		value.LocalDate, value.Phase, value.BreakContext, value.FocusSegmentSeconds, value.FocusSinceLongBreakSeconds,
 		value.BreakStartedAt, value.PlannedBreakEndAt, value.DueAt, value.SnoozeUntil,
 		value.SnoozeCount, value.CompletedShortBreaks, value.CompletedLongBreaks,
 		value.RetryFocusAfterSeconds, value.DueGeneration, value.NotifiedGeneration, value.NotifiedAt,

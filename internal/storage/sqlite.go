@@ -195,6 +195,7 @@ func (s *Storage) migrate() error {
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			local_date TEXT NOT NULL,
 			phase TEXT NOT NULL,
+			break_context TEXT NOT NULL DEFAULT '',
 			focus_segment_seconds INTEGER NOT NULL DEFAULT 0,
 			focus_since_long_break_seconds INTEGER NOT NULL DEFAULT 0,
 			break_started_at TIMESTAMP,
@@ -457,6 +458,7 @@ func (s *Storage) migrate() error {
 func (s *Storage) ensureEyeCareColumns() error {
 	for table, columns := range map[string][]struct{ name, definition string }{
 		"eye_care_state": {
+			{"break_context", "TEXT NOT NULL DEFAULT ''"},
 			{"due_generation", "INTEGER NOT NULL DEFAULT 0"},
 			{"notified_generation", "INTEGER NOT NULL DEFAULT 0"},
 			{"notified_at", "TIMESTAMP"},

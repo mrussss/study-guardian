@@ -286,11 +286,15 @@ func TestControllerPreservesCandidateEvidenceAcrossNeutralGrace(t *testing.T) {
 	controller.Evaluate(start, candidate, status)
 	controller.Evaluate(start.Add(2*time.Second), candidate, status)
 	controller.Evaluate(start.Add(5*time.Second), neutral, status)
-	controller.Evaluate(start.Add(6*time.Second), candidate, status)
-	if got := controller.Evaluate(start.Add(8*time.Second), candidate, status); got != nil {
+	controller.Evaluate(start.Add(6*time.Second), neutral, status)
+	controller.Evaluate(start.Add(8*time.Second), neutral, status)
+	if got := controller.Evaluate(start.Add(9*time.Second), neutral, status); got != nil {
 		t.Fatalf("evidence beyond grace should have reset: %+v", got)
 	}
-	if got := controller.Evaluate(start.Add(10*time.Second), candidate, status); got == nil || got.Transition != state.AutomationStart {
+	if got := controller.Evaluate(start.Add(10*time.Second), candidate, status); got != nil {
+		t.Fatalf("candidate immediately after excessive neutral gap started: %+v", got)
+	}
+	if got := controller.Evaluate(start.Add(15*time.Second), candidate, status); got == nil || got.Transition != state.AutomationStart {
 		t.Fatalf("candidate evidence did not restart after a long neutral gap: %+v", got)
 	}
 }
@@ -350,6 +354,81 @@ func TestControllerUsesMixedStrongAndCandidateEvidenceWithinBoundedWindow(t *tes
 	}
 }
 
+func TestControllerAttributesEvidenceToPreviousSampleAcrossSignalBoundaries(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 99
+	cfg.AutoStart.UnclassifiedStableSeconds = 99
+	cfg.AutoStart.EvidenceGraceSeconds = 2
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 5, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	candidate := candidateOutcome(state.ActivityCoding, .72)
+	strong := focusedOutcome()
+	neutral := candidateOutcome(state.ActivityOther, .72)
+
+	controller.Evaluate(start, candidate, status)
+	controller.Evaluate(start.Add(2*time.Second), strong, status)
+	controller.Evaluate(start.Add(4*time.Second), neutral, status)
+	controller.mu.Lock()
+	strongSeconds, strongNeutral, candidateSeconds, candidateNeutral := controller.evidenceWindowsLocked(start.Add(4 * time.Second))
+	controller.mu.Unlock()
+	if strongSeconds != 2 || strongNeutral != 0 || candidateSeconds != 4 || candidateNeutral != 0 {
+		t.Fatalf("signal-boundary evidence misattributed: strong=%d strongNeutral=%d candidate=%d candidateNeutral=%d", strongSeconds, strongNeutral, candidateSeconds, candidateNeutral)
+	}
+
+	controller.UpdateConfig(cfg)
+	controller.Evaluate(start, candidate, status)
+	controller.Evaluate(start.Add(2*time.Second), neutral, status)
+	controller.Evaluate(start.Add(4*time.Second), strong, status)
+	controller.mu.Lock()
+	_, _, candidateSeconds, candidateNeutral = controller.evidenceWindowsLocked(start.Add(4 * time.Second))
+	controller.mu.Unlock()
+	if candidateSeconds != 2 || candidateNeutral != 2 {
+		t.Fatalf("neutral-to-strong interval was credited to the new signal: candidate=%d neutral=%d", candidateSeconds, candidateNeutral)
+	}
+}
+
+func TestControllerAllowsCandidateHistoryToCompleteOnStrongSample(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.FocusedStableSeconds = 99
+	cfg.AutoStart.UnclassifiedStableSeconds = 4
+	cfg.AutoStart.EvidenceGraceSeconds = 0
+	cfg.TransitionCooldownSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 6, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	candidate := candidateOutcome(state.ActivityCoding, .72)
+	strong := focusedOutcome()
+	controller.Evaluate(start, candidate, status)
+	controller.Evaluate(start.Add(2*time.Second), candidate, status)
+	if got := controller.Evaluate(start.Add(4*time.Second), strong, status); got == nil || got.Transition != state.AutomationStart {
+		t.Fatalf("candidate history plus current strong sample did not complete: %+v", got)
+	}
+}
+
+func TestControllerDropsEvidenceAcrossSamplingGap(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoStart.UnclassifiedStableSeconds = 2
+	cfg.AutoStart.EvidenceGraceSeconds = 1
+	controller := New(cfg)
+	start := time.Date(2026, 9, 19, 13, 7, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal, Task: "Go"}
+	candidate := candidateOutcome(state.ActivityCoding, .72)
+	controller.Evaluate(start, candidate, status)
+	if got := controller.Evaluate(start.Add(maxEvidenceGap+time.Second), candidate, status); got != nil {
+		t.Fatalf("sampling gap incorrectly bridged evidence: %+v", got)
+	}
+	controller.mu.Lock()
+	_, _, candidateSeconds, _ := controller.evidenceWindowsLocked(start.Add(maxEvidenceGap + time.Second))
+	controller.mu.Unlock()
+	if candidateSeconds != 0 {
+		t.Fatalf("sampling gap retained %d seconds of old evidence", candidateSeconds)
+	}
+}
+
 func TestControllerExpiresEvidenceOutsideTheStrongWindow(t *testing.T) {
 	cfg := config.DefaultConfig().Automation
 	cfg.Enabled = true
@@ -364,7 +443,7 @@ func TestControllerExpiresEvidenceOutsideTheStrongWindow(t *testing.T) {
 	candidate := candidateOutcome(state.ActivityCoding, .72)
 	controller.Evaluate(start, strong, status)
 	controller.Evaluate(start.Add(2*time.Second), strong, status)
-	controller.Evaluate(start.Add(4*time.Second), strong, status)
+	controller.Evaluate(start.Add(4*time.Second), candidate, status)
 	if got := controller.Evaluate(start.Add(13*time.Second), candidate, status); got != nil {
 		t.Fatalf("expired strong evidence started: %+v", got)
 	}
@@ -416,10 +495,11 @@ func TestControllerGraceRetainsCandidateProgressAndLongGapBlocks(t *testing.T) {
 	controller.Evaluate(start.Add(2*time.Second), candidate, status)
 	controller.Evaluate(start.Add(3*time.Second), neutral, status)
 	diagnostic := controller.Diagnostics()
-	if diagnostic.State != state.AutomationDiagnosticGrace || diagnostic.SignalKind != state.AutomationSignalCandidate || diagnostic.AccumulatedSeconds != 2 || diagnostic.RequiredSeconds != 4 || diagnostic.GraceRemainingSeconds != 1 {
+	if diagnostic.State != state.AutomationDiagnosticGrace || diagnostic.SignalKind != state.AutomationSignalCandidate || diagnostic.AccumulatedSeconds != 3 || diagnostic.RequiredSeconds != 4 || diagnostic.GraceRemainingSeconds != 2 {
 		t.Fatalf("grace did not retain candidate progress: %+v", diagnostic)
 	}
 	controller.Evaluate(start.Add(5*time.Second), neutral, status)
+	controller.Evaluate(start.Add(6*time.Second), neutral, status)
 	diagnostic = controller.Diagnostics()
 	if diagnostic.State != state.AutomationDiagnosticBlocked || diagnostic.Blocker != state.AutomationBlockerInsufficientEvidence {
 		t.Fatalf("long neutral gap was not blocked: %+v", diagnostic)
@@ -427,7 +507,7 @@ func TestControllerGraceRetainsCandidateProgressAndLongGapBlocks(t *testing.T) {
 	if got := controller.Evaluate(start.Add(7*time.Second), candidate, status); got != nil {
 		t.Fatalf("evidence with excessive neutral time started: %+v", got)
 	}
-	if got := controller.Evaluate(start.Add(11*time.Second), candidate, status); got == nil || got.Transition != state.AutomationStart {
+	if got := controller.Evaluate(start.Add(13*time.Second), candidate, status); got == nil || got.Transition != state.AutomationStart {
 		t.Fatalf("evidence did not recover after the old neutral sample left the window: %+v", got)
 	}
 }
