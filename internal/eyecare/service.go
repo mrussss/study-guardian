@@ -393,7 +393,7 @@ func (s *Service) RecordComputerUse(out state.TickOutcome, canonical state.Syste
 		s.unpersistedCreditedSeconds = 0
 		return nil
 	}
-	if out.Locked || out.DeltaSeconds <= 0 || out.DeltaSeconds > 15 {
+	if out.Locked || out.DeltaSeconds <= 0 || out.DeltaSeconds > 30 {
 		return nil
 	}
 	// Brief static reading and video viewing count; extended inactivity does not.

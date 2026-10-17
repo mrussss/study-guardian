@@ -987,10 +987,15 @@ func (m *Manager) TickWithClassification(
 	screenChanged bool,
 	isLocked bool,
 	classification ClassificationResult,
+	sampleValid ...bool,
 ) TickOutcome {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.locked = isLocked
+	activityValid := m.activityWatchOK
+	if len(sampleValid) > 0 {
+		activityValid = activityValid && sampleValid[0]
+	}
 
 	// 1. Check midnight crossing
 	m.checkMidnightResetLocked(now)
@@ -1011,7 +1016,7 @@ func (m *Manager) TickWithClassification(
 	}
 
 	// 3. Update Activity time
-	if !isAFK && m.activityWatchOK { // Fix: Must not accumulate if AW is dead
+	if !isAFK && !isLocked && activityValid { // Debounced health is not fresh activity evidence.
 		m.activeSeconds += deltaSec
 		m.lastActivityAt = &now
 	}
@@ -1188,7 +1193,7 @@ func (m *Manager) TickWithClassification(
 		UserMode:          m.userMode,
 		Interaction:       m.interaction,
 		Relation:          m.relation,
-		ActivityValid:     m.activityWatchOK,
+		ActivityValid:     activityValid,
 		Locked:            isLocked,
 		IdleStaticSeconds: m.idleStaticSeconds,
 		AfkSeconds:        m.afkSeconds,

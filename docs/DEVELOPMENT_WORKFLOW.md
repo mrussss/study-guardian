@@ -59,7 +59,7 @@ Mock 与 native 使用同一组 `SupervisorDashboardAdapter`、`SupervisorContro
 
 ## 护眼节奏
 
-- 业务状态位于 Go `internal/eyecare`。按 2026-10-17 用户要求，护眼改为独立累计有效本机电脑使用观察（含短暂静态阅读、动态观看），与学习模式、任务主题、Motivation 积分解耦。单次间隔超过 15 秒、ActivityWatch 无效或锁屏时不计；无输入约 5 分钟重开当前 40 分钟周期，不声称已验证真实远眺。旧 `RecordCreditedFocus` 仅保留兼容，生产 worker 只调用 `RecordComputerUse`，禁止双计。
+- 业务状态位于 Go `internal/eyecare`。按 2026-10-17 用户要求，护眼改为独立累计有效本机电脑使用观察（含短暂静态阅读、动态观看），与学习模式、任务主题、Motivation 积分解耦。单次间隔超过 30 秒、ActivityWatch 无效或锁屏时不计；无输入约 5 分钟重开当前 40 分钟周期，不声称已验证真实远眺。旧 `RecordCreditedFocus` 仅保留兼容，生产 worker 只调用 `RecordComputerUse`，禁止双计。
 - 护眼休息使用独立 `EYE_CARE` 模式来源，禁止自动恢复提前结束。短休息结束后进入等待返回；必须由用户显式点击继续。
 - `eye_care_state`、审计和 action request 幂等记录持久化到 Supervisor SQLite。Tauri/native 与 React transport 只暴露枚举、范围和 RFC3339 校验后的字段。
 - UI 文案不能宣称验证了真实远眺或手机使用。该功能不增加摄像头、截图或 AI 调用；免打扰时桌宠提醒隐藏，状态仍可在 Dashboard/Quick Panel 静默查看。

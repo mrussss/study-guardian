@@ -23,7 +23,8 @@ button:disabled { opacity:.5; }
 .pet-control-panel input { width:100%; min-height:20px; font-size:10px; }
 .pet-control-panel button { font-size:9px; }
 .pet-control-actions { display:flex; gap:4px; }
-.pet-eye-care-bubble { position:absolute; inset:7px 7px 32px; z-index:3; background:#254a43f5; border:1px solid #9cddbc; border-radius:10px; padding:6px; color:#effff6; text-align:center; white-space:pre-line; font-size:10px; line-height:1.4; pointer-events:none; }
+.pet-shell.has-eye-care .timer-eye { visibility:hidden; }
+.pet-eye-care-bubble { position:absolute; left:14px; right:10px; bottom:23px; z-index:3; color:#d6f5bd; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; line-height:14px; pointer-events:none; }
 .pet-entry-error { position:absolute; inset:8px; z-index:6; padding:8px; background:#44332b; border-radius:10px; font-size:10px; }
 .pet-controls { display:none; }
 button,input,select,.pet-control-panel { app-region:no-drag; -webkit-app-region:no-drag; }

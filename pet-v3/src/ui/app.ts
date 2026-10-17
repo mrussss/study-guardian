@@ -123,11 +123,11 @@ export function mountApp(root: HTMLElement): void {
     }
     if (current.notification_suppressed) { eyeCareBubble.hidden = true; eyeCareBubble.textContent = ""; root.querySelector(".pet-shell")?.classList.remove("has-eye-care"); return; }
     const copy: Record<string, string> = {
-      SHORT_BREAK_DUE: `该看看远处啦\n休息 ${eyeCareSettings?.short_break_minutes ?? 5} 分钟再回来吧`,
-      LONG_BREAK_DUE: `该安排一次完整休息啦\n休息 ${eyeCareSettings?.long_break_minutes ?? 20} 分钟再回来吧`,
-      SHORT_BREAK: "远眺休息中\n准备好后再回来",
-      LONG_BREAK: "完整休息中\n准备好后再回来",
-      WAITING_RETURN: "本轮休息计时完成\n点面板继续学习",
+      SHORT_BREAK_DUE: `该远眺 ${eyeCareSettings?.short_break_minutes ?? 5} 分钟了`,
+      LONG_BREAK_DUE: `该休息 ${eyeCareSettings?.long_break_minutes ?? 20} 分钟了`,
+      SHORT_BREAK: "护眼 · 远眺休息中",
+      LONG_BREAK: "护眼 · 完整休息中",
+      WAITING_RETURN: "休息结束 · 点面板继续",
     };
     const message = copy[current.phase] ?? "";
     if (eyeCareBubble.textContent !== message) eyeCareBubble.textContent = message;

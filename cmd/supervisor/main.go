@@ -401,7 +401,7 @@ func main() {
 					}
 				}
 
-				outcome := stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes)
+				outcome := stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes, activitySampleSuccess)
 				motivationService.RecordTick(outcome)
 				eyeCareStatus := stateMgr.GetStatus()
 				if eyeCareService != nil {

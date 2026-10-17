@@ -715,3 +715,19 @@ func TestComputerUseEyeCareReturnsToStandbyAfterRestart(t *testing.T) {
 		t.Fatalf("eye break started study: %+v", got)
 	}
 }
+
+func TestMissingSampleDoesNotCreditDuringHealthGrace(t *testing.T) {
+	mgr := NewManager(nil)
+	now := time.Now()
+	focused := ClassificationResult{Relation: RelationFocused, Confidence: .9}
+	first := mgr.TickWithClassification(now.Add(2*time.Second), "code.exe", "Go", "", false, false, false, focused, true)
+	before := mgr.GetStatus().ActiveSeconds
+	missing := mgr.TickWithClassification(now.Add(4*time.Second), "code.exe", "Go", "", false, false, false, focused, false)
+	if missing.ActivityValid || mgr.GetStatus().ActiveSeconds != before {
+		t.Fatalf("missing sample credited: %+v", missing)
+	}
+	recovered := mgr.TickWithClassification(now.Add(6*time.Second), "code.exe", "Go", "", false, false, false, focused, true)
+	if !recovered.ActivityValid || mgr.GetStatus().ActiveSeconds != before+2 || !first.ActivityValid {
+		t.Fatal("invalid recovery accounting")
+	}
+}
