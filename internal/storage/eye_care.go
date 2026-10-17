@@ -23,6 +23,10 @@ type EyeCareStateRecord struct {
 	DueGeneration              int64
 	NotifiedGeneration         int64
 	NotifiedAt                 *time.Time
+	PromptGeneration           int64
+	ClaimedPromptGeneration    int64
+	NextPromptAt               *time.Time
+	LastPromptedAt             *time.Time
 	Revision                   int64
 	UpdatedAt                  time.Time
 }
@@ -47,16 +51,19 @@ type EyeCareAuditRecord struct {
 
 func (s *Storage) LoadEyeCareState(ctx context.Context) (EyeCareStateRecord, bool, error) {
 	var value EyeCareStateRecord
-	var breakStarted, plannedEnd, dueAt, snoozeUntil, notifiedAt sql.NullTime
+	var breakStarted, plannedEnd, dueAt, snoozeUntil, notifiedAt, nextPromptAt, lastPromptedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx, `SELECT local_date, phase, focus_segment_seconds,
 		focus_since_long_break_seconds, break_started_at, planned_break_end_at, due_at,
 		snooze_until, snooze_count, completed_short_breaks, completed_long_breaks,
 		retry_focus_after_seconds, due_generation, notified_generation, notified_at,
+		prompt_generation, claimed_prompt_generation, next_prompt_at, last_prompted_at,
 		revision, updated_at FROM eye_care_state WHERE id = 1`).Scan(
 		&value.LocalDate, &value.Phase, &value.FocusSegmentSeconds, &value.FocusSinceLongBreakSeconds,
 		&breakStarted, &plannedEnd, &dueAt, &snoozeUntil, &value.SnoozeCount,
 		&value.CompletedShortBreaks, &value.CompletedLongBreaks, &value.RetryFocusAfterSeconds,
-		&value.DueGeneration, &value.NotifiedGeneration, &notifiedAt, &value.Revision, &value.UpdatedAt,
+		&value.DueGeneration, &value.NotifiedGeneration, &notifiedAt,
+		&value.PromptGeneration, &value.ClaimedPromptGeneration, &nextPromptAt, &lastPromptedAt,
+		&value.Revision, &value.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EyeCareStateRecord{}, false, nil
@@ -69,6 +76,8 @@ func (s *Storage) LoadEyeCareState(ctx context.Context) (EyeCareStateRecord, boo
 	value.DueAt = nullableTime(dueAt)
 	value.SnoozeUntil = nullableTime(snoozeUntil)
 	value.NotifiedAt = nullableTime(notifiedAt)
+	value.NextPromptAt = nullableTime(nextPromptAt)
+	value.LastPromptedAt = nullableTime(lastPromptedAt)
 	return value, true, nil
 }
 
@@ -126,12 +135,22 @@ func (s *Storage) SaveEyeCareSettingsAndState(ctx context.Context, key, raw stri
 	return tx.Commit()
 }
 
-// ClaimEyeCareNotification atomically grants one notification for the current
-// due generation. Callers must check quiet-hours/snooze before claiming.
+// ClaimEyeCareNotification atomically grants the next prompt in the current
+// due cycle. The next prompt time is persisted so all UI pollers share one
+// cadence and only one poller can claim a prompt.
 func (s *Storage) ClaimEyeCareNotification(ctx context.Context, generation int64, now time.Time) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE eye_care_state SET notified_generation=?, notified_at=?
-		WHERE id=1 AND due_generation=? AND notified_generation < due_generation
-		AND phase IN ('SHORT_BREAK_DUE','LONG_BREAK_DUE') AND snooze_until IS NULL`, generation, canonicalDBTime(now), generation)
+	record, found, err := s.LoadEyeCareState(ctx)
+	if err != nil || !found {
+		return false, err
+	}
+	if record.DueGeneration != generation || (record.Phase != "SHORT_BREAK_DUE" && record.Phase != "LONG_BREAK_DUE") || record.SnoozeUntil != nil || record.NextPromptAt == nil || now.Before(*record.NextPromptAt) || (record.NotifiedGeneration == generation && record.LastPromptedAt != nil && !record.LastPromptedAt.Before(now.Add(-time.Minute))) {
+		return false, nil
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE eye_care_state SET
+ notified_generation=?, notified_at=?, prompt_generation=prompt_generation+1,
+ claimed_prompt_generation=prompt_generation+1, last_prompted_at=?,next_prompt_at=?
+ WHERE id=1 AND due_generation=? AND prompt_generation=? AND revision=?`,
+		generation, canonicalDBTime(now), canonicalDBTime(now), canonicalDBTime(now.Add(5*time.Minute)), generation, record.PromptGeneration, record.Revision)
 	if err != nil {
 		return false, err
 	}
@@ -148,8 +167,9 @@ func saveEyeCareStateTx(ctx context.Context, exec eyeCareSQLExecutor, value EyeC
 		id, local_date, phase, focus_segment_seconds, focus_since_long_break_seconds,
 		break_started_at, planned_break_end_at, due_at, snooze_until, snooze_count,
 		completed_short_breaks, completed_long_breaks, retry_focus_after_seconds,
-		due_generation, notified_generation, notified_at, revision, updated_at
-	) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		due_generation, notified_generation, notified_at, prompt_generation,
+		claimed_prompt_generation, next_prompt_at, last_prompted_at, revision, updated_at
+	) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET local_date=excluded.local_date, phase=excluded.phase,
 		focus_segment_seconds=excluded.focus_segment_seconds,
 		focus_since_long_break_seconds=excluded.focus_since_long_break_seconds,
@@ -160,11 +180,16 @@ func saveEyeCareStateTx(ctx context.Context, exec eyeCareSQLExecutor, value EyeC
 		retry_focus_after_seconds=excluded.retry_focus_after_seconds,
 		due_generation=excluded.due_generation, notified_generation=excluded.notified_generation,
 		notified_at=excluded.notified_at,
+		prompt_generation=excluded.prompt_generation,
+		claimed_prompt_generation=excluded.claimed_prompt_generation,
+		next_prompt_at=excluded.next_prompt_at,
+		last_prompted_at=excluded.last_prompted_at,
 		revision=excluded.revision, updated_at=excluded.updated_at`,
 		value.LocalDate, value.Phase, value.FocusSegmentSeconds, value.FocusSinceLongBreakSeconds,
 		value.BreakStartedAt, value.PlannedBreakEndAt, value.DueAt, value.SnoozeUntil,
 		value.SnoozeCount, value.CompletedShortBreaks, value.CompletedLongBreaks,
 		value.RetryFocusAfterSeconds, value.DueGeneration, value.NotifiedGeneration, value.NotifiedAt,
+		value.PromptGeneration, value.ClaimedPromptGeneration, value.NextPromptAt, value.LastPromptedAt,
 		value.Revision, canonicalDBTime(value.UpdatedAt))
 	return err
 }

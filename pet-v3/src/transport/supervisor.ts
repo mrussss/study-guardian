@@ -12,6 +12,7 @@ export interface PetTransportSnapshot {
   last_error_kind?: TransportErrorKind;
   eye_care_settings?: NativeEyeCareSettings;
   eye_care_status?: NativeEyeCareStatus;
+  study_seconds?: number;
 }
 
 const ERROR_KINDS: TransportErrorKind[] = ["timeout", "unauthorized", "unavailable", "invalid_response"];
@@ -46,6 +47,7 @@ export function normalizeNativeSnapshot(raw: unknown): PetTransportSnapshot {
     ? value.last_success_at
     : undefined;
   return {
+    ...(typeof value.study_seconds === "number" && Number.isSafeInteger(value.study_seconds) && value.study_seconds >= 0 ? { study_seconds: value.study_seconds } : {}),
     connected: true, semantic, ...(success ? { last_success_at: success } : {}),
     ...(normalizedEyeCareSettings(value.eye_care_settings) ? { eye_care_settings: normalizedEyeCareSettings(value.eye_care_settings)! } : {}),
     ...(normalizedEyeCareStatus(value.eye_care_status) ? { eye_care_status: normalizedEyeCareStatus(value.eye_care_status)! } : {}),
@@ -120,6 +122,7 @@ export interface NativeSupervisorStatus {
   mode_origin?: "MANUAL" | "AUTOMATION" | "EYE_CARE";
   pause_reason?: "NONE" | "IDLE" | "LOCKED" | "SLEEP" | "SENSOR_UNAVAILABLE" | "EYE_CARE_SHORT" | "EYE_CARE_LONG";
   auto_resume_eligible?: boolean;
+  locked?: boolean;
   pending_automation_intent?: NativeAutomationIntent;
 }
 
@@ -194,6 +197,10 @@ export interface NativeEyeCareStatus {
   revision: number;
   updated_at: string;
   notification_suppressed: boolean;
+  prompt_generation?: number;
+  claimed_prompt_generation?: number;
+  next_prompt_at?: string;
+  last_prompted_at?: string;
   storage_degraded?: boolean;
   storage_error_kind?: string;
 }
@@ -390,6 +397,7 @@ function validStatus(value: unknown): value is NativeSupervisorStatus {
     (value.mode_origin === undefined || ["MANUAL", "AUTOMATION", "EYE_CARE"].includes(value.mode_origin as string)) &&
     (value.pause_reason === undefined || ["NONE", "IDLE", "LOCKED", "SLEEP", "SENSOR_UNAVAILABLE", "EYE_CARE_SHORT", "EYE_CARE_LONG"].includes(value.pause_reason as string)) &&
     (value.auto_resume_eligible === undefined || typeof value.auto_resume_eligible === "boolean") &&
+    (value.locked === undefined || typeof value.locked === "boolean") &&
     (value.pending_automation_intent === undefined || (record(value.pending_automation_intent) &&
       boundedText(value.pending_automation_intent.intent_id, 128) &&
       ["AUTO_START", "AUTO_PAUSE", "AUTO_RESUME"].includes(value.pending_automation_intent.transition as string) &&
@@ -462,6 +470,9 @@ function validEyeCareStatus(value: unknown): value is NativeEyeCareStatus {
     nonNegativeInteger(value.completed_short_breaks) && nonNegativeInteger(value.completed_long_breaks) &&
     nonNegativeInteger(value.retry_focus_after_seconds) && nonNegativeInteger(value.revision) && boundedText(value.updated_at, 128) && Number.isFinite(Date.parse(value.updated_at)) &&
     typeof value.notification_suppressed === "boolean" &&
+    (value.prompt_generation === undefined || nonNegativeInteger(value.prompt_generation)) &&
+    (value.claimed_prompt_generation === undefined || nonNegativeInteger(value.claimed_prompt_generation)) &&
+    validOptionalIso(value.next_prompt_at) && validOptionalIso(value.last_prompted_at) &&
     (value.storage_degraded === undefined || typeof value.storage_degraded === "boolean") &&
     (value.storage_error_kind === undefined || boundedText(value.storage_error_kind, 64));
 }
@@ -486,6 +497,10 @@ function normalizedEyeCareStatus(value: unknown): NativeEyeCareStatus | undefine
     snooze_count: value.snooze_count, completed_short_breaks: value.completed_short_breaks,
     completed_long_breaks: value.completed_long_breaks, retry_focus_after_seconds: value.retry_focus_after_seconds,
     revision: value.revision, updated_at: value.updated_at, notification_suppressed: value.notification_suppressed,
+    ...(value.prompt_generation !== undefined ? { prompt_generation: value.prompt_generation } : {}),
+    ...(value.claimed_prompt_generation !== undefined ? { claimed_prompt_generation: value.claimed_prompt_generation } : {}),
+    ...(value.next_prompt_at ? { next_prompt_at: value.next_prompt_at } : {}),
+    ...(value.last_prompted_at ? { last_prompted_at: value.last_prompted_at } : {}),
     ...(value.storage_degraded === true ? { storage_degraded: true } : {}),
     ...(value.storage_error_kind ? { storage_error_kind: value.storage_error_kind } : {}),
   };

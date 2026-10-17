@@ -344,6 +344,7 @@ type SystemStatus struct {
 	ModeOrigin                       ModeOrigin               `json:"mode_origin"`
 	PauseReason                      PauseReason              `json:"pause_reason"`
 	AutoResumeEligible               bool                     `json:"auto_resume_eligible"`
+	Locked                           bool                     `json:"locked"`
 	ManualOverrideUntil              *time.Time               `json:"manual_override_until,omitempty"`
 	AutoPauseSnoozeUntil             *time.Time               `json:"auto_pause_snooze_until,omitempty"`
 	AutomationDiagnostics            *AutomationDiagnostics   `json:"automation_diagnostics,omitempty"`

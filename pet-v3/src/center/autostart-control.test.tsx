@@ -54,3 +54,15 @@ test("confirms the written autostart state and restores it when canonical read m
   await waitFor(() => assert.equal(screen.getByText("启动项写入后未能确认").textContent, "启动项写入后未能确认"));
   assert.equal((screen.getByRole("checkbox") as HTMLInputElement).checked, false);
 });
+
+test("disabling autostart survives a settings page remount",async()=>{
+ let enabled=true;let writes=0;
+ const adapter:SystemIntegrationAdapter={getAutostartState:async()=>({enabled,available:true}),setAutostartEnabled:async value=>{enabled=value;writes++;return {enabled,available:true}}};
+ const view=render(<AutostartControl adapter={adapter}/>);
+ await waitFor(()=>assert.equal((screen.getByRole("checkbox") as HTMLInputElement).disabled,false));
+ await userEvent.setup().click(screen.getByRole("checkbox"));
+ await waitFor(()=>assert.ok(screen.getByText("已关闭开机启动")));
+ assert.equal(writes,1);view.unmount();render(<AutostartControl adapter={adapter}/>);
+ await waitFor(()=>assert.equal((screen.getByRole("checkbox") as HTMLInputElement).disabled,false));
+ assert.equal((screen.getByRole("checkbox") as HTMLInputElement).checked,false);
+});

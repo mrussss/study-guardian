@@ -23,9 +23,42 @@ struct ControlCenterRouteState(Arc<Mutex<String>>);
 // Only auxiliary-window workers acquire this mutex; the UI thread never does.
 struct AuxiliaryWindowState(Arc<Mutex<()>>);
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct UiState {
+    #[serde(default = "default_pet_visibility")]
+    pet_visibility: String,
+    #[serde(default = "default_ui_run_intent")]
+    ui_run_intent: String,
+}
+
+fn default_pet_visibility() -> String {
+    "VISIBLE".to_string()
+}
+
+fn default_ui_run_intent() -> String {
+    "BACKGROUND_RUNNING".to_string()
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            pet_visibility: default_pet_visibility(),
+            ui_run_intent: default_ui_run_intent(),
+        }
+    }
+}
+
+struct UiStateStore(Arc<Mutex<UiState>>);
+
+const PET_HIDDEN: &str = "HIDDEN_BY_USER";
+const PET_VISIBLE: &str = "VISIBLE";
+const UI_RUNNING: &str = "BACKGROUND_RUNNING";
+const UI_STOPPED: &str = "STOPPED_BY_USER";
+
 enum AuxiliaryWindowAction {
     QuickPanel,
     ControlCenter(String),
+    EyeCareReminder,
     HideQuickPanel(&'static str),
     HideControlCenter,
 }
@@ -69,7 +102,16 @@ fn launch_without_pet(args: &[String]) -> bool {
     args.iter().any(|arg| arg == "--no-pet")
 }
 
+fn user_launch_requested(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--user-launch")
+}
+
 fn activate_launch_request(app: &AppHandle, args: &[String]) {
+    if user_launch_requested(args) {
+        let _ = update_ui_state(app, |state| {
+            state.ui_run_intent = UI_RUNNING.to_string();
+        });
+    }
     match requested_launch_route(args) {
         Some(LaunchRoute::QuickPanel) => {
             schedule_aux_window(app.clone(), AuxiliaryWindowAction::QuickPanel)
@@ -155,6 +197,8 @@ struct SupervisorSnapshot {
     eye_care_status: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_error_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    study_seconds: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -235,6 +279,7 @@ fn disconnected(kind: NativeErrorKind) -> SupervisorSnapshot {
     SupervisorSnapshot {
         connected: false,
         semantic: None,
+        study_seconds: None,
         last_success_at: None,
         eye_care_settings: None,
         eye_care_status: None,
@@ -274,6 +319,7 @@ fn configured_aux_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, 
         .cloned()
         .ok_or_else(|| format!("window configuration missing: {label}"))?;
     let is_quick_panel = label == "quick-panel";
+    let is_reminder = label == "eye-care-reminder";
     let window = WebviewWindowBuilder::from_config(app, &config)
         .map_err(|error| format!("window configuration rejected: {error}"))?
         .build()
@@ -285,6 +331,10 @@ fn configured_aux_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, 
     window.on_window_event(move |event| match event {
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
+            if is_reminder {
+                let _ = window_for_events.hide();
+                return;
+            }
             let action = if is_quick_panel {
                 AuxiliaryWindowAction::HideQuickPanel("quick-panel:hide-reason:close-request")
             } else {
@@ -386,6 +436,115 @@ fn runtime_root() -> PathBuf {
         }
     }
     PathBuf::from(r"D:\StudyGuardianDev")
+}
+
+fn ui_state_path() -> PathBuf {
+    runtime_root().join("config").join("ui-state.json")
+}
+
+fn load_ui_state() -> UiState {
+    let path = ui_state_path();
+    let Ok(raw) = fs::read_to_string(path) else {
+        return UiState::default();
+    };
+    let Ok(mut value) = serde_json::from_str::<UiState>(&raw) else {
+        return UiState::default();
+    };
+    if !matches!(value.pet_visibility.as_str(), PET_HIDDEN | PET_VISIBLE) {
+        value.pet_visibility = PET_VISIBLE.to_string();
+    }
+    if !matches!(value.ui_run_intent.as_str(), UI_RUNNING | UI_STOPPED) {
+        value.ui_run_intent = UI_RUNNING.to_string();
+    }
+    value
+}
+
+fn save_ui_state(value: &UiState) -> Result<(), String> {
+    let path = ui_state_path();
+    let parent = path
+        .parent()
+        .ok_or_else(|| "ui_state_unavailable".to_string())?;
+    fs::create_dir_all(parent).map_err(|_| "ui_state_unavailable".to_string())?;
+    let encoded = serde_json::to_vec_pretty(value).map_err(|_| "ui_state_unavailable".to_string())?;
+    let temporary = parent.join(format!("ui-state.json.tmp-{}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temporary)
+        .map_err(|_| "ui_state_unavailable".to_string())?;
+    file.write_all(&encoded)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "ui_state_unavailable".to_string())?;
+    // Windows cannot rename over an existing file with std::fs::rename. The
+    // short replacement window is limited to this preference file; no secret
+    // or window contents are stored here.
+    if path.exists() {
+        fs::remove_file(&path).map_err(|_| "ui_state_unavailable".to_string())?;
+    }
+    fs::rename(&temporary, &path).map_err(|_| "ui_state_unavailable".to_string())
+}
+
+fn update_ui_state(app: &AppHandle, update: impl FnOnce(&mut UiState)) -> Result<UiState, String> {
+    let store = app.state::<UiStateStore>();
+    let mut guard = store
+        .0
+        .lock()
+        .map_err(|_| "ui_state_poisoned".to_string())?;
+    update(&mut guard);
+    let snapshot = guard.clone();
+    save_ui_state(&snapshot)?;
+    Ok(snapshot)
+}
+
+fn pet_is_hidden(state: &UiState) -> bool {
+    state.pet_visibility == PET_HIDDEN
+}
+
+fn hide_pet_for_user(app: &AppHandle) -> Result<(), String> {
+    update_ui_state(app, |state| {
+        state.pet_visibility = PET_HIDDEN.to_string();
+        state.ui_run_intent = UI_RUNNING.to_string();
+    })?;
+    if let Some(window) = app.get_webview_window("main") {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn show_pet_for_user(app: &AppHandle) -> Result<(), String> {
+    update_ui_state(app, |state| {
+        state.pet_visibility = PET_VISIBLE.to_string();
+        state.ui_run_intent = UI_RUNNING.to_string();
+    })?;
+    if let Some(window) = app.get_webview_window("main") {
+        window.show().map_err(|error| error.to_string())?;
+        window.set_focus().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn stop_ui_for_user(app: &AppHandle) {
+    let _ = update_ui_state(app, |state| {
+        state.ui_run_intent = UI_STOPPED.to_string();
+    });
+    app.exit(0);
+}
+
+#[tauri::command]
+fn show_pet(app: AppHandle) -> Result<(), String> {
+    show_pet_for_user(&app)
+}
+
+#[tauri::command]
+fn hide_pet(app: AppHandle) -> Result<(), String> {
+    hide_pet_for_user(&app)
+}
+
+#[tauri::command]
+fn exit_studyguardian(app: AppHandle) -> Result<(), String> {
+    stop_ui_for_user(&app);
+    Ok(())
 }
 
 fn bounded_pet_drag_debug_event(event: &str) -> Option<&str> {
@@ -1047,6 +1206,9 @@ fn sanitize_status(value: &Value) -> Result<Value, NativeErrorKind> {
         "activitywatch_ok": activitywatch_ok,
         "screen_sensor_ok": screen_sensor_ok,
     });
+    if let Some(locked) = object.get("locked").and_then(Value::as_bool) {
+        output["locked"] = json!(locked);
+    }
     if let Some(afk_seconds) = object.get("afk_seconds").and_then(Value::as_i64) {
         if afk_seconds >= 0 {
             output["afk_seconds"] = json!(afk_seconds);
@@ -1626,6 +1788,8 @@ fn sanitize_eye_care_status(value: &Value) -> Result<Value, NativeErrorKind> {
         "planned_break_end_at",
         "due_at",
         "snooze_until",
+		"next_prompt_at",
+		"last_prompted_at",
     ] {
         if let Some(timestamp) = optional_timestamp(object, field)? {
             output[field] = json!(timestamp);
@@ -1932,7 +2096,10 @@ fn supervisor_snapshot_blocking() -> SupervisorSnapshot {
     let eye_care_settings = fetch_supervisor_get(&host, port, &token, "/v1/settings/eye-care")
         .ok()
         .and_then(|value| sanitize_eye_care_settings(&value).ok());
+    let study_seconds = fetch_supervisor_get(&host, port, &token, "/v1/status").ok()
+        .and_then(|value| value.get("study_seconds").and_then(Value::as_u64));
     SupervisorSnapshot {
+        study_seconds,
         connected: true,
         semantic: Some(semantic),
         last_success_at,
@@ -1940,6 +2107,23 @@ fn supervisor_snapshot_blocking() -> SupervisorSnapshot {
         eye_care_status,
         last_error_kind: None,
     }
+}
+
+fn supervisor_claim_eye_care_notification_blocking() -> Result<bool, String> {
+    let value = ai_supervisor_request("POST", "/v1/eye-care/notification/claim", &[])
+        .map_err(|kind| kind.as_str().to_string())?;
+    Ok(value.get("claimed").and_then(Value::as_bool).unwrap_or(false))
+}
+
+#[tauri::command]
+async fn supervisor_claim_eye_care_notification(app: AppHandle) -> Result<bool, String> {
+    let claimed = tauri::async_runtime::spawn_blocking(supervisor_claim_eye_care_notification_blocking)
+        .await
+        .map_err(|_| "unavailable".to_string())??;
+    if claimed {
+        dispatch_aux_window(app, AuxiliaryWindowAction::EyeCareReminder).await?;
+    }
+    Ok(claimed)
 }
 
 #[tauri::command]
@@ -2350,6 +2534,7 @@ fn ai_supervisor_request(method: &str, path: &str, body: &[u8]) -> Result<Value,
             | ("PUT", "/v1/settings/automation")
             | ("PUT", "/v1/settings/eye-care")
             | ("POST", "/v1/eye-care/action")
+            | ("POST", "/v1/eye-care/notification/claim")
             | ("POST", "/v1/settings/ai/test")
             | ("POST", "/v1/settings/ai/proxy/test")
             | ("POST", "/v1/review/generate")
@@ -2927,6 +3112,7 @@ async fn dispatch_aux_window(app: AppHandle, action: AuxiliaryWindowAction) -> R
     run_aux_window_operation(gate, move || match action {
         AuxiliaryWindowAction::QuickPanel => show_quick_panel(&app),
         AuxiliaryWindowAction::ControlCenter(route) => show_control_center(&app, &route),
+        AuxiliaryWindowAction::EyeCareReminder => show_eye_care_reminder(&app),
         AuxiliaryWindowAction::HideQuickPanel(reason) => hide_quick_panel_with_reason(&app, reason),
         AuxiliaryWindowAction::HideControlCenter => {
             if let Some(center) = app.get_webview_window("control-center") {
@@ -2950,6 +3136,36 @@ fn schedule_aux_window(app: AppHandle, action: AuxiliaryWindowAction) {
 async fn open_quick_panel(app: AppHandle) -> Result<(), String> {
     record_quick_panel_debug_event("quick-panel:open-command");
     dispatch_aux_window(app, AuxiliaryWindowAction::QuickPanel).await
+}
+
+#[tauri::command]
+async fn open_eye_care_reminder(app: AppHandle) -> Result<(), String> {
+    dispatch_aux_window(app, AuxiliaryWindowAction::EyeCareReminder).await
+}
+
+#[tauri::command]
+async fn hide_eye_care_reminder(app: AppHandle) -> Result<(), String> {
+    let gate = app.state::<AuxiliaryWindowState>().0.clone();
+    run_aux_window_operation(gate, move || {
+        if let Some(window) = app.get_webview_window("eye-care-reminder") {
+            window.hide().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+fn show_eye_care_reminder(app: &AppHandle) -> Result<(), String> {
+    let reminder = app
+        .get_webview_window("eye-care-reminder")
+        .map(Ok)
+        .unwrap_or_else(|| configured_aux_window(app, "eye-care-reminder"))?;
+    reminder
+        .set_always_on_top(true)
+        .map_err(|error| error.to_string())?;
+    let _ = reminder.center();
+    reminder.show().map_err(|error| error.to_string())?;
+    reminder.set_focus().map_err(|error| error.to_string())
 }
 
 fn show_quick_panel(app: &AppHandle) -> Result<(), String> {
@@ -3167,10 +3383,11 @@ fn get_autostart_state() -> AutostartState {
 #[tauri::command]
 fn set_autostart_enabled(enabled: bool) -> Result<AutostartState, String> {
     run_autostart_script(if enabled { "-Enable" } else { "-Disable" })?;
-    Ok(AutostartState {
-        enabled,
-        available: true,
-    })
+    let confirmed = get_autostart_state();
+    if !confirmed.available || confirmed.enabled != enabled {
+        return Err("integration_verification_failed".to_string());
+    }
+    Ok(confirmed)
 }
 
 pub fn run() {
@@ -3185,10 +3402,12 @@ pub fn run() {
             "overview".to_string(),
         ))))
         .manage(AuxiliaryWindowState(Arc::new(Mutex::new(()))))
+        .manage(UiStateStore(Arc::new(Mutex::new(load_ui_state()))))
         .invoke_handler(tauri::generate_handler![
             set_click_through,
             record_pet_drag_debug,
             supervisor_snapshot,
+            supervisor_claim_eye_care_notification,
             supervisor_dashboard_snapshot,
             supervisor_set_mode,
             supervisor_set_task,
@@ -3216,11 +3435,16 @@ pub fn run() {
             supervisor_set_daily_target,
             open_quick_panel,
             hide_quick_panel,
+            open_eye_care_reminder,
+            hide_eye_care_reminder,
             open_control_center,
             control_center_route,
             pet_window_diagnostics,
             get_autostart_state,
             set_autostart_enabled,
+            show_pet,
+            hide_pet,
+            exit_studyguardian,
         ])
         .setup(|app| {
             let window = app
@@ -3232,7 +3456,25 @@ pub fn run() {
             window.set_always_on_top(true)?;
             window.set_shadow(false)?;
             let args: Vec<String> = env::args().collect();
-            if launch_without_pet(&args) {
+            if user_launch_requested(&args) {
+                let _ = update_ui_state(app.handle(), |state| {
+                    state.ui_run_intent = UI_RUNNING.to_string();
+                });
+            }
+            let state = app
+                .state::<UiStateStore>()
+                .0
+                .lock()
+                .map_err(|_| "ui_state_poisoned")?
+                .clone();
+            let main_for_events = window.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = hide_pet_for_user(&main_for_events.app_handle());
+                }
+            });
+            if launch_without_pet(&args) || pet_is_hidden(&state) || state.ui_run_intent == UI_STOPPED {
                 window.hide()?;
             } else {
                 window.show()?;
@@ -3244,7 +3486,8 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
-            let quit = MenuItem::with_id(app, "quit", "退出 Pet", true, None::<&str>)?;
+            let pet_toggle_label = if pet_is_hidden(&state) { "显示桌宠" } else { "隐藏桌宠" };
+            let pet_toggle = MenuItem::with_id(app, "toggle-pet", pet_toggle_label, true, None::<&str>)?;
             let quick_panel =
                 MenuItem::with_id(app, "open-quick-panel", "打开快捷面板", true, None::<&str>)?;
             let control_center = MenuItem::with_id(
@@ -3255,11 +3498,13 @@ pub fn run() {
                 None::<&str>,
             )?;
             let settings = MenuItem::with_id(app, "open-settings", "打开设置", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出 StudyGuardian", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
-                &[&quick_panel, &control_center, &settings, &toggle, &quit],
+                &[&pet_toggle, &quick_panel, &control_center, &settings, &toggle, &quit],
             )?;
             let tray_state = app.state::<ClickThroughState>().inner().0.clone();
+            let pet_toggle_for_tray = pet_toggle.clone();
             let mut tray_builder = TrayIconBuilder::new().menu(&menu);
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
@@ -3277,6 +3522,22 @@ pub fn run() {
                         app.clone(),
                         AuxiliaryWindowAction::ControlCenter("settings".to_string()),
                     ),
+                    "toggle-pet" => {
+                        let hidden = app
+                            .state::<UiStateStore>()
+                            .0
+                            .lock()
+                            .map(|state| pet_is_hidden(&state))
+                            .unwrap_or(false);
+                        let result = if hidden {
+                            show_pet_for_user(app)
+                        } else {
+                            hide_pet_for_user(app)
+                        };
+                        if result.is_ok() {
+                            let _ = pet_toggle_for_tray.set_text(if hidden { "隐藏桌宠" } else { "显示桌宠" });
+                        }
+                    }
                     "toggle-click-through" => {
                         if let Some(window) = app.get_webview_window("main") {
                             if let Ok(mut current) = tray_state.lock() {
@@ -3287,7 +3548,7 @@ pub fn run() {
                             }
                         }
                     }
-                    "quit" => app.exit(0),
+                    "quit" => stop_ui_for_user(app),
                     _ => {}
                 })
                 .build(app)?;
@@ -3427,6 +3688,7 @@ mod tests {
         let snapshot = SupervisorSnapshot {
             connected: true,
             semantic: Some(semantic),
+            study_seconds: None,
             last_success_at: Some("2026-09-04T00:00:00Z".to_string()),
             eye_care_settings: None,
             eye_care_status: None,

@@ -18,6 +18,24 @@ function Get-StudyGuardianPetRuntime {
     return "pyqt"
 }
 
+function Get-StudyGuardianUiState {
+    param([Parameter(Mandatory = $true)][string]$RootDir)
+    $default = [pscustomobject]@{
+        pet_visibility = "VISIBLE"
+        ui_run_intent = "BACKGROUND_RUNNING"
+    }
+    $path = Join-Path $RootDir "config\ui-state.json"
+    if (-not (Test-Path -LiteralPath $path)) { return $default }
+    try {
+        $value = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $visibility = if ($value.pet_visibility -in @("VISIBLE", "HIDDEN_BY_USER")) { $value.pet_visibility } else { $default.pet_visibility }
+        $intent = if ($value.ui_run_intent -in @("BACKGROUND_RUNNING", "STOPPED_BY_USER")) { $value.ui_run_intent } else { $default.ui_run_intent }
+        return [pscustomobject]@{ pet_visibility = $visibility; ui_run_intent = $intent }
+    } catch {
+        return $default
+    }
+}
+
 function ConvertTo-StudyGuardianArgument {
     param([Parameter(Mandatory = $true)][string]$Value)
     if ($Value.Contains('"')) { throw "Process argument contains an unsupported quote" }
@@ -107,4 +125,15 @@ function Write-StudyGuardianLog {
         }
         Add-Content -LiteralPath $logPath -Encoding UTF8 -Value ("{0:u} [{1}] {2}" -f (Get-Date), $Source, $Message)
     } catch {}
+}
+
+# A user's explicit disable survives restarts, deployment, and stale shortcuts.
+function Test-StudyGuardianLoginStartAllowed {
+    param([Parameter(Mandatory = $true)][string]$RootDir)
+    $path = Join-Path $RootDir "config\autostart-state.json"
+    if (-not (Test-Path -LiteralPath $path)) { return $true }
+    try {
+        $value = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        return $value.enabled -eq $true
+    } catch { return $false }
 }

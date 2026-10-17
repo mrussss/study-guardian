@@ -208,6 +208,10 @@ func (s *Storage) migrate() error {
 			due_generation INTEGER NOT NULL DEFAULT 0,
 			notified_generation INTEGER NOT NULL DEFAULT 0,
 			notified_at TIMESTAMP,
+			prompt_generation INTEGER NOT NULL DEFAULT 0,
+			claimed_prompt_generation INTEGER NOT NULL DEFAULT 0,
+			next_prompt_at TIMESTAMP,
+			last_prompted_at TIMESTAMP,
 			revision INTEGER NOT NULL DEFAULT 0,
 			updated_at TIMESTAMP NOT NULL
 		);`,
@@ -460,6 +464,10 @@ func (s *Storage) ensureEyeCareColumns() error {
 			{"due_generation", "INTEGER NOT NULL DEFAULT 0"},
 			{"notified_generation", "INTEGER NOT NULL DEFAULT 0"},
 			{"notified_at", "TIMESTAMP"},
+			{"prompt_generation", "INTEGER NOT NULL DEFAULT 0"},
+			{"claimed_prompt_generation", "INTEGER NOT NULL DEFAULT 0"},
+			{"next_prompt_at", "TIMESTAMP"},
+			{"last_prompted_at", "TIMESTAMP"},
 		},
 		"eye_care_requests": {
 			{"action", "TEXT NOT NULL DEFAULT ''"},

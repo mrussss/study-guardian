@@ -28,6 +28,9 @@ try {
     & $autostart -Disable -RootDir $tempRoot -StartupDirectory $startup | Out-Null
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $startup "StudyGuardian.lnk"))) "autostart removal failed"
 
+    Assert-True (-not (Test-StudyGuardianLoginStartAllowed -RootDir $tempRoot)) "explicit disabled preference was lost"
+    # A surviving old startup shortcut must not override an explicit disable.
+    Assert-True ((& $autostart -GetState -RootDir $tempRoot -StartupDirectory $startup) -eq "disabled") "disabled state changed on read"
     $desktopScript = Join-Path $repoRoot "scripts\set-desktop-shortcut.ps1"
     & $desktopScript -Create -RootDir $tempRoot -DesktopDirectory $desktop | Out-Null
     Assert-True ((& $desktopScript -GetState -RootDir $tempRoot -DesktopDirectory $desktop) -eq "enabled") "desktop shortcut state failed"

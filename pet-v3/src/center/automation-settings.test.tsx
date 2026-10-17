@@ -41,72 +41,41 @@ function controlAdapter(overrides: Partial<SupervisorControlAdapter> = {}): Supe
   } as SupervisorControlAdapter;
 }
 
-test("automation draft survives a stale dashboard source until save", async () => {
-  let saved: NativeAutomationSettings | undefined;
-  const control = controlAdapter({ saveAutomationSettings: async value => { saved = value; return { ok: true }; } });
-  const view = render(<AutomationSettingsCard settings={settings} control={control} onRefresh={() => Promise.resolve({ automation_settings: { ...settings, enabled: true } } as never)} />);
-  const user = userEvent.setup();
-  const enabled = screen.getAllByRole("checkbox")[0] as HTMLInputElement;
-  await user.click(enabled);
-  assert.equal(enabled.checked, true);
-  assert.ok(screen.getByText("有未保存的修改"));
-  view.rerender(<AutomationSettingsCard settings={{ ...settings }} control={control} onRefresh={() => Promise.resolve({ automation_settings: { ...settings, enabled: true } } as never)} />);
-  assert.equal((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked, true);
-  await user.click(screen.getByRole("button", { name: /保存自动计时/ }));
-  await waitFor(() => assert.equal(saved?.enabled, true));
-  await waitFor(() => assert.equal(screen.queryByText("有未保存的修改"), null));
-  assert.ok(screen.getByRole("status").textContent?.includes("已保存"));
-});
 
-test("automation save failure keeps the draft dirty for retry", async () => {
-  const control = controlAdapter({ saveAutomationSettings: async () => ({ ok: false as const, error_kind: "unavailable" as const }) });
-  render(<AutomationSettingsCard settings={settings} control={control} />);
-  const user = userEvent.setup();
-  await user.click(screen.getAllByRole("checkbox")[0]);
-  await user.click(screen.getByRole("button", { name: /保存自动计时/ }));
-  await waitFor(() => assert.ok(screen.getAllByRole("status").some(item => item.textContent?.includes("暂时无法保存"))));
-  assert.ok(screen.getByText("有未保存的修改"));
-  assert.equal((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked, true);
+test("turning automation off saves immediately and stays off after remount", async () => {
+ let canonical={...settings,enabled:true};let writes=0;
+ const control=controlAdapter({saveAutomationSettings:async value=>{canonical=value;writes++;return {ok:true}}});
+ const refresh=async()=>({automation_settings:canonical} as never);
+ const view=render(<AutomationSettingsCard settings={canonical} control={control} onRefresh={refresh}/>);
+ await userEvent.setup().click(screen.getAllByRole("checkbox")[0]);
+ await waitFor(()=>assert.equal(writes,1));
+ await waitFor(()=>assert.equal(screen.queryByText("有未保存的修改"),null));
+ assert.equal(canonical.enabled,false);view.unmount();
+ render(<AutomationSettingsCard settings={canonical} control={control} onRefresh={refresh}/>);
+ assert.equal((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked,false);
 });
-
-test("successful save keeps the draft dirty when refresh still returns old settings", async () => {
-  let saves = 0;
-  const control = controlAdapter({ saveAutomationSettings: async () => { saves += 1; return { ok: true }; } });
-  render(<AutomationSettingsCard settings={settings} control={control} onRefresh={() => Promise.resolve({ automation_settings: settings } as never)} />);
-  const user = userEvent.setup();
-  await user.click(screen.getAllByRole("checkbox")[0]);
-  await user.click(screen.getByRole("button", { name: /保存自动计时/ }));
-  await waitFor(() => assert.equal(saves, 1));
-  assert.ok(screen.getByText("有未保存的修改"));
-  assert.ok(screen.getAllByRole("status").some(item => item.textContent?.includes("等待后台配置确认")));
-  assert.equal(screen.queryByText("自动学习计时设置已保存"), null);
+test("failed immediate save retains draft and reports failure",async()=>{
+ render(<AutomationSettingsCard settings={settings} control={controlAdapter({saveAutomationSettings:async()=>({ok:false,error_kind:"unavailable"})})}/>);
+ await userEvent.setup().click(screen.getAllByRole("checkbox")[0]);
+ await waitFor(()=>assert.ok(screen.getAllByRole("status").some(x=>x.textContent?.includes("暂时无法保存"))));
+ assert.ok(screen.getByText("有未保存的修改"));
 });
-
-test("a later canonical refresh clears dirty after a previously stale refresh", async () => {
-  const control = controlAdapter({ saveAutomationSettings: async () => ({ ok: true }) });
-  const view = render(<AutomationSettingsCard settings={settings} control={control} onRefresh={() => Promise.resolve({ automation_settings: settings } as never)} />);
-  const user = userEvent.setup();
-  await user.click(screen.getAllByRole("checkbox")[0]);
-  await user.click(screen.getByRole("button", { name: /保存自动计时/ }));
-  await waitFor(() => assert.ok(screen.getByText("有未保存的修改")));
-  const canonical = { ...settings, enabled: true };
-  view.rerender(<AutomationSettingsCard settings={canonical} control={control} onRefresh={() => Promise.resolve({ automation_settings: canonical } as never)} />);
-  await waitFor(() => assert.equal(screen.queryByText("有未保存的修改"), null));
-  assert.ok(screen.getAllByRole("status").some(item => item.textContent?.includes("已保存")));
+test("late stale source cannot undo a switch awaiting confirmation",async()=>{
+ const control=controlAdapter({saveAutomationSettings:async()=>({ok:true})});
+ const view=render(<AutomationSettingsCard settings={settings} control={control} onRefresh={async()=>({automation_settings:settings} as never)}/>);
+ await userEvent.setup().click(screen.getAllByRole("checkbox")[0]);
+ await waitFor(()=>assert.ok(screen.getAllByRole("status").some(x=>x.textContent?.includes("等待后台配置确认"))));
+ view.rerender(<AutomationSettingsCard settings={{...settings}} control={control}/>);
+ assert.equal((screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked,true);
+ view.rerender(<AutomationSettingsCard settings={{...settings,enabled:true}} control={control}/>);
+ await waitFor(()=>assert.equal(screen.queryByText("有未保存的修改"),null));
 });
-
-test("a late canonical refresh cannot overwrite a newer user edit", async () => {
-  const control = controlAdapter({ saveAutomationSettings: async () => ({ ok: true }) });
-  const view = render(<AutomationSettingsCard settings={settings} control={control} onRefresh={() => Promise.resolve({ automation_settings: settings } as never)} />);
-  const user = userEvent.setup();
-  await user.click(screen.getAllByRole("checkbox")[0]);
-  await user.click(screen.getByRole("button", { name: /保存自动计时/ }));
-  await waitFor(() => assert.ok(screen.getByText("有未保存的修改")));
-  const numberInput = screen.getByDisplayValue("45") as HTMLInputElement;
-  await user.clear(numberInput);
-  await user.type(numberInput, "120");
-  const lateCanonical = { ...settings, enabled: true };
-  view.rerender(<AutomationSettingsCard settings={lateCanonical} control={control} onRefresh={() => Promise.resolve({ automation_settings: lateCanonical } as never)} />);
-  assert.equal((screen.getByDisplayValue("120") as HTMLInputElement).value, "120");
-  assert.ok(screen.getByText("有未保存的修改"));
+test("numeric edits remain explicit drafts until saved",async()=>{
+ let saved:NativeAutomationSettings|undefined;
+ const control=controlAdapter({saveAutomationSettings:async value=>{saved=value;return {ok:true}}});
+ render(<AutomationSettingsCard settings={settings} control={control} onRefresh={async()=>({automation_settings:saved} as never)}/>);
+ const user=userEvent.setup();const input=screen.getByDisplayValue("45");
+ await user.clear(input);await user.type(input,"120");assert.equal(saved,undefined);
+ await user.click(screen.getByRole("button",{name:/保存自动计时/}));
+ await waitFor(()=>assert.equal(saved?.auto_resume.focused_stable_seconds,120));
 });

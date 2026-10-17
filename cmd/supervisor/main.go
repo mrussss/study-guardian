@@ -402,7 +402,7 @@ func main() {
 				}
 
 				outcome := stateMgr.TickWithClassification(t, app, title, domain, isAFK, lastScreenChanged, isLocked, lastClassRes)
-				creditedFocusSeconds := motivationService.RecordTick(outcome)
+				motivationService.RecordTick(outcome)
 				eyeCareStatus := stateMgr.GetStatus()
 				if eyeCareService != nil {
 					if lastEyeCarePrune.IsZero() || outcome.Now.Sub(lastEyeCarePrune) >= 24*time.Hour {
@@ -419,21 +419,9 @@ func main() {
 						log.Printf("[EyeCare] state persistence degraded; retrying on subsequent ticks")
 						lastEyeCareStorageLog = time.Now()
 					}
-					if err := eyeCareService.RecordCreditedFocus(creditedFocusSeconds, outcome, eyeCareStatus); err != nil && time.Since(lastEyeCareStorageLog) >= time.Minute {
+					if err := eyeCareService.RecordComputerUse(outcome, eyeCareStatus); err != nil && time.Since(lastEyeCareStorageLog) >= time.Minute {
 						log.Printf("[EyeCare] focus checkpoint persistence degraded; retrying on subsequent ticks")
 						lastEyeCareStorageLog = time.Now()
-					}
-					if notification, err := eyeCareService.TakePendingNotification(outcome.Now); err != nil {
-						if time.Since(lastEyeCareStorageLog) >= time.Minute {
-							log.Printf("[EyeCare] notification claim unavailable; retrying on subsequent ticks")
-							lastEyeCareStorageLog = time.Now()
-						}
-					} else if notification != nil {
-						go func(item eyecare.Notification) {
-							if err := windows.SendToast(item.Title, item.Message); err != nil {
-								log.Printf("[EyeCare] toast delivery failed kind=%s", item.Kind)
-							}
-						}(*notification)
 					}
 				}
 				postStatus := stateMgr.GetStatus()

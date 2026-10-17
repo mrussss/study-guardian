@@ -58,6 +58,10 @@ type Status struct {
 	DueGeneration              int64      `json:"due_generation"`
 	NotifiedGeneration         int64      `json:"notified_generation"`
 	NotifiedAt                 *time.Time `json:"notified_at,omitempty"`
+	PromptGeneration           int64      `json:"prompt_generation"`
+	ClaimedPromptGeneration    int64      `json:"claimed_prompt_generation"`
+	NextPromptAt               *time.Time `json:"next_prompt_at,omitempty"`
+	LastPromptedAt             *time.Time `json:"last_prompted_at,omitempty"`
 	Revision                   int64      `json:"revision"`
 	UpdatedAt                  time.Time  `json:"updated_at"`
 	NotificationSuppressed     bool       `json:"notification_suppressed"`
@@ -66,9 +70,9 @@ type Status struct {
 }
 
 type Notification struct {
-	Kind    string
-	Title   string
-	Message string
+	Kind    string `json:"kind"`
+	Title   string `json:"title"`
+	Message string `json:"message"`
 }
 
 type ActionRequest struct {
@@ -179,6 +183,18 @@ func NewWithReminderSettingsProviderAndClock(cfg config.EyeCareConfig, reminderS
 		}
 		if found {
 			service.status = statusFromRecord(service.cfg, record)
+			// Older databases predate the prompt schedule. A due reminder is
+			// immediately eligible once, then follows the durable five-minute
+			// cadence just like a newly-created reminder.
+			if isDuePhase(service.status.Phase) && service.status.NextPromptAt == nil {
+				service.status.NextPromptAt = cloneTime(service.status.DueAt)
+				if service.status.NextPromptAt == nil {
+					service.status.NextPromptAt = timePointer(current)
+				}
+				if err := service.persistCandidateLocked(service.status, current, "", "", "", ""); err != nil {
+					service.setStorageFailure(err)
+				}
+			}
 		} else {
 			if err := service.persistCandidateLocked(service.status, current, "", "", "", ""); err != nil {
 				service.setStorageFailure(err)
@@ -225,8 +241,10 @@ func statusFromRecord(cfg config.EyeCareConfig, record storage.EyeCareStateRecor
 		SnoozeCount: record.SnoozeCount, CompletedShortBreaks: record.CompletedShortBreaks,
 		CompletedLongBreaks: record.CompletedLongBreaks, RetryFocusAfterSeconds: record.RetryFocusAfterSeconds,
 		DueGeneration: record.DueGeneration, NotifiedGeneration: record.NotifiedGeneration,
-		NotifiedAt: cloneTime(record.NotifiedAt),
-		Revision:   record.Revision, UpdatedAt: record.UpdatedAt,
+		NotifiedAt:       cloneTime(record.NotifiedAt),
+		PromptGeneration: record.PromptGeneration, ClaimedPromptGeneration: record.ClaimedPromptGeneration,
+		NextPromptAt: cloneTime(record.NextPromptAt), LastPromptedAt: cloneTime(record.LastPromptedAt),
+		Revision: record.Revision, UpdatedAt: record.UpdatedAt,
 	}
 }
 
@@ -255,6 +273,7 @@ func (s *Service) SaveSettings(value config.EyeCareConfig) (config.EyeCareConfig
 	if !value.Enabled {
 		next.Phase = Disabled
 		next.DueAt, next.SnoozeUntil = nil, nil
+		next.NextPromptAt = nil
 		next.DueGeneration = next.NotifiedGeneration
 	} else if next.Phase == Disabled {
 		next.Phase = Focusing
@@ -292,6 +311,10 @@ func (s *Service) RecordCreditedFocus(seconds int64, out state.TickOutcome, cano
 	if !s.cfg.Enabled || canonical.UserMode != state.UserModeStudy || isBreakPhase(s.status.Phase) {
 		return nil
 	}
+	return s.recordSecondsLocked(seconds, now)
+}
+
+func (s *Service) recordSecondsLocked(seconds int64, now time.Time) error {
 	next := cloneStatus(s.status)
 	credited := addBounded(seconds, s.unpersistedCreditedSeconds)
 	next.FocusSegmentSeconds = addBounded(next.FocusSegmentSeconds, credited)
@@ -307,6 +330,7 @@ func (s *Service) RecordCreditedFocus(seconds int64, out state.TickOutcome, cano
 		next.SnoozeCount = 0
 		next.RetryFocusAfterSeconds = 0
 		next.DueGeneration++
+		next.NextPromptAt = timePointer(now)
 		event = "DUE"
 	} else if next.Phase == Focusing && next.FocusSegmentSeconds >= shortDue && next.FocusSinceLongBreakSeconds >= next.RetryFocusAfterSeconds {
 		next.Phase = ShortBreakDue
@@ -314,6 +338,7 @@ func (s *Service) RecordCreditedFocus(seconds int64, out state.TickOutcome, cano
 		next.SnoozeUntil = nil
 		next.SnoozeCount = 0
 		next.DueGeneration++
+		next.NextPromptAt = timePointer(now)
 		event = "DUE"
 	}
 	if event != "" {
@@ -328,6 +353,54 @@ func (s *Service) RecordCreditedFocus(seconds int64, out state.TickOutcome, cano
 	next.StorageDegraded, next.StorageErrorKind = false, ""
 	s.status = next
 	return nil
+}
+
+// RecordComputerUse uses only bounded, valid local observations. It never
+// credits Motivation or infers task relation, and does not bridge sleep gaps.
+func (s *Service) RecordComputerUse(out state.TickOutcome, canonical state.SystemStatus) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := out.Now
+	if now.IsZero() {
+		return nil
+	}
+	if err := s.advanceLocked(now, canonical); err != nil {
+		return err
+	}
+	if !s.cfg.Enabled || isBreakPhase(s.status.Phase) || !out.ActivityValid {
+		return nil
+	}
+	// Five minutes without input is a break in computer use, not proof of eye rest.
+	if out.AfkSeconds >= 300 {
+		next := cloneStatus(s.status)
+		if next.FocusSegmentSeconds == 0 && !isDuePhase(next.Phase) {
+			return nil
+		}
+		next.FocusSegmentSeconds = 0
+		next.Phase = Focusing
+		next.DueAt, next.SnoozeUntil, next.NextPromptAt = nil, nil, nil
+		next.SnoozeCount = 0
+		next.Revision++
+		next.UpdatedAt = now
+		if err := s.persistCandidateLocked(next, now, "COMPUTER_USE_INTERRUPTED", "", "", ""); err != nil {
+			s.setStorageFailure(err)
+			return err
+		}
+		s.status = next
+		s.unpersistedCreditedSeconds = 0
+		return nil
+	}
+	if out.Locked || out.DeltaSeconds <= 0 || out.DeltaSeconds > 15 {
+		return nil
+	}
+	// Brief static reading and video viewing count; extended inactivity does not.
+	if out.Interaction != state.InteractionActive && out.Interaction != state.InteractionIdleDynamic && out.Interaction != state.InteractionIdleStatic {
+		return nil
+	}
+	return s.recordSecondsLocked(out.DeltaSeconds, now)
 }
 
 func (s *Service) Observe(now time.Time, canonical state.SystemStatus) error {
@@ -351,7 +424,7 @@ func (s *Service) Status() Status {
 	}
 	result := cloneStatus(s.status)
 	quiet, quietErr := s.inQuietHours(now)
-	result.NotificationSuppressed = quietErr != nil || quiet || (result.SnoozeUntil != nil && now.Before(*result.SnoozeUntil))
+	result.NotificationSuppressed = quietErr != nil || quiet || s.currentMode().Locked || (result.SnoozeUntil != nil && now.Before(*result.SnoozeUntil))
 	return result
 }
 
@@ -373,7 +446,14 @@ func (s *Service) TakePendingNotification(now time.Time) (*Notification, error) 
 	if quietErr != nil {
 		return nil, errors.New("reminder settings unavailable")
 	}
-	if !isDuePhase(s.status.Phase) || s.currentMode().UserMode != state.UserModeStudy || quiet || s.status.SnoozeUntil != nil && now.Before(*s.status.SnoozeUntil) || s.status.DueGeneration <= s.status.NotifiedGeneration {
+	canonical := s.currentMode()
+	if !isDuePhase(s.status.Phase) || canonical.Locked || quiet || s.status.SnoozeUntil != nil && now.Before(*s.status.SnoozeUntil) {
+		return nil, nil
+	}
+	if s.status.NextPromptAt == nil {
+		s.status.NextPromptAt = timePointer(now)
+	}
+	if now.Before(*s.status.NextPromptAt) {
 		return nil, nil
 	}
 	if s.store != nil {
@@ -389,15 +469,19 @@ func (s *Service) TakePendingNotification(now time.Time) (*Notification, error) 
 	next := cloneStatus(s.status)
 	next.NotifiedGeneration = next.DueGeneration
 	next.NotifiedAt = timePointer(now)
+	next.PromptGeneration++
+	next.ClaimedPromptGeneration = next.PromptGeneration
+	next.LastPromptedAt = timePointer(now)
+	next.NextPromptAt = timePointer(now.Add(5 * time.Minute))
 	next.StorageDegraded, next.StorageErrorKind = false, ""
 	s.status = next
 	if next.SnoozeCount > 0 {
 		return &Notification{Kind: "SNOOZE_EXPIRED", Title: "StudyGuardian 护眼提醒", Message: "延后时间到了，该让眼睛休息一下了。"}, nil
 	}
 	if next.Phase == LongBreakDue {
-		return &Notification{Kind: "LONG_BREAK_DUE", Title: "StudyGuardian 完整休息", Message: fmt.Sprintf("已累计有效专注 %s，建议安排一次 %d 分钟完整休息。", focusDurationLabel(s.cfg.LongBreakAfterFocusMinutes), s.cfg.LongBreakMinutes)}, nil
+		return &Notification{Kind: "LONG_BREAK_DUE", Title: "StudyGuardian 完整休息", Message: fmt.Sprintf("已累计使用电脑 %s，建议安排一次 %d 分钟完整休息。", focusDurationLabel(s.cfg.LongBreakAfterFocusMinutes), s.cfg.LongBreakMinutes)}, nil
 	}
-	return &Notification{Kind: "SHORT_BREAK_DUE", Title: "StudyGuardian 护眼提醒", Message: fmt.Sprintf("已有效专注 %d 分钟，起来走动一下，看看远处吧。", s.cfg.FocusMinutes)}, nil
+	return &Notification{Kind: "SHORT_BREAK_DUE", Title: "StudyGuardian 护眼提醒", Message: fmt.Sprintf("已持续使用电脑约 %d 分钟，起来走动一下，看看远处吧。", s.cfg.FocusMinutes)}, nil
 }
 
 func focusDurationLabel(minutes int) string {
@@ -488,27 +572,23 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		if next.Phase != ShortBreakDue {
 			return cloneStatus(s.status), errors.New("short break is not due")
 		}
-		if canonical.UserMode != state.UserModeStudy {
-			return cloneStatus(s.status), errors.New("eye-care break requires study mode")
-		}
 		modeAction = "START"
 		next.Phase = ShortBreak
 		next.BreakStartedAt = timePointer(now)
 		next.PlannedBreakEndAt = timePointer(now.Add(time.Duration(s.cfg.ShortBreakMinutes) * time.Minute))
 		next.SnoozeUntil = nil
+		next.NextPromptAt = nil
 		event = "BREAK_STARTED"
 	case StartLongBreak:
 		if next.Phase != LongBreakDue {
 			return cloneStatus(s.status), errors.New("long break is not due")
-		}
-		if canonical.UserMode != state.UserModeStudy {
-			return cloneStatus(s.status), errors.New("eye-care break requires study mode")
 		}
 		modeAction, long = "START", true
 		next.Phase = LongBreak
 		next.BreakStartedAt = timePointer(now)
 		next.PlannedBreakEndAt = timePointer(now.Add(time.Duration(s.cfg.LongBreakMinutes) * time.Minute))
 		next.SnoozeUntil = nil
+		next.NextPromptAt = nil
 		event = "BREAK_STARTED"
 	case Snooze:
 		if !isDuePhase(next.Phase) || next.SnoozeCount >= s.cfg.MaxSnoozes {
@@ -516,6 +596,7 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		}
 		next.SnoozeCount++
 		next.SnoozeUntil = timePointer(now.Add(time.Duration(s.cfg.SnoozeMinutes) * time.Minute))
+		next.NextPromptAt = cloneTime(next.SnoozeUntil)
 		event = "SNOOZED"
 	case Skip, Dismiss:
 		if !isDuePhase(next.Phase) {
@@ -524,6 +605,7 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		next.Phase = Focusing
 		next.RetryFocusAfterSeconds = next.FocusSinceLongBreakSeconds + 10*60
 		next.DueAt, next.SnoozeUntil = nil, nil
+		next.NextPromptAt = nil
 		next.SnoozeCount = 0
 		event = "SKIPPED"
 	case FinishEarly:
@@ -538,6 +620,7 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		next.RetryFocusAfterSeconds = next.FocusSinceLongBreakSeconds + 10*60
 		next.BreakStartedAt, next.PlannedBreakEndAt = nil, nil
 		next.DueAt, next.SnoozeUntil = nil, nil
+		next.NextPromptAt = nil
 		next.SnoozeCount = 0
 		event = "ABORTED"
 	case ResumeStudy:
@@ -551,6 +634,7 @@ func (s *Service) Act(request ActionRequest) (Status, error) {
 		next.Phase = Focusing
 		next.BreakStartedAt, next.PlannedBreakEndAt = nil, nil
 		next.DueAt, next.SnoozeUntil = nil, nil
+		next.NextPromptAt = nil
 		next.SnoozeCount = 0
 		event = "RESUMED"
 	default:
@@ -658,7 +742,7 @@ func (s *Service) advanceLocked(now time.Time, canonical state.SystemStatus) err
 		}
 		changed = true
 	}
-	if canonical.UserMode == state.UserModeOff && next.Phase != Disabled && next.Phase != Focusing {
+	if canonical.UserMode == state.UserModeOff && isBreakPhase(next.Phase) {
 		next.Phase = Focusing
 		if !s.cfg.Enabled {
 			next.Phase = Disabled
@@ -667,6 +751,7 @@ func (s *Service) advanceLocked(now time.Time, canonical state.SystemStatus) err
 		next.DueAt, next.SnoozeUntil = nil, nil
 		next.SnoozeCount = 0
 		next.DueGeneration = next.NotifiedGeneration
+		next.NextPromptAt = nil
 		event = "CANCELED"
 		changed = true
 	} else if isBreakPhase(next.Phase) && (canonical.UserMode != state.UserModeBreak || canonical.ModeOrigin != state.ModeOriginEyeCare) {
@@ -678,6 +763,7 @@ func (s *Service) advanceLocked(now time.Time, canonical state.SystemStatus) err
 		}
 		next.BreakStartedAt, next.PlannedBreakEndAt = nil, nil
 		next.DueAt, next.SnoozeUntil = nil, nil
+		next.NextPromptAt = nil
 		next.SnoozeCount = 0
 		if !s.cfg.Enabled {
 			next.Phase = Disabled
@@ -708,6 +794,7 @@ func (s *Service) advanceLocked(now time.Time, canonical state.SystemStatus) err
 		next.SnoozeUntil = nil
 		next.DueAt = timePointer(now)
 		next.DueGeneration++
+		next.NextPromptAt = timePointer(now)
 		event = "SNOOZE_EXPIRED"
 		changed = true
 	}
@@ -749,6 +836,8 @@ func stateRecord(value Status, now time.Time) storage.EyeCareStateRecord {
 		CompletedShortBreaks: value.CompletedShortBreaks, CompletedLongBreaks: value.CompletedLongBreaks,
 		RetryFocusAfterSeconds: value.RetryFocusAfterSeconds, DueGeneration: value.DueGeneration,
 		NotifiedGeneration: value.NotifiedGeneration, NotifiedAt: cloneTime(value.NotifiedAt),
+		PromptGeneration: value.PromptGeneration, ClaimedPromptGeneration: value.ClaimedPromptGeneration,
+		NextPromptAt: cloneTime(value.NextPromptAt), LastPromptedAt: cloneTime(value.LastPromptedAt),
 		Revision: value.Revision, UpdatedAt: now,
 	}
 }
@@ -808,7 +897,7 @@ func (s *Service) reconcilePendingRequests(now time.Time) error {
 				continue
 			}
 		case FinishEarly, ResumeStudy:
-			if canonical.UserMode != state.UserModeStudy {
+			if canonical.UserMode == state.UserModeBreak && canonical.ModeOrigin == state.ModeOriginEyeCare {
 				if failErr := s.store.FailEyeCareRequest(context.Background(), request.RequestID, request.Action, "reconciliation_required", "{}", s.status.Revision, now); failErr != nil {
 					return failErr
 				}
@@ -843,6 +932,8 @@ func cloneStatus(value Status) Status {
 	value.DueAt = cloneTime(value.DueAt)
 	value.SnoozeUntil = cloneTime(value.SnoozeUntil)
 	value.NotifiedAt = cloneTime(value.NotifiedAt)
+	value.NextPromptAt = cloneTime(value.NextPromptAt)
+	value.LastPromptedAt = cloneTime(value.LastPromptedAt)
 	return value
 }
 

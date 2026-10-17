@@ -1,0 +1,15 @@
+:root { color-scheme: dark; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+html, body, #eye-care-reminder { width: 100%; height: 100%; margin: 0; background: transparent; }
+body { overflow: hidden; }
+.reminder-shell { display: grid; width: 100%; height: 100%; box-sizing: border-box; padding: 12px; place-items: center; }
+.reminder-card { width: 100%; min-height: 100%; box-sizing: border-box; padding: 22px 24px 17px; color: #f7f4ff; background: linear-gradient(145deg, rgba(42, 31, 78, .98), rgba(26, 22, 51, .98)); border: 1px solid rgba(174, 157, 255, .48); border-radius: 18px; box-shadow: 0 16px 38px rgba(11, 7, 28, .45), inset 0 1px 0 rgba(255,255,255,.08); }
+.reminder-icon { display: grid; width: 42px; height: 42px; margin-bottom: 11px; color: #d8ceff; background: rgba(156, 139, 255, .2); border-radius: 13px; place-items: center; }
+.reminder-copy h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: .01em; }
+.reminder-copy p { margin: 8px 0 0; color: #d8d1ee; font-size: 13px; line-height: 1.5; }
+.reminder-actions { display: flex; gap: 8px; margin-top: 17px; }
+.reminder-actions button { min-height: 32px; padding: 0 11px; color: #e9e4ff; background: rgba(255,255,255,.08); border: 1px solid rgba(205, 195, 255, .34); border-radius: 8px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 650; }
+.reminder-actions button:hover { color: #fff; border-color: #bcaeff; background: rgba(156, 139, 255, .18); }
+.reminder-actions button:disabled { cursor: default; opacity: .55; }
+.reminder-actions .reminder-primary { color: #1e153c; background: #c9bdff; border-color: #c9bdff; }
+.reminder-hint, .reminder-notice { margin: 10px 0 0; color: #aaa1ca; font-size: 11px; }
+.reminder-notice { color: #ffd48a; }

@@ -627,7 +627,7 @@ func TestReminderSettingsConcurrentReadsAndUpdatesAreSafe(t *testing.T) {
 	wait.Wait()
 }
 
-func TestLegacyWaitingReturnStudyIsResumedAndOffCancelsDue(t *testing.T) {
+func TestLegacyWaitingReturnStudyIsResumedAndOffRetainsComputerUseReminder(t *testing.T) {
 	now := time.Date(2026, 9, 13, 10, 0, 0, 0, time.Local)
 	service, store, modes, clock := newTestService(t, now)
 	addFocus(service, 2400, now)
@@ -663,11 +663,11 @@ func TestLegacyWaitingReturnStudyIsResumedAndOffCancelsDue(t *testing.T) {
 	if err := service.Observe(now, modes.status); err != nil {
 		t.Fatal(err)
 	}
-	if got := service.Status(); got.Phase != Focusing {
-		t.Fatalf("OFF should clear due state: %+v", got)
+	if got := service.Status(); got.Phase != ShortBreakDue {
+		t.Fatalf("OFF must retain independent computer-use reminder: %+v", got)
 	}
-	if notification, err := service.TakePendingNotification(now); err != nil || notification != nil {
-		t.Fatalf("OFF left a stale notification: %+v err=%v", notification, err)
+	if notification, err := service.TakePendingNotification(now); err != nil || notification == nil {
+		t.Fatalf("OFF lost computer-use notification: %+v err=%v", notification, err)
 	}
 }
 
@@ -954,7 +954,7 @@ func TestShortCycleUsesOnlyTemporarySQLiteAndFakeClock(t *testing.T) {
 	if due.Phase != ShortBreakDue || due.DueGeneration != 1 {
 		t.Fatalf("isolated 60-second short cycle did not become due: %+v", due)
 	}
-	if notice, err := service.TakePendingNotification(clock.Now()); err != nil || notice == nil || notice.Message != "已有效专注 1 分钟，起来走动一下，看看远处吧。" {
+	if notice, err := service.TakePendingNotification(clock.Now()); err != nil || notice == nil || notice.Message != "已持续使用电脑约 1 分钟，起来走动一下，看看远处吧。" {
 		t.Fatalf("isolated short-cycle notice=%+v err=%v", notice, err)
 	}
 	started, err := service.Act(ActionRequest{Action: StartShortBreak, ExpectedRevision: due.Revision, RequestID: "short-cycle-start"})
@@ -977,7 +977,7 @@ func TestShortCycleUsesOnlyTemporarySQLiteAndFakeClock(t *testing.T) {
 	if longDue.Phase != LongBreakDue || longDue.FocusSinceLongBreakSeconds != 120 {
 		t.Fatalf("isolated 120-second long cycle did not become due: %+v", longDue)
 	}
-	if notice, err := service.TakePendingNotification(clock.Now()); err != nil || notice == nil || notice.Message != "已累计有效专注 2 分钟，建议安排一次 1 分钟完整休息。" {
+	if notice, err := service.TakePendingNotification(clock.Now()); err != nil || notice == nil || notice.Message != "已累计使用电脑 2 分钟，建议安排一次 1 分钟完整休息。" {
 		t.Fatalf("isolated long-cycle notice=%+v err=%v", notice, err)
 	}
 	long, err := service.Act(ActionRequest{Action: StartLongBreak, ExpectedRevision: longDue.Revision, RequestID: "long-cycle-start"})
@@ -1006,4 +1006,56 @@ func setTestBreakEnd(t *testing.T, service *Service, end time.Time) {
 		t.Fatal(err)
 	}
 	service.status = next
+}
+
+func TestComputerUseRemindsInStandbyWithoutCreditingStudy(t *testing.T) {
+	now := time.Date(2026, 10, 17, 10, 0, 0, 0, time.Local)
+	service, _, modes, clock := newTestService(t, now)
+	modes.status.UserMode = state.UserModeStandby
+	for sec := 2; sec <= 2400; sec += 2 {
+		*clock = now.Add(time.Duration(sec) * time.Second)
+		out := state.TickOutcome{Now: *clock, DeltaSeconds: 2, UserMode: state.UserModeStandby, ActivityValid: true, Interaction: state.InteractionActive, Relation: state.RelationUnknown}
+		if err := service.RecordComputerUse(out, modes.status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := service.Status(); got.Phase != ShortBreakDue || got.FocusSegmentSeconds != 2400 {
+		t.Fatalf("status=%+v", got)
+	}
+	if modes.status.UserMode != state.UserModeStandby || modes.starts != 0 {
+		t.Fatal("reminder changed learning mode")
+	}
+	first, err := service.TakePendingNotification(*clock)
+	if err != nil || first == nil {
+		t.Fatalf("notification=%+v err=%v", first, err)
+	}
+	if again, err := service.TakePendingNotification(clock.Add(299 * time.Second)); err != nil || again != nil {
+		t.Fatal("repeated too early")
+	}
+	*clock = clock.Add(5 * time.Minute)
+	if again, err := service.TakePendingNotification(*clock); err != nil || again == nil {
+		t.Fatalf("missing repeat: %v", err)
+	}
+}
+
+func TestComputerUseRejectsUnavailableSleepAndResetsAfterAway(t *testing.T) {
+	now := time.Date(2026, 10, 17, 10, 0, 0, 0, time.Local)
+	service, _, modes, _ := newTestService(t, now)
+	out := state.TickOutcome{Now: now, DeltaSeconds: 2, ActivityValid: true, Interaction: state.InteractionIdleStatic}
+	if err := service.RecordComputerUse(out, modes.status); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []state.TickOutcome{{Now: now, DeltaSeconds: 2, Locked: true, ActivityValid: true}, {Now: now, DeltaSeconds: 3600, ActivityValid: true}, {Now: now, DeltaSeconds: 2}} {
+		service.RecordComputerUse(bad, modes.status)
+	}
+	if got := service.Status(); got.FocusSegmentSeconds != 2 {
+		t.Fatalf("credited invalid sample: %+v", got)
+	}
+	out.AfkSeconds = 300
+	if err := service.RecordComputerUse(out, modes.status); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Status(); got.FocusSegmentSeconds != 0 {
+		t.Fatalf("away did not reset segment: %+v", got)
+	}
 }

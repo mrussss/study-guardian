@@ -80,6 +80,7 @@ type Manager struct {
 	activityWatchStableOK            bool
 	activityWatchHealthPhase         ActivityWatchHealthPhase
 	screenSensorOK                   bool
+	locked                           bool
 	currentReminder                  *ReminderEvent
 	reminderRecoverySince            time.Time
 	pendingAutomationIntent          *AutomationIntent
@@ -143,6 +144,7 @@ func NewPersistentManager(
 		// never change the user's mode after a restart.
 		openSess, openErr := store.LoadOpenSession(ctx)
 		if openErr == nil {
+			m.task = openSess.Task
 			if storage.LocalDate(openSess.StartedAt) == dateStr {
 				switch UserMode(openSess.Mode) {
 				case UserModeStandby, UserModeStudy, UserModeBreak, UserModeOff:
@@ -296,6 +298,7 @@ func (m *Manager) GetStatus() SystemStatus {
 		ModeOrigin:                       m.modeOrigin,
 		PauseReason:                      m.pauseReason,
 		AutoResumeEligible:               m.autoResumeEligible,
+		Locked:                           m.locked,
 		ManualOverrideUntil:              m.manualOverrideUntil,
 		AutoPauseSnoozeUntil:             m.autoPauseSnoozeUntil,
 		AutomationDiagnostics:            cloneAutomationDiagnostics(m.automationDiagnostics), PendingAutomationIntent: pending,
@@ -414,11 +417,16 @@ func (m *Manager) RestoreEyeCareBreak(long bool) error {
 }
 
 func (m *Manager) setModeEyeCareBreakLocked(long, bumpStudyEvidence bool) error {
-	if m.userMode != UserModeStudy {
-		return errors.New("eye-care break requires STUDY mode")
+	if m.userMode == UserModeBreak && m.modeOrigin == ModeOriginEyeCare {
+		return errors.New("eye-care break already active")
 	}
 	now := m.clock.Now()
 	m.checkMidnightResetLocked(now)
+	if bumpStudyEvidence && m.storage != nil {
+		if err := m.storage.SetSetting(context.Background(), "eye_care.return_mode.v1", string(m.userMode), now); err != nil {
+			return err
+		}
+	}
 	newSessionID := newSessionID(now)
 	pauseReason := PauseReasonEyeCareShort
 	if long {
@@ -452,10 +460,21 @@ func (m *Manager) ResumeEyeCareStudy() error {
 	}
 	now := m.clock.Now()
 	newSessionID := newSessionID(now)
-	if err := m.persistModeTransitionLocked(now, "EYE_CARE_RESUMED", newSessionID, UserModeStudy, ModeOriginManual, PauseReasonNone, false, false); err != nil {
+	returnMode := UserModeStudy
+	if m.storage != nil {
+		if raw, found, err := m.storage.GetSetting(context.Background(), "eye_care.return_mode.v1"); err != nil {
+			return err
+		} else if found {
+			switch UserMode(raw) {
+			case UserModeStandby, UserModeStudy, UserModeBreak, UserModeOff:
+				returnMode = UserMode(raw)
+			}
+		}
+	}
+	if err := m.persistModeTransitionLocked(now, "EYE_CARE_RESUMED", newSessionID, returnMode, ModeOriginManual, PauseReasonNone, false, false); err != nil {
 		return err
 	}
-	m.userMode = UserModeStudy
+	m.userMode = returnMode
 	m.modeOrigin = ModeOriginManual
 	m.pauseReason = PauseReasonNone
 	m.autoResumeEligible = false
@@ -971,6 +990,7 @@ func (m *Manager) TickWithClassification(
 ) TickOutcome {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.locked = isLocked
 
 	// 1. Check midnight crossing
 	m.checkMidnightResetLocked(now)

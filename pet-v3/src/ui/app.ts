@@ -1,11 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import { AnimationEngine } from "../animation/engine";
-import { loadSkinAnimation, type LoadedAnimation } from "../animation/assets";
-import { drawPixelFrame, splitHorizontal } from "../animation/sprite";
 import { BehaviorEngine, type VisualState } from "../behavior/engine";
+import { MockSupervisorRuntime, parseMockScenario } from "../mock/supervisor";
 import { mockActivityWatchStale, mockSemantic, mockSupervisorOffline } from "../mock/semantic";
 import type { Activity, CurrentActivityView, Relation, UserMode } from "../model/semantic";
-import { loadSkinManifest } from "../skin";
 import { getPetTaskLabel } from "./task-label";
 import {
   NativeSupervisorAdapter,
@@ -15,14 +12,6 @@ import {
   type NativeEyeCareStatus,
   type ControlErrorKind,
 } from "../transport/supervisor";
-import legacyManifest from "../skins/studyguardian-pixel/manifest.json";
-import idleURL from "../skins/studyguardian-pixel/sprites/idle.png";
-import studyURL from "../skins/studyguardian-pixel/sprites/study.png";
-import distractedURL from "../skins/studyguardian-pixel/sprites/distracted.png";
-import restURL from "../skins/studyguardian-pixel/sprites/rest.png";
-import talkURL from "../skins/studyguardian-pixel/sprites/talk.png";
-import celebrateURL from "../skins/studyguardian-pixel/sprites/celebrate.png";
-
 const colors: Record<VisualState, string> = {
   IDLE: "#8aa0b8", CODING: "#50d890", ALGORITHM: "#5fc6ff", READING: "#f1d36b", WRITING: "#d39aff",
   WATCHING: "#ff9e72", LEARNING: "#7fe7df", DISTRACTED: "#ff6978", RESTING: "#b4a7d6", OFFLINE: "#66717e",
@@ -33,11 +22,6 @@ const visualStateLabels: Record<VisualState, string> = {
   IDLE: "等待开始", CODING: "编程中", ALGORITHM: "算法学习", READING: "阅读中", WRITING: "写作中",
   WATCHING: "观看学习资料", LEARNING: "学习中", DISTRACTED: "可能分心", RESTING: "休息中", OFFLINE: "服务离线",
   THINKING: "思考中", CELEBRATE: "完成啦", TALKING: "正在交流",
-};
-
-const skin = loadSkinManifest(legacyManifest);
-const skinAssets: Record<string, string> = {
-  idle: idleURL, study: studyURL, distracted: distractedURL, rest: restURL, talk: talkURL, celebrate: celebrateURL,
 };
 
 function isTauriRuntime(): boolean {
@@ -66,29 +50,28 @@ function controlErrorMessage(kind: ControlErrorKind): string {
 
 export function mountApp(root: HTMLElement): void {
   const engine = new BehaviorEngine();
-  const animation = new AnimationEngine();
   const nativeRuntime = isTauriRuntime();
   const supervisorAdapter = nativeRuntime ? new NativeSupervisorAdapter() : null;
   const supervisorControl = nativeRuntime ? new NativeSupervisorControlAdapter() : null;
   const supervisorPoll = supervisorAdapter ? new SupervisorPollLoop(supervisorAdapter) : null;
   const showDevPanel = import.meta.env.DEV && import.meta.env.VITE_PET_DEV_PANEL === "1";
-  const emergencyFrames = splitHorizontal(96, 96, 24, 96);
   let semantic: CurrentActivityView = mockSemantic({});
   let connected = true;
   let eyeCareSettings: NativeEyeCareSettings | undefined;
   let eyeCareStatus: NativeEyeCareStatus | undefined;
   let clickThrough = false;
-  let lastFrame = performance.now();
-  let requestedState: VisualState | null = null;
-  let activeAnimation: LoadedAnimation | null = null;
-  let animationRequest = 0;
+  let studySeconds: number | undefined = nativeRuntime ? undefined : 1500;
   let panelOpen = false;
+  let reminderClaimInFlight = false;
   root.innerHTML = `<section class="pet-shell">
-    <canvas class="pet-canvas" width="220" height="220" aria-label="StudyGuardian Pet，按住拖动" title="按住桌宠拖动；点击下方面板按钮打开控制"></canvas>
-    <div class="pet-state" data-state>学习中</div>
+    <div class="timer-face" title="按住计时器拖动">
+      <svg class="timer-ring" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="16"/><circle class="timer-ring-progress" cx="20" cy="20" r="16" pathLength="100" data-progress/><path d="M20 10v10l6 4" class="timer-hand"/></svg>
+      <div class="timer-main"><span class="pet-state" data-state>等待学习</span><strong class="timer-digits" data-time aria-label="今日学习计时">--:--</strong></div>
+    </div>
+    <div class="timer-eye" data-eye-timer>护眼 · 等待数据</div>
     <div class="pet-eye-care-bubble" data-eye-care-bubble role="status" aria-live="polite" hidden></div>
     <div class="pet-task" data-task></div>
-    <button class="pet-panel-entry" data-open-panel type="button" aria-label="打开 StudyGuardian 快捷面板">学习面板 <span aria-hidden="true">↗</span></button>
+    <button class="pet-panel-entry" data-open-panel type="button" aria-label="打开 StudyGuardian 快捷面板">面板 <span aria-hidden="true">↗</span></button>
     <div class="pet-entry-error" data-entry-error role="status" hidden></div>
     <div class="pet-control-panel" data-control-panel data-no-drag hidden>
       <div class="pet-control-title" data-control-title></div>
@@ -109,7 +92,9 @@ export function mountApp(root: HTMLElement): void {
   </section>`;
   const panelEntry = root.querySelector<HTMLButtonElement>("[data-open-panel]")!;
   const entryError = root.querySelector<HTMLElement>("[data-entry-error]")!;
-  const canvas = root.querySelector<HTMLCanvasElement>("canvas")!;
+  const timeLabel = root.querySelector<HTMLElement>("[data-time]")!;
+  const eyeTimer = root.querySelector<HTMLElement>("[data-eye-timer]")!;
+  const progress = root.querySelector<SVGCircleElement>("[data-progress]")!;
   const stateLabel = root.querySelector<HTMLElement>("[data-state]")!;
   const eyeCareBubble = root.querySelector<HTMLElement>("[data-eye-care-bubble]")!;
   const taskLabel = root.querySelector<HTMLElement>("[data-task]")!;
@@ -134,12 +119,6 @@ export function mountApp(root: HTMLElement): void {
       if (eyeCareBubble.textContent !== "护眼状态暂不可用\n连接恢复后确认提醒") eyeCareBubble.textContent = "护眼状态暂不可用\n连接恢复后确认提醒";
       eyeCareBubble.hidden = false;
       root.querySelector(".pet-shell")?.classList.add("has-eye-care");
-      return;
-    }
-    if ((current.phase === "SHORT_BREAK_DUE" || current.phase === "LONG_BREAK_DUE") && semantic.user_mode !== "STUDY") {
-      eyeCareBubble.hidden = true;
-      eyeCareBubble.textContent = "";
-      root.querySelector(".pet-shell")?.classList.remove("has-eye-care");
       return;
     }
     if (current.notification_suppressed) { eyeCareBubble.hidden = true; eyeCareBubble.textContent = ""; root.querySelector(".pet-shell")?.classList.remove("has-eye-care"); return; }
@@ -221,56 +200,18 @@ export function mountApp(root: HTMLElement): void {
   startBreak.addEventListener("click", () => { void runMode("BREAK"); });
   closePanel.addEventListener("click", () => setPanelOpen(false));
 
-  const drawEmergencyPlaceholder = (state: VisualState): void => {
-    const ctx = canvas.getContext("2d")!;
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = colors[state];
-    const frameOffset = animation.frame()?.sx ?? emergencyFrames[0]?.sx ?? 0;
-    const bob = Math.floor(frameOffset / 24) % 2;
-    ctx.fillRect(90, 62 + bob, 40, 48);
-    ctx.fillRect(82, 76 + bob, 56, 28);
-    ctx.fillStyle = "#18202b";
-    ctx.fillRect(98, 76, 6, 6); ctx.fillRect(116, 76, 6, 6); ctx.fillRect(100, 94, 20, 4);
-    ctx.fillStyle = colors[state];
-    ctx.fillRect(76, 114, 68, 8);
-  };
-
-  const draw = (state: VisualState): void => {
-    const ctx = canvas.getContext("2d")!;
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const frame = animation.frame();
-    if (activeAnimation && frame) {
-      const displaySize = skin.display_size;
-      const offset = Math.floor((canvas.width - displaySize) / 2);
-      drawPixelFrame(ctx, activeAnimation.image, frame, offset, offset, displaySize, displaySize);
-      return;
-    }
-    drawEmergencyPlaceholder(state);
-  };
-
-  const selectAnimation = async (state: VisualState): Promise<void> => {
-    const request = ++animationRequest;
-    const loaded = await loadSkinAnimation(skin, state, skinAssets);
-    if (request !== animationRequest) return;
-    activeAnimation = loaded;
-    if (loaded) animation.loop(loaded.clip);
-  };
-
   const refresh = (now: number): void => {
     const state = engine.update({ connected, semantic, nowMs: now });
-    if (requestedState !== state) {
-      requestedState = state;
-      void selectAnimation(state);
-    }
-    animation.update(now - lastFrame);
     stateLabel.textContent = visualStateLabels[state];
     stateLabel.style.color = colors[state];
-    taskLabel.textContent = getPetTaskLabel(connected, semantic.task);
+    taskLabel.textContent = connected ? (semantic.task || "自由学习") : getPetTaskLabel(false, semantic.task);
     if (panelOpen) renderPanel();
-    draw(state);
-    lastFrame = now;
+    const duration = (seconds: number): string => { const n = Math.max(0, Math.floor(seconds)); return `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`; };
+    timeLabel.textContent = connected && studySeconds !== undefined ? duration(studySeconds) : "--:--";
+    root.querySelector(".pet-shell")?.classList.toggle("is-running", connected && semantic.user_mode === "STUDY");
+    const remaining = Math.max(0, (eyeCareSettings?.focus_minutes ?? 40) * 60 - (eyeCareStatus?.focus_segment_seconds ?? 0));
+    eyeTimer.textContent = !connected ? "护眼 · 等待连接" : !eyeCareStatus ? "护眼 · 等待数据" : !eyeCareStatus.enabled ? "护眼 · 未开启" : eyeCareStatus.phase === "FOCUSING" ? `护眼 ${duration(remaining)}` : ["SHORT_BREAK_DUE", "LONG_BREAK_DUE"].includes(eyeCareStatus.phase) ? "护眼 · 该休息了" : "护眼 · 休息中";
+    progress.style.strokeDasharray = `${Math.min(100, 100 * (eyeCareStatus?.focus_segment_seconds ?? 0) / ((eyeCareSettings?.focus_minutes ?? 40) * 60))} 100`;
     requestAnimationFrame(refresh);
   };
   if (showDevPanel) {
@@ -302,10 +243,30 @@ export function mountApp(root: HTMLElement): void {
   supervisorPoll?.start(snapshot => {
     connected = snapshot.connected;
     semantic = snapshot.semantic;
+    studySeconds = snapshot.study_seconds;
     if (snapshot.eye_care_settings) eyeCareSettings = snapshot.eye_care_settings;
     if (snapshot.eye_care_status) eyeCareStatus = snapshot.eye_care_status;
     renderEyeCareBubble();
     if (panelOpen) renderPanel();
+    if (nativeRuntime && snapshot.connected && snapshot.eye_care_status && snapshot.eye_care_status.enabled &&
+      (snapshot.eye_care_status.phase === "SHORT_BREAK_DUE" || snapshot.eye_care_status.phase === "LONG_BREAK_DUE") &&
+      !snapshot.eye_care_status.notification_suppressed && !reminderClaimInFlight) {
+      reminderClaimInFlight = true;
+      void invoke("supervisor_claim_eye_care_notification").catch(() => undefined).finally(() => {
+        reminderClaimInFlight = false;
+      });
+    }
   });
+  if (!nativeRuntime) {
+    const browserMock = new MockSupervisorRuntime(parseMockScenario(window.location.search));
+    void browserMock.poll().then(snapshot => {
+      connected = snapshot.connected;
+      semantic = snapshot.semantic ?? mockSemantic({ user_mode: snapshot.status?.user_mode ?? "STANDBY", task: snapshot.status?.task ?? "" });
+      studySeconds = snapshot.status?.study_seconds;
+      eyeCareSettings = snapshot.eye_care_settings;
+      eyeCareStatus = snapshot.eye_care_status;
+      renderEyeCareBubble();
+    });
+  }
   requestAnimationFrame(refresh);
 }

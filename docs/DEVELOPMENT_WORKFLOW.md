@@ -59,11 +59,11 @@ Mock 与 native 使用同一组 `SupervisorDashboardAdapter`、`SupervisorContro
 
 ## 护眼节奏
 
-- 业务状态位于 Go `internal/eyecare`，只累计 Motivation 实际接受的有效专注秒数；ActivityWatch 不可用时不按墙上时间补算。
+- 业务状态位于 Go `internal/eyecare`。按 2026-10-17 用户要求，护眼改为独立累计有效本机电脑使用观察（含短暂静态阅读、动态观看），与学习模式、任务主题、Motivation 积分解耦。单次间隔超过 15 秒、ActivityWatch 无效或锁屏时不计；无输入约 5 分钟重开当前 40 分钟周期，不声称已验证真实远眺。旧 `RecordCreditedFocus` 仅保留兼容，生产 worker 只调用 `RecordComputerUse`，禁止双计。
 - 护眼休息使用独立 `EYE_CARE` 模式来源，禁止自动恢复提前结束。短休息结束后进入等待返回；必须由用户显式点击继续。
 - `eye_care_state`、审计和 action request 幂等记录持久化到 Supervisor SQLite。Tauri/native 与 React transport 只暴露枚举、范围和 RFC3339 校验后的字段。
 - UI 文案不能宣称验证了真实远眺或手机使用。该功能不增加摄像头、截图或 AI 调用；免打扰时桌宠提醒隐藏，状态仍可在 Dashboard/Quick Panel 静默查看。
-- 默认节奏为关闭状态下的 `40/5/120/20`。短周期只在隔离的开发运行时验证，不改写生产用户配置；生产数据库改动前先备份。
+- 默认节奏为关闭状态下的 `40/5/120/20`。用户本机按明确授权开启 40 分钟电脑使用提醒；到期未处理每 5 分钟重复一次，受现有免打扰设置约束。护眼休息结束返回开始休息前的模式，不能因休息完成而自行开启学习。短周期只在隔离的开发运行时验证，不改写生产用户配置；生产数据库改动前先备份。
 
 最小自动门禁：`go test ./...`、`./scripts/pet-v3.sh check`、`./scripts/pet-v3.sh native`、`./scripts/pet-v3.sh candidate`。此功能包含 Supervisor/API/SQLite 和 Pet，正式发布仍必须完整执行 `scripts/build-windows.sh`、部署与健康/哈希核验。真实锁屏/睡眠、Toast、免打扰跨界和连续长时计时属于目标机人工 Gate，单测与浏览器 Mock 不能替代。
 
@@ -128,3 +128,10 @@ WSL 通过 `.nvmrc` 和 `.node-version` 固定 Node。Windows 构建通过 `scri
 2. `native` 失败：查看工具链版本、`D:\StudyGuardianBuild\artifacts` 和 manifest。
 3. `candidate` 部署失败：脚本自动恢复旧 EXE；检查备份和哈希输出。
 4. 只在缓存确定损坏时执行 `cache-reset`；常规空间回收使用 `cache-prune`。
+
+## 自动学习与登录启动
+
+- 未填写任务时，明确阅读/编程等候选证据累计 180 秒，或高置信度学习累计 90 秒后，以“自由学习”进入计时。普通浏览仍不触发。主题切换共享证据窗口；分心、锁屏与 AFK 继续阻断。
+- 自动计时关闭时不再生成开始、暂停或恢复意图；界面总开关和自动开始开关即时保存，其他数值编辑仍需保存。
+- Windows 开机启动仅由 `set-autostart.ps1` 管理。关闭后持久化 `config/autostart-state.json`；后台登录入口尊重明确关闭，即使遗留快捷方式再次被调用也不启动。交互式手动打开不受影响。Rust 写入后重新读取真实启动项状态，不能直接回显请求值当作成功。
+- 桌面显示为 194×112 紧凑动态计时器；主计时来自 Supervisor 已记录的今日学习秒数，护眼环与倒计时来自独立护眼状态。

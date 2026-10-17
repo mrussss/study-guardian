@@ -14,6 +14,10 @@ $MaxRetries = [Math]::Max(1, $MaxRetries)
 $startScript = Join-Path $RootDir "scripts\start-all.ps1"
 
 function Test-StudyGuardianHealthy {
+    $uiState = Get-StudyGuardianUiState -RootDir $RootDir
+    if ($uiState.ui_run_intent -eq "STOPPED_BY_USER") {
+        return (Test-StudyGuardianPort -Port 17321) -and (Test-StudyGuardianPort -Port 17322)
+    }
     $runtime = Get-StudyGuardianPetRuntime -RootDir $RootDir
     $petHealthy = if ($runtime -eq "tauri") {
         Test-OwnedExecutable -Path (Join-Path $RootDir "pet-v3\StudyGuardian.exe")

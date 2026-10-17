@@ -693,3 +693,25 @@ func TestExpiredAutomationIntentIsExactlyOnceAcrossProcessAndAccept(t *testing.T
 		t.Fatalf("session transitions=%d, want standby, study close, plus one automatic pause", len(sessions))
 	}
 }
+
+func TestComputerUseEyeCareReturnsToStandbyAfterRestart(t *testing.T) {
+	store, err := storage.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	mgr := NewPersistentManager(nil, config.DefaultConfig(), store, nil, nil, nil)
+	if err := mgr.SetModeEyeCareBreak(false); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.GetStatus(); got.ModeOrigin != ModeOriginEyeCare || got.AutoResumeEligible {
+		t.Fatalf("break=%+v", got)
+	}
+	restarted := NewPersistentManager(nil, config.DefaultConfig(), store, nil, nil, nil)
+	if err := restarted.ResumeEyeCareStudy(); err != nil {
+		t.Fatal(err)
+	}
+	if got := restarted.GetStatus(); got.UserMode != UserModeStandby {
+		t.Fatalf("eye break started study: %+v", got)
+	}
+}

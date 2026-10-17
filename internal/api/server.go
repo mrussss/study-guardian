@@ -93,6 +93,7 @@ func NewServer(cfg *config.Config, stateMgr StateManager) *Server {
 	mux.HandleFunc("/v1/settings/eye-care", s.withAuth(s.handleEyeCareSettings))
 	mux.HandleFunc("/v1/eye-care/status", s.withAuth(s.handleEyeCareStatus))
 	mux.HandleFunc("/v1/eye-care/action", s.withAuth(s.handleEyeCareAction))
+	mux.HandleFunc("/v1/eye-care/notification/claim", s.withAuth(s.handleEyeCareNotificationClaim))
 	mux.HandleFunc("/v1/automation/pending", s.withAuth(s.handleAutomationPending))
 	mux.HandleFunc("/v1/automation/pending/accept", s.withAuth(s.handleAutomationAccept))
 	mux.HandleFunc("/v1/automation/pending/reject", s.withAuth(s.handleAutomationReject))

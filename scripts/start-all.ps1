@@ -1,7 +1,8 @@
 param(
     [string]$RootDir,
     [ValidateSet("pyqt", "tauri")][string]$PetRuntime,
-    [switch]$NoWatchdog
+    [switch]$NoWatchdog,
+    [switch]$UserLaunch
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,7 +39,15 @@ $tauriPet = Join-Path $RootDir "pet-v3\StudyGuardian.exe"
 if ($runtime -eq "tauri") {
     Stop-OwnedPythonScript -ScriptPath $legacyPet
     if (-not (Test-Path -LiteralPath $tauriPet)) { throw "Tauri Pet executable not found: $tauriPet" }
-    if (-not (Test-OwnedExecutable -Path $tauriPet)) { Start-Process -FilePath $tauriPet -WorkingDirectory (Split-Path -Parent $tauriPet) }
+    $uiState = Get-StudyGuardianUiState -RootDir $RootDir
+    if ($UserLaunch -or $uiState.ui_run_intent -ne "STOPPED_BY_USER") {
+        $petArguments = if ($UserLaunch) { @("--user-launch") } else { @() }
+        if (-not (Test-OwnedExecutable -Path $tauriPet)) {
+            Start-Process -FilePath $tauriPet -ArgumentList $petArguments -WorkingDirectory (Split-Path -Parent $tauriPet)
+        }
+    } else {
+        Write-StudyGuardianLog -RootDir $RootDir -Source "start" -Message "UI start suppressed by STOPPED_BY_USER"
+    }
 } else {
     if (-not (Test-Path -LiteralPath $legacyPet)) { throw "Legacy Pet script not found: $legacyPet" }
     if (-not (Test-OwnedPythonScript -ScriptPath $legacyPet)) {
