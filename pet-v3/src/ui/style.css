@@ -1,31 +1,9 @@
-/* The desktop timer stays compact; all counters come from Supervisor. */
 :root { color-scheme:dark; font-family:"Segoe UI","Microsoft YaHei",sans-serif; }
-html,body,#app { margin:0; width:100%; height:100%; overflow:hidden; background:transparent!important; user-select:none; }
 * { box-sizing:border-box; }
-.pet-shell { position:relative; margin:4px; width:calc(100% - 8px); height:calc(100% - 8px); max-width:186px; max-height:104px; border-radius:18px; border:1px solid #cde4df9c; background:linear-gradient(145deg,#152b2cf5,#192533f5); color:#effbf8; overflow:hidden; cursor:grab; }
-.timer-face { height:63px; display:flex; align-items:center; gap:10px; padding:9px 13px 0; app-region:drag; -webkit-app-region:drag; }
-.timer-ring { width:38px; height:38px; flex:none; fill:none; stroke:#344c50; stroke-width:3; }
-.timer-ring-progress { stroke:#8be4c8; stroke-linecap:round; transform:rotate(-90deg); transform-origin:center; transition:stroke-dasharray 1s linear; }
-.timer-hand { stroke:#d2eee5; stroke-width:1.5; stroke-linecap:round; }
-.timer-main { display:flex; flex-direction:column; gap:1px; }
-.pet-state { font-size:10px; font-weight:600; letter-spacing:.05em; }
-.timer-digits { font-size:28px; line-height:30px; letter-spacing:.02em; font-variant-numeric:tabular-nums; font-weight:600; }
-.is-running .timer-ring { animation:timer-breathe 3s ease-in-out infinite; }
-@keyframes timer-breathe { 50% { filter:drop-shadow(0 0 3px #8be4c87a); } }
-.timer-eye { position:absolute; left:14px; bottom:23px; font-size:10px; color:#a9e6cf; pointer-events:none; }
-.pet-task { position:absolute; left:14px; bottom:7px; width:112px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#8ea8ad; font-size:9px; pointer-events:none; }
-.pet-panel-entry { position:absolute; right:10px; bottom:8px; padding:3px 7px; min-height:23px; background:#35524f; color:#d8f9eb; border:1px solid #668d80; border-radius:8px; font:10px "Segoe UI"; cursor:pointer; }
-button:focus-visible { outline:2px solid #a5f2d5; outline-offset:1px; }
-button:disabled { opacity:.5; }
-.pet-control-panel { position:absolute; z-index:5; inset:2px; padding:6px; background:#14292c; display:flex; flex-direction:column; gap:3px; border-radius:15px; cursor:default; }
-.pet-control-panel[hidden],.pet-eye-care-bubble[hidden],.pet-entry-error[hidden] { display:none; }
-.pet-control-title,.pet-control-feedback { font-size:9px; }
-.pet-control-panel input { width:100%; min-height:20px; font-size:10px; }
-.pet-control-panel button { font-size:9px; }
-.pet-control-actions { display:flex; gap:4px; }
-.pet-shell.has-eye-care .timer-eye { visibility:hidden; }
-.pet-eye-care-bubble { position:absolute; left:14px; right:10px; bottom:23px; z-index:3; color:#d6f5bd; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; line-height:14px; pointer-events:none; }
-.pet-entry-error { position:absolute; inset:8px; z-index:6; padding:8px; background:#44332b; border-radius:10px; font-size:10px; }
-.pet-controls { display:none; }
-button,input,select,.pet-control-panel { app-region:no-drag; -webkit-app-region:no-drag; }
-@media(prefers-reduced-motion:reduce) { .is-running .timer-ring { animation:none; } }
+html,body,#app { margin:0; width:100%; height:100%; overflow:hidden; background:transparent!important; user-select:none; }
+.digital-clock { width:122px; height:62px; margin:3px; padding:6px 9px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; border:1px solid #b4a3e23d; border-radius:9px; background:linear-gradient(135deg,#302842ed,#241f35ed); color:#f4efff; cursor:grab; app-region:drag; -webkit-app-region:drag; }
+.digital-clock:active { cursor:grabbing; }
+.clock-study { display:block; font:500 26px/29px "Cascadia Mono",Consolas,monospace; font-variant-numeric:tabular-nums; letter-spacing:-.8px; white-space:nowrap; }
+.clock-eye { display:flex; align-items:center; gap:6px; color:#b8aaca; font-size:9px; line-height:12px; font-variant-numeric:tabular-nums; }
+.clock-eye[hidden] { display:none; }
+.is-paused .clock-study { color:#d5c9e8; }

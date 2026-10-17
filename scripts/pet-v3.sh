@@ -14,6 +14,7 @@ Usage: ./scripts/pet-v3.sh <command>
   dev          Start the WSL Vite development server.
   check        Run Pet frontend tests, type/build checks, and diff checks.
   native       Produce an incremental Windows debug executable.
+  fixture      Build a separate UI fixture app in the disposable D-drive test cache.
   candidate    Run checks, Windows Rust tests, build, deploy, and verify Pet only.
   build        Produce a tested Windows release Pet artifact in dist/windows.
   deploy       Deploy the existing Windows debug artifact and restart Pet only.
@@ -57,6 +58,7 @@ build_native() {
     local configuration="$1"
     local output_path="${2:-}"
     local rust_tests="${3:-false}"
+    local ui_fixture="${4:-false}"
     require_windows_tools
     args=(
         -NoProfile -ExecutionPolicy Bypass
@@ -69,6 +71,7 @@ build_native() {
     )
     if [[ -n "${output_path}" ]]; then args+=( -OutputPath "${output_path}" ); fi
     if [[ "${rust_tests}" == true ]]; then args+=( -RunRustTests ); fi
+    if [[ "${ui_fixture}" == true ]]; then args+=( -UIFixture ); fi
     "${POWERSHELL_BIN}" "${args[@]}"
 }
 
@@ -88,6 +91,9 @@ case "${command}" in
         ;;
     native)
         build_native Debug
+        ;;
+    fixture)
+        build_native Debug "D:\StudyGuardianBuild\tests\reminder-digital-20261017\pet-v3\StudyGuardianFixture.exe" false true
         ;;
     deploy)
         require_windows_tools

@@ -5,6 +5,7 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [string]$BuildRoot = $(if ($env:STUDYGUARDIAN_BUILD_ROOT) { $env:STUDYGUARDIAN_BUILD_ROOT } else { "D:\StudyGuardianBuild" }),
+    [switch]$UIFixture,
     [switch]$RunFrontendTests,
     [switch]$RunRustTests,
     [string]$GitCommit = "unknown",
@@ -76,8 +77,10 @@ $assetRoot = Join-Path $stagingRepo "pet\assets"
 $stateRoot = Join-Path $BuildRoot "state"
 $npmCache = Join-Path $BuildRoot "npm-cache"
 $configurationName = $Configuration.ToLowerInvariant()
+if ($UIFixture -and $Configuration -ne "Debug") { throw "UI fixtures require Debug configuration" }
 $targetRoot = Join-Path $BuildRoot "cargo-target\$configurationName-cache"
 $artifactRoot = Join-Path $BuildRoot "artifacts\pet-v3\$configurationName"
+if ($UIFixture) { $artifactRoot = Join-Path $BuildRoot "tests\reminder-digital-20261017\artifact" }
 $artifactPath = Join-Path $artifactRoot "StudyGuardian.exe"
 $manifestPath = Join-Path $artifactRoot "build-manifest.json"
 $dependencyStamp = Join-Path $stateRoot "pet-v3-node-dependencies.sha256"
@@ -146,6 +149,11 @@ if ($RunRustTests) {
 
 $tauriArguments = @("run", "tauri", "--", "build", "--no-bundle")
 if ($Configuration -eq "Debug") { $tauriArguments += "--debug" }
+if ($UIFixture) {
+    $fixtureConfig = Join-Path $artifactRoot "ui-fixture-config.json"
+    @{ identifier = "com.studyguardian.ui-fixture"; productName = "StudyGuardian UI Fixture" } | ConvertTo-Json | Set-Content -LiteralPath $fixtureConfig -Encoding UTF8
+    $tauriArguments += @("--config", $fixtureConfig)
+}
 Invoke-Checked -FilePath $npm -Arguments $tauriArguments -WorkingDirectory $petRoot -Label "Tauri $Configuration build"
 
 $profileDirectory = if ($Configuration -eq "Debug") { "debug" } else { "release" }

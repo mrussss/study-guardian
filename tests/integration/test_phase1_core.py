@@ -37,7 +37,7 @@ ipc:
 """)
 
         cls.supervisor_proc = subprocess.Popen(
-            ["/tmp/study-supervisor-phase1", "-config", cls.config_path, "-token", cls.token_path, "-db", cls.db_path],
+            ["/tmp/study-supervisor-phase1", "-config", cls.config_path, "-token", cls.token_path, "-db", cls.db_path, "-aw-url", "http://127.0.0.1:1"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
@@ -72,10 +72,11 @@ ipc:
         self.assertEqual(st["user_mode"], "STUDY")
         self.assertEqual(st["task"], "Phase 1 Integration Test Task")
 
-        # Wait for ticker to advance
+        # No activity source is connected: a mode switch alone must not credit time.
         time.sleep(2.5)
         st = client.get_status()
-        self.assertGreaterEqual(st["study_seconds"], 1)
+        self.assertEqual(st["study_seconds"], 0)
+        self.assertEqual(st["active_seconds"], 0)
 
         # 4. Modify task
         st = client.set_task("Updated Task Title")

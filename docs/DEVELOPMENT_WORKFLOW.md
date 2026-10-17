@@ -59,7 +59,7 @@ Mock 与 native 使用同一组 `SupervisorDashboardAdapter`、`SupervisorContro
 
 ## 护眼节奏
 
-- 业务状态位于 Go `internal/eyecare`。按 2026-10-17 用户要求，护眼改为独立累计有效本机电脑使用观察（含短暂静态阅读、动态观看），与学习模式、任务主题、Motivation 积分解耦。单次间隔超过 30 秒、ActivityWatch 无效或锁屏时不计；无输入约 5 分钟重开当前 40 分钟周期，不声称已验证真实远眺。旧 `RecordCreditedFocus` 仅保留兼容，生产 worker 只调用 `RecordComputerUse`，禁止双计。
+- 业务状态位于 Go `internal/eyecare`。按 2026-10-17 用户要求，护眼改为独立累计有效本机电脑使用观察（只接受 ACTIVE 且未 AFK 的观察，屏幕自行变化不计），与学习模式、任务主题、Motivation 积分解耦。Windows 本机键鼠无输入约 30 秒即暂停学习与护眼计时，回归不补算；单次间隔超过 30 秒、ActivityWatch 无效或锁屏时不计；无输入约 5 分钟重开当前 40 分钟周期，不声称已验证真实远眺。旧 `RecordCreditedFocus` 仅保留兼容，生产 worker 只调用 `RecordComputerUse`，禁止双计。
 - 护眼休息使用独立 `EYE_CARE` 模式来源，禁止自动恢复提前结束。短休息结束后进入等待返回；必须由用户显式点击继续。
 - `eye_care_state`、审计和 action request 幂等记录持久化到 Supervisor SQLite。Tauri/native 与 React transport 只暴露枚举、范围和 RFC3339 校验后的字段。
 - UI 文案不能宣称验证了真实远眺或手机使用。该功能不增加摄像头、截图或 AI 调用；免打扰时桌宠提醒隐藏，状态仍可在 Dashboard/Quick Panel 静默查看。
@@ -134,4 +134,9 @@ WSL 通过 `.nvmrc` 和 `.node-version` 固定 Node。Windows 构建通过 `scri
 - 未填写任务时，明确阅读/编程等候选证据累计 180 秒，或高置信度学习累计 90 秒后，以“自由学习”进入计时。普通浏览仍不触发。主题切换共享证据窗口；分心、锁屏与 AFK 继续阻断。
 - 自动计时关闭时不再生成开始、暂停或恢复意图；界面总开关和自动开始开关即时保存，其他数值编辑仍需保存。
 - Windows 开机启动仅由 `set-autostart.ps1` 管理。关闭后持久化 `config/autostart-state.json`；后台登录入口尊重明确关闭，即使遗留快捷方式再次被调用也不启动。交互式手动打开不受影响。Rust 写入后重新读取真实启动项状态，不能直接回显请求值当作成功。
-- 桌面显示为 194×112 紧凑动态计时器；主计时来自 Supervisor 已记录的今日学习秒数，护眼环与倒计时来自独立护眼状态。
+- 桌面显示为 128×68 纯数字计时器；主计时来自 Supervisor 已记录的今日学习秒数，小号护眼倒计时来自独立护眼状态；无图标、状态文字、任务名或面板按钮，管理入口仍在托盘。
+
+## 护眼弹窗回归
+
+- 弹窗通过受限 native command `hide_eye_care_reminder` 收起，不直接调用未授权的 `getCurrentWindow().hide()`。所有操作在 finally 清除 busy，隐藏后继续轮询，以支持复用窗口与后续提醒。
+- 原生验收可用 `tests/reminder_ui_fixture.py` 在 127.0.0.1:17441 上提供固定合成状态，配合 D 盘 tests 下的独立 Pet 副本；不得缩短生产护眼周期或写入生产测试事件。

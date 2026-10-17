@@ -3160,6 +3160,7 @@ fn show_eye_care_reminder(app: &AppHandle) -> Result<(), String> {
         .get_webview_window("eye-care-reminder")
         .map(Ok)
         .unwrap_or_else(|| configured_aux_window(app, "eye-care-reminder"))?;
+    reminder.set_ignore_cursor_events(false).map_err(|error| error.to_string())?;
     reminder
         .set_always_on_top(true)
         .map_err(|error| error.to_string())?;
