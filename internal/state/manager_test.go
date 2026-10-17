@@ -731,3 +731,25 @@ func TestMissingSampleDoesNotCreditDuringHealthGrace(t *testing.T) {
 		t.Fatal("invalid recovery accounting")
 	}
 }
+
+func TestStudyClockStopsOnAFKAndResumesWithoutCatchup(t *testing.T) {
+	now := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+	clock := NewFakeClock(now)
+	m := NewPersistentManager(clock, config.DefaultConfig(), nil, nil, nil, nil)
+	if err := m.SetModeStudy("自由学习"); err != nil {
+		t.Fatal(err)
+	}
+	cls := ClassificationResult{Relation: RelationUnknown, Confidence: .65}
+	m.TickWithClassification(now.Add(2*time.Second), "code", "", "", false, false, false, cls, true)
+	before := m.GetStatus().StudySeconds
+	for sec := 4; sec <= 24; sec += 2 {
+		m.TickWithClassification(now.Add(time.Duration(sec)*time.Second), "code", "", "", true, true, false, cls, true)
+	}
+	if m.GetStatus().StudySeconds != before {
+		t.Fatal("AFK increased study time")
+	}
+	m.TickWithClassification(now.Add(26*time.Second), "code", "", "", false, false, false, cls, true)
+	if m.GetStatus().StudySeconds != before+2 {
+		t.Fatal("return credited idle gap")
+	}
+}

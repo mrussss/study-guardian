@@ -1041,7 +1041,7 @@ func TestComputerUseRemindsInStandbyWithoutCreditingStudy(t *testing.T) {
 func TestComputerUseRejectsUnavailableSleepAndResetsAfterAway(t *testing.T) {
 	now := time.Date(2026, 10, 17, 10, 0, 0, 0, time.Local)
 	service, _, modes, _ := newTestService(t, now)
-	out := state.TickOutcome{Now: now, DeltaSeconds: 2, ActivityValid: true, Interaction: state.InteractionIdleStatic}
+	out := state.TickOutcome{Now: now, DeltaSeconds: 2, ActivityValid: true, Interaction: state.InteractionActive}
 	if err := service.RecordComputerUse(out, modes.status); err != nil {
 		t.Fatal(err)
 	}
@@ -1057,5 +1057,32 @@ func TestComputerUseRejectsUnavailableSleepAndResetsAfterAway(t *testing.T) {
 	}
 	if got := service.Status(); got.FocusSegmentSeconds != 0 {
 		t.Fatalf("away did not reset segment: %+v", got)
+	}
+}
+
+func TestIdleScreensNeverCountAndAwayNeverClaimsReminder(t *testing.T) {
+	now := time.Date(2026, 10, 17, 10, 0, 0, 0, time.Local)
+	service, _, modes, _ := newTestService(t, now)
+	for _, interaction := range []state.InteractionState{state.InteractionIdleStatic, state.InteractionIdleDynamic, state.InteractionUnknown} {
+		for second := 2; second <= 2400; second += 2 {
+			if err := service.RecordComputerUse(state.TickOutcome{Now: now.Add(time.Duration(second) * time.Second), DeltaSeconds: 2, ActivityValid: true, Interaction: interaction}, modes.status); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if s := service.Status(); s.FocusSegmentSeconds != 0 || s.Phase != Focusing {
+		t.Fatalf("idle counted: %+v", s)
+	}
+	addFocus(service, 2400, now)
+	modes.status.AfkSeconds = 2
+	if n, err := service.TakePendingNotification(now); err != nil || n != nil {
+		t.Fatalf("away notified: %+v %v", n, err)
+	}
+	if !service.Status().NotificationSuppressed {
+		t.Fatal("away reminder not suppressed")
+	}
+	modes.status.AfkSeconds = 0
+	if n, err := service.TakePendingNotification(now); err != nil || n == nil {
+		t.Fatalf("return lost reminder: %+v %v", n, err)
 	}
 }

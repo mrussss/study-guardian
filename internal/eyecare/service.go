@@ -393,11 +393,11 @@ func (s *Service) RecordComputerUse(out state.TickOutcome, canonical state.Syste
 		s.unpersistedCreditedSeconds = 0
 		return nil
 	}
-	if out.Locked || out.DeltaSeconds <= 0 || out.DeltaSeconds > 30 {
+	if out.Locked || out.AfkSeconds > 0 || out.DeltaSeconds <= 0 || out.DeltaSeconds > 30 {
 		return nil
 	}
-	// Brief static reading and video viewing count; extended inactivity does not.
-	if out.Interaction != state.InteractionActive && out.Interaction != state.InteractionIdleDynamic && out.Interaction != state.InteractionIdleStatic {
+	// Screen changes alone are not evidence of a person using the computer.
+	if out.Interaction != state.InteractionActive {
 		return nil
 	}
 	return s.recordSecondsLocked(out.DeltaSeconds, now)
@@ -424,7 +424,7 @@ func (s *Service) Status() Status {
 	}
 	result := cloneStatus(s.status)
 	quiet, quietErr := s.inQuietHours(now)
-	result.NotificationSuppressed = quietErr != nil || quiet || s.currentMode().Locked || (result.SnoozeUntil != nil && now.Before(*result.SnoozeUntil))
+	result.NotificationSuppressed = quietErr != nil || quiet || (s.currentMode().Locked || s.currentMode().AfkSeconds > 0) || (result.SnoozeUntil != nil && now.Before(*result.SnoozeUntil))
 	return result
 }
 
@@ -447,7 +447,7 @@ func (s *Service) TakePendingNotification(now time.Time) (*Notification, error) 
 		return nil, errors.New("reminder settings unavailable")
 	}
 	canonical := s.currentMode()
-	if !isDuePhase(s.status.Phase) || canonical.Locked || quiet || s.status.SnoozeUntil != nil && now.Before(*s.status.SnoozeUntil) {
+	if !isDuePhase(s.status.Phase) || canonical.Locked || canonical.AfkSeconds > 0 || quiet || s.status.SnoozeUntil != nil && now.Before(*s.status.SnoozeUntil) {
 		return nil, nil
 	}
 	if s.status.NextPromptAt == nil {

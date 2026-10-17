@@ -288,6 +288,8 @@ func main() {
 					isAFK = lastTrustedSnapshot.IsAFK
 				}
 
+				idleSeconds, idleAvailable := windows.InputIdleSeconds()
+				isAFK = inputIsAFK(isAFK, idleSeconds, idleAvailable)
 				isLocked := windows.IsLocked()
 				if isLocked {
 					isAFK = true

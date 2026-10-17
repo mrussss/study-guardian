@@ -1033,8 +1033,8 @@ func (m *Manager) TickWithClassification(
 		m.afkSince = time.Time{}
 	}
 
-	// 4. Update Mode duration. A lock screen is not user time in any mode.
-	if !isLocked {
+	// Study time stops on missing input/data even before an automatic mode pause.
+	if !isLocked && (m.userMode != UserModeStudy || activityValid && !isAFK) {
 		m.currentModeSeconds += deltaSec
 		switch m.userMode {
 		case UserModeStandby:
