@@ -292,9 +292,6 @@ func (c *Controller) hardBlocker(outcome state.TickOutcome, status state.SystemS
 	if outcome.Relation == state.RelationDistracted {
 		return state.AutomationBlockerDistracted
 	}
-	if strings.TrimSpace(status.Task) == "" {
-		return state.AutomationBlockerNoTask
-	}
 	return state.AutomationBlockerNone
 }
 
@@ -307,7 +304,6 @@ func (c *Controller) signalKind(outcome state.TickOutcome, status state.SystemSt
 	if !c.cfg.AutoStart.AllowUnclassified ||
 		outcome.Interaction != state.InteractionActive ||
 		outcome.Relation == state.RelationDistracted ||
-		strings.TrimSpace(status.Task) == "" ||
 		outcome.Classification.Confidence < candidateMinConfidence {
 		return state.AutomationSignalNeutralGap
 	}
@@ -446,7 +442,7 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 	if !c.cfg.Enabled {
 		c.resetEvidenceLocked()
 		c.updateDiagnosticStateLocked(state.AutomationDiagnostics{State: state.AutomationDiagnosticDisabled, Blocker: state.AutomationBlockerAutomationDisabled}, now, status, state.AutomationSignalNone)
-		return c.evaluatePauseResumeLocked(now, outcome, status, false)
+		return nil
 	}
 	if status.PendingAutomationIntent != nil {
 		c.resetEvidenceLocked()
@@ -514,7 +510,7 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 	strongReady := strongSeconds >= int64(c.cfg.AutoStart.FocusedStableSeconds) && strongNeutral <= grace
 	candidateReady := candidateSeconds >= int64(c.cfg.AutoStart.UnclassifiedStableSeconds) && candidateNeutral <= grace
 	if ((signal == state.AutomationSignalStrongFocus || signal == state.AutomationSignalCandidate) && strongReady) ||
-		(signal == state.AutomationSignalCandidate && candidateReady) {
+		((signal == state.AutomationSignalCandidate || signal == state.AutomationSignalStrongFocus) && candidateReady) {
 		diagnostic := c.diagnostics
 		diagnostic.State = state.AutomationDiagnosticReady
 		diagnostic.Blocker = state.AutomationBlockerNone
@@ -523,11 +519,20 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 			c.lastTransition = now
 			return &state.AutomationIntent{
 				Transition:           state.AutomationStart,
-				Task:                 strings.TrimSpace(status.Task),
+				Task:                 automaticTask(status.Task),
 				Reason:               state.PauseReasonNone,
 				RequiresConfirmation: c.cfg.AutoStart.Confirm,
 			}
 		}
 	}
 	return nil
+}
+
+// Topic changes do not create a new timer. Free learning remains an explicit
+// session label; activity and topic evidence retain their separate semantics.
+func automaticTask(task string) string {
+	if task = strings.TrimSpace(task); task != "" {
+		return task
+	}
+	return "自由学习"
 }

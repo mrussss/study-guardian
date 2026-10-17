@@ -555,3 +555,46 @@ func TestControllerEvidenceQueueHasHardBound(t *testing.T) {
 		t.Fatalf("evidence queue exceeded hard bound: %d", len(controller.evidence))
 	}
 }
+
+func TestFreeLearningStartsWithoutDeclaredTaskAcrossTopics(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	c := New(cfg)
+	now := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+	status := state.SystemStatus{UserMode: state.UserModeStandby, PrivacyState: state.PrivacyNormal}
+	var intent *state.AutomationIntent
+	for sec := 0; sec <= 180; sec += 2 {
+		activity := state.ActivityReading
+		if sec%4 == 0 {
+			activity = state.ActivityCoding
+		}
+		intent = c.Evaluate(now.Add(time.Duration(sec)*time.Second), candidateOutcome(activity, .65), status)
+		if sec < 180 && intent != nil {
+			t.Fatalf("started too early: %d", sec)
+		}
+	}
+	if intent == nil || intent.Task != "自由学习" {
+		t.Fatalf("intent=%+v diagnostics=%+v", intent, c.Diagnostics())
+	}
+	c = New(cfg)
+	for sec := 0; sec <= 240; sec += 2 {
+		if c.Evaluate(now.Add(time.Duration(sec)*time.Second), candidateOutcome(state.ActivityBrowsing, .95), status) != nil {
+			t.Fatal("generic browsing started learning")
+		}
+	}
+}
+func TestDisabledAutomationNeverPausesOrResumes(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = false
+	c := New(cfg)
+	now := time.Now()
+	out := focusedOutcome()
+	out.Interaction = state.InteractionIdleStatic
+	out.AfkSeconds = 1000
+	status := state.SystemStatus{UserMode: state.UserModeStudy, AfkSeconds: 1000}
+	for sec := 0; sec < 1000; sec += 2 {
+		if c.Evaluate(now.Add(time.Duration(sec)*time.Second), out, status) != nil {
+			t.Fatal("disabled automation paused study")
+		}
+	}
+}
