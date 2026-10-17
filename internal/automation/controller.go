@@ -451,12 +451,13 @@ func (c *Controller) Evaluate(now time.Time, outcome state.TickOutcome, status s
 	}
 	cooldownActive := !c.lastTransition.IsZero() && now.Sub(c.lastTransition) < time.Duration(c.cfg.TransitionCooldownSeconds)*time.Second
 
-	focusedForResume := outcome.Relation == state.RelationFocused &&
-		outcome.Interaction == state.InteractionActive &&
-		outcome.ActivityValid &&
-		!outcome.Locked &&
-		status.PrivacyState == state.PrivacyNormal &&
-		outcome.Classification.Confidence >= c.cfg.AutoStart.MinConfidence
+	// A free-learning session has no task keyword to match after an AFK pause.
+	// The same explicit local learning candidates can resume it; generic browsing cannot.
+	resumeEvidence := outcome.Relation == state.RelationFocused && outcome.Classification.Confidence >= c.cfg.AutoStart.MinConfidence
+	freeLearningCandidate := status.Task == "自由学习" && c.cfg.AutoStart.AllowUnclassified && outcome.Relation == state.RelationUnknown && state.IsExplicitStudyActivity(outcome.Classification.Activity) && outcome.Classification.Confidence >= candidateMinConfidence
+	focusedForResume := (resumeEvidence || freeLearningCandidate) &&
+		outcome.Interaction == state.InteractionActive && outcome.AfkSeconds == 0 &&
+		outcome.ActivityValid && !outcome.Locked && status.PrivacyState == state.PrivacyNormal
 
 	if status.UserMode != state.UserModeStandby {
 		c.resetEvidenceLocked()

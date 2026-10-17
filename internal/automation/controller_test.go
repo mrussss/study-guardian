@@ -598,3 +598,33 @@ func TestDisabledAutomationNeverPausesOrResumes(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeLearningResumesAfterInputReturnsButNotDuringEyeCare(t *testing.T) {
+	cfg := config.DefaultConfig().Automation
+	cfg.Enabled = true
+	cfg.AutoResume.FocusedStableSeconds = 4
+	now := time.Now()
+	out := candidateOutcome(state.ActivityCoding, .65)
+	for _, origin := range []state.ModeOrigin{state.ModeOriginAutomation, state.ModeOriginManual, state.ModeOriginEyeCare} {
+		c := New(cfg)
+		s := state.SystemStatus{UserMode: state.UserModeBreak, Task: "自由学习", ModeOrigin: origin, AutoResumeEligible: origin == state.ModeOriginAutomation, PrivacyState: state.PrivacyNormal}
+		var got *state.AutomationIntent
+		for sec := 0; sec <= 4; sec++ {
+			got = c.Evaluate(now.Add(time.Duration(sec)*time.Second), out, s)
+		}
+		if origin == state.ModeOriginAutomation {
+			if got == nil || got.Transition != state.AutomationResume {
+				t.Fatalf("return did not resume: %+v", got)
+			}
+		} else if got != nil {
+			t.Fatalf("resumed protected break: %s", origin)
+		}
+	}
+	c := New(cfg)
+	s := state.SystemStatus{UserMode: state.UserModeBreak, Task: "自由学习", ModeOrigin: state.ModeOriginAutomation, AutoResumeEligible: true, PrivacyState: state.PrivacyNormal}
+	for sec := 0; sec <= 10; sec++ {
+		if c.Evaluate(now.Add(time.Duration(sec)*time.Second), candidateOutcome(state.ActivityBrowsing, .95), s) != nil {
+			t.Fatal("generic browsing resumed learning")
+		}
+	}
+}
